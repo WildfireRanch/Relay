@@ -1,2 +1,25 @@
 # Sensitive files
-.env
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.env
+
+# Node-RED/Node.js
+node_modules/
+npm-debug.log
+nodered-data/
+nodered-data/*
+
+# VSCode/Codespace
+.vscode/
+*.code-workspace
+
+# System
+.DS_Store
+*.swp
+*.swo
