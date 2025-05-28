@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Query
-from services.agent import ask_agent
+from fastapi import APIRouter, Depends, Header, HTTPException
+from services import agent
 
-router = APIRouter()
+router = APIRouter(prefix="/ask", tags=["ask"])
 
-@router.get("/ask")
-def ask_gpt(prompt: str = Query(...)):
-    reply = ask_agent(prompt)
-    return {"response": reply}
+def auth(key: str = Header(..., alias="X-API-Key")):
+    if key != os.getenv("API_KEY"):
+        raise HTTPException(401, "bad key")
 
-
+@router.get("/")
+async def ask(q: str, user=Depends(auth)):
+    answer_text = await agent.answer(q)
+    return {"answer": answer_text}
