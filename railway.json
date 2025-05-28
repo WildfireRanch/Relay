@@ -1,0 +1,10 @@
+{
+  "services": [
+    {
+      "name": "relay-agent",           
+      "startCommand": "python main.py",
+      "healthcheckPath": "/status",    
+      "port": 8000                     
+    }
+  ]
+}
