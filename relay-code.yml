@@ -1,0 +1,45 @@
+name: Echo Review & Patch
+on:
+  push: { branches: [master] }          # or main
+  pull_request: { branches: [master] }
+
+jobs:
+  echo_review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 1. run tests / linters
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+      - run: ruff check .
+
+      # 2. Call Relay /ask for an AI code review
+      - name: AI review
+        env:
+          API_KEY: ${{ secrets.ECHO_API_KEY }}          # Relay key
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}         # PR write
+        run: |
+          DIFF=$(git diff -U0 ${{ github.event.before }} ${{ github.sha }})
+          REV=$(curl -s -H "X-API-Key: $API_KEY" \
+                     --data-urlencode "q=Review this diff:\n$DIFF" \
+                     https://relay.wildfireranch.us/ask | jq -r .answer)
+          gh pr comment ${{ github.event.pull_request.number || 0 }} \
+            --body "$REV" || echo "$REV"
+
+      # 3. Optionally let Echo propose a patch
+      - name: AI patch (optional)
+        if: failure()            # only on failed tests/lint
+        env:
+          API_KEY: ${{ secrets.ECHO_API_KEY }}
+        run: |
+          DIFF=$(git diff -U0)
+          PATCH=$(curl -s -H "X-API-Key: $API_KEY" \
+                     --data-urlencode "q=Fix the issues in this diff and return a git patch:\n$DIFF" \
+                     https://relay.wildfireranch.us/ask | jq -r .answer)
+          echo "$PATCH" | git apply - && \
+          git config user.name "Echo Bot" && \
+          git config user.email "echo@wildfireranch.us" && \
+          git commit -am "echo: auto-patch" && \
+          git push origin HEAD:${{ github.ref_name }}
+
