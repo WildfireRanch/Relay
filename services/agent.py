@@ -1,12 +1,12 @@
-#import os, asyncio
+import os
 from openai import AsyncOpenAI
-from services import kb
+import services.kb as kb
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = """
 You are Echo, a concise but knowledgeable assistant for Bret's Solar-Shack
-and infrastructure projects.  Cite file paths when useful.
+and infrastructure projects. Cite file paths when useful.
 """
 
 async def answer(query: str) -> str:
@@ -26,10 +26,10 @@ async def answer(query: str) -> str:
 
     # 3) OpenAI call (stream for snappier UX)
     stream = await client.chat.completions.create(
-        model="gpt-4o-mini",   # or gpt-4o if you prefer
+        model="gpt-4o-mini",   # switch to "gpt-4o" if you prefer
         messages=messages,
         stream=True,
-        temperature=0.3
+        temperature=0.3,
     )
 
     chunks = []
