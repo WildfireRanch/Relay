@@ -1,5 +1,5 @@
 import pathlib, sqlite3, json, os
-from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
