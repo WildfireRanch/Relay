@@ -12,25 +12,28 @@ to review the source code, scan for potential issues, bugs, or improvements.
 """
 
 async def answer(query: str) -> str:
-    """Decide whether to search the KB or scan code, then call OpenAI."""
+    """Handle KB-based queries or full code reviews."""
     
-    # Check if user wants a code review
+    # Check if we're in code review mode
     if "review code" in query.lower() or "analyze code" in query.lower():
         context = read_source_files("services")[:8000] or "No code found."
+        print(f"[agent] Code review mode triggered.")
+        print(f"[agent] Code context length: {len(context)}")
     else:
         hits = kb.search(query, k=4)
         context = "\n\n".join(
             f"[{i+1}] {h['path']}\n{h['snippet']}" for i, h in enumerate(hits)
         ) or "No internal docs matched."
+        print(f"[agent] KB search context length: {len(context)}")
 
-    # Prepare messages
+    # Craft chat messages
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": f"Context:\n{context}"},
         {"role": "user", "content": query},
     ]
 
-    # GPT call (streaming off for now)
+    # Call OpenAI
     response = await client.chat.completions.create(
         model="gpt-4o",
         messages=messages,
@@ -41,15 +44,21 @@ async def answer(query: str) -> str:
     return response.choices[0].message.content
 
 
-def read_source_files(root=".", exts=[".py"]):
-    """Walk the repo and return contents of source files in a single string."""
-    files = Path(root).rglob("*")
+def read_source_files(root="services", exts=[".py"]):
+    """Read all .py files under the given directory."""
+    base = Path(__file__).resolve().parents[1]
+    path = base / root
+    if not path.exists():
+        print(f"[agent] Path does not exist: {path}")
+        return ""
+
+    files = path.rglob("*")
     code = []
     for f in files:
         if f.suffix in exts and f.is_file() and "venv" not in str(f):
             try:
                 content = f.read_text()
-                snippet = f"\n# File: {f.relative_to(root)}\n{content}"
+                snippet = f"\n# File: {f.relative_to(base)}\n{content}"
                 code.append(snippet)
             except Exception:
                 continue
