@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from openai import AsyncOpenAI
 import services.kb as kb
@@ -11,20 +12,24 @@ and infrastructure projects. Cite file paths when useful. If the user asks you
 to review the source code, scan for potential issues, bugs, or improvements.
 """
 
-TRIGGERS = [
-    "review code",
-    "analyze code",
-    "analyze source",
-    "audit code",
-    "review the python",
-    "read the source code"
-]
+def matches_trigger(query: str) -> bool:
+    """Check if user prompt wants code review."""
+    q = query.lower().strip()
+    patterns = [
+        r"review.*code",
+        r"analyze.*code",
+        r"audit.*code",
+        r"read.*source",
+        r"source.*review",
+    ]
+    return any(re.search(p, q) for p in patterns)
 
 async def answer(query: str) -> str:
-    """Handle KB-based questions or code review requests."""
+    """Handle KB queries or full code review based on prompt."""
+    print(f"[agent] Incoming query: {query}")
     query_lower = query.lower()
 
-    if any(p in query_lower for p in TRIGGERS):
+    if matches_trigger(query_lower):
         print("[agent] Code review mode triggered.")
         context = read_source_files("services")[:8000] or "No code found."
         print(f"[agent] Code context length: {len(context)}")
@@ -52,7 +57,7 @@ async def answer(query: str) -> str:
 
 
 def read_source_files(root="services", exts=[".py"]):
-    """Read .py files under the given path, skipping venv and errors."""
+    """Read all .py files under the given directory."""
     base = Path(__file__).resolve().parents[1]
     path = base / root
     if not path.exists():
