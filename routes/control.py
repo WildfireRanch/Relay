@@ -75,3 +75,33 @@ def list_queue(user=Depends(auth)):
         return {"actions": load_actions()}
     except Exception as e:
         raise HTTPException(500, f"Failed to load queue: {e}")
+@router.post("/approve_action")
+def approve_action(data: dict = Body(...), user=Depends(auth)):
+    """Approve and execute a queued action by ID."""
+    action_id = data.get("id")
+    if not action_id:
+        raise HTTPException(400, "Missing action ID")
+
+    actions = load_actions()
+    updated = []
+    approved = None
+
+    for a in actions:
+        if a["id"] == action_id and a["status"] == "queued":
+            approved = a
+            a["status"] = "approved"
+            a["approved_at"] = datetime.utcnow().isoformat()
+        updated.append(a)
+
+    if not approved:
+        raise HTTPException(404, "No matching queued action found")
+
+    # Save updated queue first
+    save_actions(updated)
+
+    # Execute action now
+    action_data = approved["action"]
+    if action_data["type"] == "write_file":
+        return write_file(action_data, user=user)
+
+    return {"status": "approved", "note": "No executable logic for this action type"}
