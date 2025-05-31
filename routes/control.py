@@ -30,3 +30,30 @@ def write_file(data: dict = Body(...), user=Depends(auth)):
         }
     except Exception as e:
         raise HTTPException(500, f"Failed to write file: {e}")
+import json
+from uuid import uuid4
+from datetime import datetime
+
+ACTIONS_PATH = Path(__file__).resolve().parents[1] / "data" / "pending_actions.json"
+ACTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+if not ACTIONS_PATH.exists():
+    ACTIONS_PATH.write_text("[]")  # Initialize if missing
+
+@router.post("/queue_action")
+def queue_action(data: dict = Body(...), user=Depends(auth)):
+    """Save an action to a queue for later approval."""
+    try:
+        action_id = str(uuid4())
+        queued = {
+            "id": action_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "queued",
+            "action": data,
+        }
+        # Load current queue
+        current = json.loads(ACTIONS_PATH.read_text())
+        current.append(queued)
+        ACTIONS_PATH.write_text(json.dumps(current, indent=2))
+        return {"status": "queued", "id": action_id}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to queue action: {e}")
