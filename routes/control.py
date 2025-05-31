@@ -1,11 +1,11 @@
-# === Standard lib imports ===
+# === Standard library imports ===
 import os
 import json
 from uuid import uuid4
 from pathlib import Path
 from datetime import datetime
 
-# === FastAPI imports ===
+# === FastAPI framework imports ===
 from fastapi import APIRouter, Depends, Header, HTTPException, Body
 
 router = APIRouter(prefix="/control", tags=["control"])
@@ -15,24 +15,36 @@ def auth(key: str = Header(..., alias="X-API-Key")):
     if key != os.getenv("API_KEY"):
         raise HTTPException(401, "bad key")
 
-# === Constants and queue helpers ===
+# === Paths and data files ===
 ACTIONS_PATH = Path(__file__).resolve().parents[1] / "data" / "pending_actions.json"
+LOG_PATH = Path(__file__).resolve().parents[1] / "logs" / "actions.log"
+
+# === Ensure directories and files exist ===
 ACTIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+
 if not ACTIONS_PATH.exists():
     ACTIONS_PATH.write_text("[]")
 
+# === Utility: Load / save action queue ===
 def load_actions():
     return json.loads(ACTIONS_PATH.read_text())
 
 def save_actions(actions):
     ACTIONS_PATH.write_text(json.dumps(actions, indent=2))
 
-# === Route: write a file to disk ===
+# === Utility: Append to persistent action log ===
+def append_log(entry: dict):
+    line = json.dumps(entry)
+    with LOG_PATH.open("a") as f:
+        f.write(line + "\n")
+
+# === Route: Write a file to disk ===
 @router.post("/write_file")
 def write_file(data: dict = Body(...), user=Depends(auth)):
     path = data.get("path")
     content = data.get("content")
-    
+
     if not path or not content:
         raise HTTPException(400, "Missing path or content")
 
@@ -50,7 +62,7 @@ def write_file(data: dict = Body(...), user=Depends(auth)):
     except Exception as e:
         raise HTTPException(500, f"Failed to write file: {e}")
 
-# === Route: queue a proposed action ===
+# === Route: Queue a proposed action (e.g. write_file) ===
 @router.post("/queue_action")
 def queue_action(data: dict = Body(...), user=Depends(auth)):
     try:
@@ -68,16 +80,17 @@ def queue_action(data: dict = Body(...), user=Depends(auth)):
     except Exception as e:
         raise HTTPException(500, f"Failed to queue action: {e}")
 
-# === Route: list queued actions ===
+# === Route: View the current action queue ===
 @router.get("/list_queue")
 def list_queue(user=Depends(auth)):
     try:
         return {"actions": load_actions()}
     except Exception as e:
         raise HTTPException(500, f"Failed to load queue: {e}")
+
+# === Route: Approve and execute a queued action ===
 @router.post("/approve_action")
 def approve_action(data: dict = Body(...), user=Depends(auth)):
-    """Approve and execute a queued action by ID."""
     action_id = data.get("id")
     if not action_id:
         raise HTTPException(400, "Missing action ID")
@@ -96,12 +109,30 @@ def approve_action(data: dict = Body(...), user=Depends(auth)):
     if not approved:
         raise HTTPException(404, "No matching queued action found")
 
-    # Save updated queue first
     save_actions(updated)
 
-    # Execute action now
     action_data = approved["action"]
     if action_data["type"] == "write_file":
-        return write_file(action_data, user=user)
+        result = write_file(action_data, user=user)
+        append_log({
+            "id": action_id,
+            "type": action_data["type"],
+            "path": action_data.get("path"),
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "executed",
+            "result": result
+        })
+        return result
 
     return {"status": "approved", "note": "No executable logic for this action type"}
+@router.get("/list_log")
+def list_log(user=Depends(auth)):
+    """Return the list of executed/logged actions."""
+    try:
+        if not LOG_PATH.exists():
+            return {"log": []}
+        with LOG_PATH.open("r") as f:
+            lines = f.readlines()
+        return {"log": [json.loads(line) for line in lines if line.strip()]}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to read log: {e}")
