@@ -36,7 +36,9 @@ def save_actions(actions):
 # === Utility: Append to persistent action log ===
 def append_log(entry: dict):
     line = json.dumps(entry)
-    print(f"[log] Writing log entry: {line}")
+    print(f"[log] Writing to: {LOG_PATH}")
+    print(f"[log] Entry: {line}")
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)  # ensure logs/ exists
     with LOG_PATH.open("a") as f:
         f.write(line + "\n")
 
@@ -113,9 +115,9 @@ def approve_action(data: dict = Body(...), user=Depends(auth)):
     save_actions(updated)
 
     action_data = approved["action"]
-
     if action_data["type"] == "write_file":
         result = write_file(action_data, user=user)
+        print(f"[approve] About to log write_file result: {result}")
         print(f"[approve] Executing and logging action: {action_id}")
         append_log({
             "id": action_id,
