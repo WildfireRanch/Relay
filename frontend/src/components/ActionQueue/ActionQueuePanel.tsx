@@ -17,7 +17,7 @@ type Action = {
 }
 
 // === ActionQueue Component ===
-export default function ActionQueue() {
+export default function ActionQueuePanel() {
   const [actions, setActions] = useState<Action[]>([])            // Holds queued actions
   const [approving, setApproving] = useState<string | null>(null) // Tracks which item is being approved
 
