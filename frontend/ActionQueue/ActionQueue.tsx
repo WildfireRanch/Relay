@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 
+// === TypeScript types for queued actions ===
 type Action = {
   id: string
   timestamp: string
@@ -15,10 +16,12 @@ type Action = {
   }
 }
 
+// === ActionQueue Component ===
 export default function ActionQueue() {
-  const [actions, setActions] = useState<Action[]>([])
-  const [approving, setApproving] = useState<string | null>(null)
+  const [actions, setActions] = useState<Action[]>([])            // Holds queued actions
+  const [approving, setApproving] = useState<string | null>(null) // Tracks which item is being approved
 
+  // === Fetch all queued actions from the backend ===
   async function fetchQueue() {
     const res = await fetch("https://relay.wildfireranch.us/control/list_queue", {
       headers: {
@@ -29,6 +32,7 @@ export default function ActionQueue() {
     setActions(data.actions || [])
   }
 
+  // === Approve a single action by ID ===
   async function approve(id: string) {
     setApproving(id)
     await fetch("https://relay.wildfireranch.us/control/approve_action", {
@@ -39,22 +43,29 @@ export default function ActionQueue() {
       },
       body: JSON.stringify({ id })
     })
-    await fetchQueue()
+    await fetchQueue() // Refresh queue after approval
     setApproving(null)
   }
 
+  // === Load queue on first render ===
   useEffect(() => {
     fetchQueue()
   }, [])
 
-  if (!actions.length) return <p className="text-muted-foreground">No actions in queue.</p>
+  // === Empty state ===
+  if (!actions.length) {
+    return <p className="text-muted-foreground">No actions in queue.</p>
+  }
 
+  // === Render each queued action as a card ===
   return (
     <div className="space-y-4">
       {actions.map((a) => (
         <Card key={a.id}>
           <CardContent className="p-4 space-y-2">
-            <div className="text-sm font-mono text-muted-foreground">#{a.id.slice(0, 8)}</div>
+            <div className="text-sm font-mono text-muted-foreground">
+              #{a.id.slice(0, 8)} • {a.timestamp}
+            </div>
             <div className="text-sm">
               <strong>Type:</strong> {a.action.type}
               {a.action.path && (
