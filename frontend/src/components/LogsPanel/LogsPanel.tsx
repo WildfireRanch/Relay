@@ -9,7 +9,7 @@ type LogEntry = {
   type: string
   path?: string
   status: string
-  result?: any
+  result?: Record<string, unknown>
 }
 
 export default function LogsPanel() {
