@@ -1,40 +1,59 @@
 import os
 import re
+import json
 from pathlib import Path
 from openai import AsyncOpenAI
 import services.kb as kb
+import httpx
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-# === System prompt given to GPT before user input ===
+RAILWAY_KEY = os.getenv("API_KEY")
+RAILWAY_URL = os.getenv("RAILWAY_URL", "https://relay.wildfireranch.us/control/queue_action")
+
+# === System prompt that defines Echo's identity and context awareness ===
 SYSTEM_PROMPT = """
-You are Echo, a concise but knowledgeable assistant for Bret's Solar-Shack
-and infrastructure projects. Cite file paths when useful. If the user asks you
-to review the source code, scan for potential issues, bugs, or improvements.
+You are Echo, the intelligent assistant for Bret's Solar-Shack and infrastructure command center.
+You have access to:
+
+- Python source code in /services/
+- React and Next.js components in /src/app/ and /src/components/
+- FastAPI routes in /routes/
+- A local knowledge base in /docs/
+
+Use file paths in citations when helpful (e.g. src/components/LogsPanel/LogsPanel.tsx).
+If the user asks about code, structure, or documentation, include relevant context.
+You can generate and queue new documentation entries by calling /control/queue_action.
 """
 
-# === Trigger logic for when to use code context ===
-def matches_trigger(query: str) -> bool:
-    q = query.lower().strip()
-    patterns = [
-        r"review.*code",
-        r"analyze.*code",
-        r"audit.*code",
-        r"read.*source",
-        r"source.*review",
-    ]
-    return any(re.search(p, q) for p in patterns)
+# === Trigger logic to determine if code/doc context is needed ===
+def needs_code_context(query: str) -> bool:
+    keywords = ["code", "review", "audit", "directory", "structure", "files", "access", "source"]
+    return any(kw in query.lower() for kw in keywords)
 
-# === Unified answer function (calls GPT-4) ===
+# === Trigger to detect docgen requests ===
+def wants_docgen(query: str) -> str | None:
+    match = re.search(r"(?:generate|create|make).*doc.*for (.+\.\w+)", query.lower())
+    if match:
+        return match.group(1).strip()
+    return None
+
+# === Main GPT-powered answer function ===
 async def answer(query: str) -> str:
     print(f"[agent] Incoming query: {query}")
     query_lower = query.lower()
 
-    if matches_trigger(query_lower):
-        print("[agent] Code review mode triggered.")
-        code = read_source_files(["services", "src/app", "src/components"])
+    # === Autogenerate a doc ===
+    target_path = wants_docgen(query_lower)
+    if target_path:
+        print(f"[agent] Generating doc for: {target_path}")
+        return await generate_doc_for_path(target_path)
+
+    if needs_code_context(query_lower):
+        print("[agent] Context-aware mode triggered.")
+        code = read_source_files(["services", "src/app", "src/components", "routes", "."], exts=[".py", ".ts", ".tsx", ".json", ".env"])
         docs = read_docs("docs/")
-        context = code + "\n\n" + docs
+        context = code[:5000] + "\n\n" + docs[:3000]  # limit total context
         print(f"[agent] Combined context length: {len(context)}")
     else:
         hits = kb.search(query, k=4)
@@ -58,10 +77,62 @@ async def answer(query: str) -> str:
 
     return response.choices[0].message.content
 
-# === Helper: Read source code from multiple directories ===
+# === Generate and queue documentation for a specific source file ===
+async def generate_doc_for_path(rel_path: str) -> str:
+    base = Path(__file__).resolve().parents[1]
+    full_path = base / rel_path
+
+    if not full_path.exists():
+        return f"[error] File not found: {rel_path}"
+
+    content = full_path.read_text()
+    prompt = f"""
+You are a helpful documentation bot. Read the following source file and write a useful Markdown documentation entry
+about what it is, what it does, and how it's used. Keep it concise and developer-friendly.
+
+File: {rel_path}
+
+```
+{content[:3000]}
+```
+"""
+
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        stream=False,
+        temperature=0.3,
+    )
+
+    doc_markdown = response.choices[0].message.content
+    doc_path = f"docs/generated/{rel_path.replace('/', '_').replace('.', '-')}.md"
+
+    payload = {
+        "type": "write_file",
+        "path": doc_path,
+        "content": doc_markdown
+    }
+
+    print(f"[agent] Queuing file to {doc_path}")
+    async with httpx.AsyncClient() as client:
+        res = await client.post(
+            RAILWAY_URL,
+            headers={"X-API-Key": RAILWAY_KEY},
+            json=payload
+        )
+        if res.status_code == 200:
+            return f"✅ Documentation queued to: {doc_path}"
+        else:
+            return f"❌ Failed to queue documentation: {res.status_code} {res.text}"
+
+# === Helper: Load source code from multiple folders ===
 def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
     base = Path(__file__).resolve().parents[1]
     code = []
+    excluded = ["node_modules", ".git", ".venv", "__pycache__", ".next"]
 
     for root in roots:
         path = base / root
@@ -70,7 +141,11 @@ def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
             continue
 
         for f in path.rglob("*"):
-            if f.suffix in exts and f.is_file() and "venv" not in str(f):
+            if (
+                f.suffix in exts
+                and f.is_file()
+                and not any(ex in str(f) for ex in excluded)
+            ):
                 try:
                     content = f.read_text()
                     snippet = f"\n# File: {f.relative_to(base)}\n{content}"
@@ -80,7 +155,7 @@ def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
                     continue
     return "\n".join(code)
 
-# === Helper: Read docs as plain text from /docs ===
+# === Helper: Read plain text or markdown docs from /docs ===
 def read_docs(root="docs", exts=[".md", ".txt"]):
     base = Path(__file__).resolve().parents[1]
     path = base / root
