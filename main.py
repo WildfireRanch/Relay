@@ -10,7 +10,7 @@ app = FastAPI()
 # === Enable CORS so Vercel frontend can call this backend ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://relay.wildfireranch.us"]
+    allow_origins=["https://relay.wildfireranch.us"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
