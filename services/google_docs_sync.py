@@ -7,6 +7,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from markdownify import markdownify as md
+from google.auth.transport.requests import Request  # ✅ Added missing import for token refresh
 
 # === Config ===
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"]
@@ -26,7 +27,8 @@ def get_google_service():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            creds = flow.run_local_server(port=0)
+            # Use terminal-based auth flow for headless environments like Codespaces
+            creds = flow.run_console()
         with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
     drive_service = build('drive', 'v3', credentials=creds)
