@@ -25,3 +25,5 @@ nodered-data/*
 *.swo
 __pycache__/
 *.pyc
+frontend/sync/credentials.json
+**/credentials.json
