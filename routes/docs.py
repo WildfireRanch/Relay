@@ -1,5 +1,5 @@
-# routes/docs.py (renamed from context.py for clarity and structure)
-from fastapi import APIRouter, HTTPException
+# routes/docs.py (absolute path fix for Codespaces)
+from fastapi import APIRouter, HTTPException, Query
 from services.logs import get_recent_logs, log_and_refresh
 from services.google_docs_sync import sync_google_docs
 from openai import OpenAI
@@ -8,10 +8,12 @@ import os
 
 router = APIRouter(prefix="/docs", tags=["docs"])
 
-# Path to the context file generated from session logs
-doc_path = Path("docs/generated/relay_context.md")
+# === Absolute path to docs directory (based on Codespaces layout) ===
+DOCS_PATH = Path("/workspaces/codespaces-blank/docs")
+doc_path = DOCS_PATH / "generated/relay_context.md"
 doc_path.parent.mkdir(parents=True, exist_ok=True)
 
+# === Context summarization ===
 @router.post("/update_context")
 def update_context_summary():
     try:
@@ -19,10 +21,8 @@ def update_context_summary():
         if not logs:
             return {"status": "no logs to summarize"}
 
-        # Prepare the text block from log entries
         text = "\n".join(f"[{l['source']}] {l['message']}" for l in logs)
 
-        # Use OpenAI API to summarize log content
         client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         response = client.chat.completions.create(
             model="gpt-4o",
@@ -33,8 +33,6 @@ def update_context_summary():
         )
 
         summary = response.choices[0].message.content.strip()
-
-        # Write summary to markdown file
         doc_path.write_text(f"# Relay Context (auto-generated)\n\n{summary}", encoding="utf-8")
         log_and_refresh("system", "Updated relay_context.md from session logs.")
 
@@ -43,6 +41,7 @@ def update_context_summary():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# === Google Docs sync ===
 @router.post("/sync_google")  # legacy alias
 def legacy_sync_google():
     return sync_docs_and_update()
@@ -55,3 +54,22 @@ def sync_docs_and_update():
         return {"status": "ok", "synced_docs": synced}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# === File viewer endpoints ===
+@router.get("/list")
+def list_docs():
+    if not DOCS_PATH.exists():
+        raise HTTPException(status_code=404, detail="Docs folder missing.")
+    files = [
+        str(p.relative_to(DOCS_PATH))
+        for p in DOCS_PATH.rglob("*")
+        if p.suffix in [".md", ".txt"]
+    ]
+    return {"files": sorted(files)}
+
+@router.get("/view")
+def view_doc(path: str = Query(..., description="Path relative to /docs")):
+    full_path = DOCS_PATH / path
+    if not full_path.exists() or not full_path.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    return {"content": full_path.read_text(encoding="utf-8")}

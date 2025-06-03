@@ -1,13 +1,18 @@
-# main.py
+# main.py (bulletproof version)
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pathlib import Path
 
 # === Route modules ===
-from routes import ask, status, control, docs  # 'docs' now handles sync + context
+from routes import ask, status, control, docs  # docs now handles sync, context, view, list
+
+# === Ensure docs directory structure exists at startup ===
+Path("/workspaces/codespaces-blank/docs/imported").mkdir(parents=True, exist_ok=True)
+Path("/workspaces/codespaces-blank/docs/generated").mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 
-# === Enable CORS so Vercel frontend can call this backend ===
+# === Enable CORS for frontend (lock to production domain) ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://relay.wildfireranch.us"],
@@ -20,7 +25,7 @@ app.add_middleware(
 app.include_router(ask.router)
 app.include_router(status.router)
 app.include_router(control.router)
-app.include_router(docs.router)  # includes /docs/sync, /docs/update_context, /docs/list, etc.
+app.include_router(docs.router)
 
 # === Root heartbeat ===
 @app.get("/")
