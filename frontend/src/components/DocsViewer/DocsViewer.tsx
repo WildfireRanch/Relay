@@ -1,43 +1,53 @@
+// components/DocsViewer.tsx
 "use client"
 
-import { useState } from "react"
-import { Textarea } from "@/components/ui/textarea"
+import { useEffect, useState } from "react"
+import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
 export default function DocsViewer() {
-  const [query, setQuery] = useState("")
-  const [result, setResult] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [docs, setDocs] = useState<string[]>([])
+  const [activeDoc, setActiveDoc] = useState<string | null>(null)
+  const [content, setContent] = useState<string>("")
 
-  async function searchDocs() {
-    if (!query) return
-    setLoading(true)
-    const res = await fetch("https://relay.wildfireranch.us/docs/search?q=" + encodeURIComponent(query), {
-      headers: {
-        "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
-      }
-    })
-    const data = await res.json()
-    setResult(data.result || "No docs found.")
-    setLoading(false)
-  }
+  useEffect(() => {
+    fetch("/api/docs/list")
+      .then(res => res.json())
+      .then(data => setDocs(data.files || []))
+  }, [])
+
+  useEffect(() => {
+    if (activeDoc) {
+      fetch(`/api/docs/view?path=${encodeURIComponent(activeDoc)}`)
+        .then(res => res.json())
+        .then(data => setContent(data.content || ""))
+    }
+  }, [activeDoc])
 
   return (
-    <div className="max-w-xl space-y-4">
-      <Textarea
-        placeholder="Search your docs..."
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        disabled={loading}
-      />
-      <Button onClick={searchDocs} disabled={loading || !query}>
-        {loading ? "Searching..." : "Search"}
-      </Button>
-      {result && (
-        <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border">
-          {result}
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="space-y-2 col-span-1">
+        <h2 className="font-semibold">Docs</h2>
+        <div className="h-[400px] overflow-auto border rounded-md p-2">
+          {docs.map((doc) => (
+            <Button
+              key={doc}
+              variant={doc === activeDoc ? "default" : "ghost"}
+              className="w-full justify-start text-left"
+              onClick={() => setActiveDoc(doc)}
+            >
+              {doc.replace("imported/", "")}
+            </Button>
+          ))}
         </div>
-      )}
+      </div>
+
+      <div className="col-span-3">
+        <h2 className="font-semibold mb-2">{activeDoc}</h2>
+        <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm">
+          {content || "Select a document to view its content."}
+        </div>
+      </div>
     </div>
   )
 }
