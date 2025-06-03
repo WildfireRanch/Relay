@@ -2,7 +2,6 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 
 export default function DocsViewer() {
@@ -10,12 +9,14 @@ export default function DocsViewer() {
   const [activeDoc, setActiveDoc] = useState<string | null>(null)
   const [content, setContent] = useState<string>("")
 
+  // Fetch available document filenames on mount
   useEffect(() => {
     fetch("/api/docs/list")
       .then(res => res.json())
       .then(data => setDocs(data.files || []))
   }, [])
 
+  // Fetch selected document content
   useEffect(() => {
     if (activeDoc) {
       fetch(`/api/docs/view?path=${encodeURIComponent(activeDoc)}`)
@@ -26,6 +27,7 @@ export default function DocsViewer() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {/* Sidebar: Document list */}
       <div className="space-y-2 col-span-1">
         <h2 className="font-semibold">Docs</h2>
         <div className="h-[400px] overflow-auto border rounded-md p-2">
@@ -42,6 +44,7 @@ export default function DocsViewer() {
         </div>
       </div>
 
+      {/* Content viewer */}
       <div className="col-span-3">
         <h2 className="font-semibold mb-2">{activeDoc}</h2>
         <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm">
