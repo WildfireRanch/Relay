@@ -1,4 +1,4 @@
-# routes/docs.py (renamed from context.py for clarity and structure)
+# routes/context.py
 from fastapi import APIRouter, HTTPException
 from services.logs import get_recent_logs, log_and_refresh
 from services.google_docs_sync import sync_google_docs
@@ -6,13 +6,13 @@ from openai import OpenAI
 from pathlib import Path
 import os
 
-router = APIRouter(prefix="/docs", tags=["docs"])
+router = APIRouter(prefix="/context", tags=["context"])
 
 # Path to the context file generated from session logs
 doc_path = Path("docs/generated/relay_context.md")
 doc_path.parent.mkdir(parents=True, exist_ok=True)
 
-@router.post("/update_context")
+@router.post("/update")
 def update_context_summary():
     try:
         logs = get_recent_logs(100)
@@ -43,11 +43,12 @@ def update_context_summary():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/sync_google")  # legacy alias
+# Deprecated sync route for compatibility with /docs/sync_google
+@router.post("/sync_google")
 def legacy_sync_google():
     return sync_docs_and_update()
 
-@router.post("/sync")
+@router.post("/sync_docs")
 def sync_docs_and_update():
     try:
         synced = sync_google_docs()

@@ -1,15 +1,16 @@
+# main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 # === Route modules ===
-from routes import ask, status, control, docs
+from routes import ask, status, control, docs  # 'docs' now handles sync + context
 
 app = FastAPI()
 
 # === Enable CORS so Vercel frontend can call this backend ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Lock this down to your Vercel domain if needed
+    allow_origins=["https://relay.wildfireranch.us"]
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -19,7 +20,7 @@ app.add_middleware(
 app.include_router(ask.router)
 app.include_router(status.router)
 app.include_router(control.router)
-app.include_router(docs.router)  # ✅ Add /docs/list and /docs/view
+app.include_router(docs.router)  # includes /docs/sync, /docs/update_context, /docs/list, etc.
 
 # === Root heartbeat ===
 @app.get("/")
