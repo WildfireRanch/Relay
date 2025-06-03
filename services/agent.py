@@ -6,14 +6,15 @@ import services.kb as kb
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+# === System prompt given to GPT before user input ===
 SYSTEM_PROMPT = """
 You are Echo, a concise but knowledgeable assistant for Bret's Solar-Shack
 and infrastructure projects. Cite file paths when useful. If the user asks you
 to review the source code, scan for potential issues, bugs, or improvements.
 """
 
+# === Trigger logic for when to use code context ===
 def matches_trigger(query: str) -> bool:
-    """Check if user prompt wants code review."""
     q = query.lower().strip()
     patterns = [
         r"review.*code",
@@ -24,15 +25,17 @@ def matches_trigger(query: str) -> bool:
     ]
     return any(re.search(p, q) for p in patterns)
 
+# === Unified answer function (calls GPT-4) ===
 async def answer(query: str) -> str:
-    """Handle KB queries or full code review based on prompt."""
     print(f"[agent] Incoming query: {query}")
     query_lower = query.lower()
 
     if matches_trigger(query_lower):
         print("[agent] Code review mode triggered.")
-        context = read_source_files("services")[:8000] or "No code found."
-        print(f"[agent] Code context length: {len(context)}")
+        code = read_source_files(["services", "src/app", "src/components"])
+        docs = read_docs("docs/")
+        context = code + "\n\n" + docs
+        print(f"[agent] Combined context length: {len(context)}")
     else:
         hits = kb.search(query, k=4)
         context = "\n\n".join(
@@ -55,23 +58,44 @@ async def answer(query: str) -> str:
 
     return response.choices[0].message.content
 
+# === Helper: Read source code from multiple directories ===
+def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
+    base = Path(__file__).resolve().parents[1]
+    code = []
 
-def read_source_files(root="services", exts=[".py"]):
-    """Read all .py files under the given directory."""
+    for root in roots:
+        path = base / root
+        if not path.exists():
+            print(f"[agent] Path does not exist: {path}")
+            continue
+
+        for f in path.rglob("*"):
+            if f.suffix in exts and f.is_file() and "venv" not in str(f):
+                try:
+                    content = f.read_text()
+                    snippet = f"\n# File: {f.relative_to(base)}\n{content}"
+                    code.append(snippet)
+                except Exception as e:
+                    print(f"[agent] Failed to read {f}: {e}")
+                    continue
+    return "\n".join(code)
+
+# === Helper: Read docs as plain text from /docs ===
+def read_docs(root="docs", exts=[".md", ".txt"]):
     base = Path(__file__).resolve().parents[1]
     path = base / root
     if not path.exists():
-        print(f"[agent] Path does not exist: {path}")
+        print(f"[agent] Docs path not found: {path}")
         return ""
 
-    code = []
+    docs = []
     for f in path.rglob("*"):
-        if f.suffix in exts and f.is_file() and "venv" not in str(f):
+        if f.suffix in exts and f.is_file():
             try:
                 content = f.read_text()
-                snippet = f"\n# File: {f.relative_to(base)}\n{content}"
-                code.append(snippet)
+                snippet = f"\n# Doc: {f.relative_to(base)}\n{content}"
+                docs.append(snippet)
             except Exception as e:
-                print(f"[agent] Failed to read {f}: {e}")
+                print(f"[agent] Failed to read doc {f}: {e}")
                 continue
-    return "\n".join(code)
+    return "\n".join(docs)
