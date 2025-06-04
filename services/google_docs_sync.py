@@ -1,4 +1,4 @@
-# services/google_docs_sync.py
+# services/google_docs_sync.py (bulletproof: uses run_console for Codespaces/dev)
 import os
 import json
 from pathlib import Path
@@ -7,7 +7,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from markdownify import markdownify as md
-from google.auth.transport.requests import Request  # ✅ Added missing import for token refresh
+from google.auth.transport.requests import Request
 
 # === Config ===
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"]
@@ -27,7 +27,7 @@ def get_google_service():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            # Use terminal-based auth flow for headless environments like Codespaces
+            # Bulletproof: use run_console() in Codespaces/headless environments
             creds = flow.run_console()
         with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
