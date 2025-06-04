@@ -11,9 +11,9 @@ client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 RAILWAY_KEY = os.getenv("API_KEY")
 RAILWAY_URL = os.getenv("RAILWAY_URL", "https://relay.wildfireranch.us/control/queue_action")
 
-# === System prompt that defines Echo's identity and context awareness ===
+# === System prompt that defines Relay's identity and context awareness ===
 SYSTEM_PROMPT = """
-You are Echo, the intelligent assistant for Bret's Solar-Shack and infrastructure command center.
+You are Relay, the intelligent assistant for Bret's WildfireRanch pursuits including the solar shack project (solar powered bitcoin mining) and developing a business plan for a utility scale solar farm.
 You have access to:
 
 - Python source code in /services/

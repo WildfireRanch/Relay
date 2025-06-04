@@ -24,12 +24,27 @@ async def handle_options(request: Request):
     """
     return JSONResponse(status_code=200)
 
-# === Main ask route ===
+# === GET ask route ===
 @router.get("")  # No trailing slash keeps canonical /ask
-async def ask(q: str, user=Depends(auth)):
+async def ask_get(q: str, user=Depends(auth)):
     """
     Accepts query string param `q`, returns Echo agent's answer
     Requires valid X-API-Key header
     """
     answer_text: str = await agent.answer(q)
     return {"answer": answer_text}
+
+# === POST ask route ===
+@router.post("")
+async def ask_post(request: Request, user=Depends(auth)):
+    """
+    Accepts JSON payload { "q": "your question" }, returns agent answer
+    Enables POST usage with CORS-safe headers
+    """
+    data = await request.json()
+    q = data.get("q")
+    if not q:
+        raise HTTPException(status_code=400, detail="Missing 'q' in request body")
+    answer_text: str = await agent.answer(q)
+    return {"answer": answer_text}
+
