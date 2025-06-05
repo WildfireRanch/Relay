@@ -12,6 +12,7 @@ else:
 from pathlib import Path  # ✅ Needed for directory setup
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 
 # === Route modules ===
 from routes import ask, status, control, docs  # 'docs' now handles sync, context, view, list
@@ -41,6 +42,11 @@ app.include_router(ask.router)
 app.include_router(status.router)
 app.include_router(control.router)
 app.include_router(docs.router)
+
+# === Global OPTIONS route to handle all CORS preflight ===
+@app.options("/{rest_of_path:path}")
+async def preflight_handler(rest_of_path: str):
+    return Response(status_code=200)
 
 # === Heartbeat endpoint ===
 @app.get("/")
