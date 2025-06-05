@@ -1,7 +1,8 @@
 # main.py (bulletproof version)
-
 from dotenv import load_dotenv
-load_dotenv()  # ✅ Ensure .env is loaded on startup for all keys
+load_dotenv()
+import os
+print("OPENAI KEY IN USE:", os.getenv("OPENAI_API_KEY"))
 
 from pathlib import Path  # ✅ Needed for directory setup
 from fastapi import FastAPI
