@@ -1,3 +1,4 @@
+// File: components/AskAgent.tsx
 "use client"
 
 import { useState } from "react"
@@ -9,7 +10,7 @@ export default function AskAgent() {
   const [response, setResponse] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // === Send query to Relay backend ===
+  // === Sends a question to the Relay backend's /ask endpoint ===
   async function sendQuery() {
     console.log("🔑 Sending query:", query)
     console.log("🔐 Using key:", process.env.NEXT_PUBLIC_RELAY_KEY)
@@ -19,18 +20,27 @@ export default function AskAgent() {
     setResponse(null)
 
     try {
-      // Call Relay backend using correct query param (?question=...) and CORS-safe request
+      // Make a GET request without triggering CORS preflight
       const res = await fetch(
         "https://relay.wildfireranch.us/ask?question=" + encodeURIComponent(query),
         {
-          // 🚫 Do not send custom headers that trigger preflight
-          // X-API-Key will be handled via proxy or backend if needed
           method: "GET"
         }
       )
 
-      const data = await res.json()
-      setResponse(data.response || "No answer.")
+      // Log raw response
+      console.log("📦 Raw response:", res)
+
+      // Try to parse JSON and log it
+      const data = await res.json().catch(err => {
+        console.error("❌ Failed to parse JSON:", err)
+        return { error: "Invalid JSON response" }
+      })
+
+      console.log("📨 Parsed response:", data)
+
+      // Display response from backend
+      setResponse(data?.response ?? data?.answer ?? "No answer.")
     } catch (error) {
       console.error("❌ Failed to get response:", error)
       setResponse("Error contacting Relay.")
