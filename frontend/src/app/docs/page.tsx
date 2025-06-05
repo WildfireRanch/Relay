@@ -1,6 +1,6 @@
 // File: frontend/src/app/docs/page.tsx
 
-import { DocsViewer } from "@/components/DocsViewer"
+import DocsViewer from "../../components/DocsViewer/DocsViewer"
 
 export default function DocsPage() {
   return (
