@@ -9,6 +9,7 @@ export default function AskAgent() {
   const [response, setResponse] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // === Send query to Relay backend ===
   async function sendQuery() {
     console.log("🔑 Sending query:", query)
     console.log("🔐 Using key:", process.env.NEXT_PUBLIC_RELAY_KEY)
@@ -16,15 +17,26 @@ export default function AskAgent() {
     if (!query) return
     setLoading(true)
     setResponse(null)
-    const res = await fetch("https://relay.wildfireranch.us/ask?q=" + encodeURIComponent(query), {
-      headers: {
-        "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
-      }
-    })
 
-    const data = await res.json()
-    setResponse(data.answer || data.function_call?.arguments || "No answer.")
-    setLoading(false)
+    try {
+      // Call Relay backend using correct query param (?question=...)
+      const res = await fetch(
+        "https://relay.wildfireranch.us/ask?question=" + encodeURIComponent(query),
+        {
+          headers: {
+            "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
+          }
+        }
+      )
+
+      const data = await res.json()
+      setResponse(data.response || "No answer.")
+    } catch (error) {
+      console.error("❌ Failed to get response:", error)
+      setResponse("Error contacting Relay.")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
