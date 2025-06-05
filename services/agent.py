@@ -17,7 +17,7 @@ You are Relay, the intelligent assistant for Bret's WildfireRanch pursuits inclu
 You have access to:
 
 - Python source code in /services/
-- React and Next.js components in /src/app/ and /src/components/
+- React and Next.js components in /frontend/src/app/ and /frontend/src/components/
 - FastAPI routes in /routes/
 - A local knowledge base in /docs/
 
@@ -51,7 +51,7 @@ async def answer(query: str) -> str:
 
     if needs_code_context(query_lower):
         print("[agent] Context-aware mode triggered.")
-        code = read_source_files(["services", "src/app", "src/components", "routes", "."], exts=[".py", ".ts", ".tsx", ".json", ".env"])
+        code = read_source_files(["services", "frontend/src/app", "frontend/src/components", "routes", "."], exts=[".py", ".ts", ".tsx", ".json", ".env"])
         docs = read_docs("docs/")
         context = code[:5000] + "\n\n" + docs[:3000]  # limit total context
         print(f"[agent] Combined context length: {len(context)}")
@@ -135,7 +135,6 @@ File: {rel_path}
 
 # === Helper: Load source code from multiple folders ===
 def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
-    # Allow dynamic base path resolution via RELAY_PROJECT_ROOT
     env_root = os.getenv("RELAY_PROJECT_ROOT")
     base = Path(env_root).resolve() if env_root else Path.cwd()
     print(f"[agent] Using base path: {base}")
@@ -166,7 +165,8 @@ def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
 
 # === Helper: Read plain text or markdown docs from /docs ===
 def read_docs(root="docs", exts=[".md", ".txt"]):
-    base = Path(__file__).resolve().parents[1]
+    env_root = os.getenv("RELAY_PROJECT_ROOT")
+    base = Path(env_root).resolve() if env_root else Path.cwd()
     path = base / root
     if not path.exists():
         print(f"[agent] Docs path not found: {path}")
