@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 from services.agent import answer, client
 from openai import OpenAIError
 
@@ -41,7 +42,7 @@ async def test_openai():
     try:
         print("[test_openai] Sending test request to OpenAI...")
         response = await client.chat.completions.create(
-            model="gpt-4o",  # Change this if you're using a different model
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": "Ping test"}
@@ -49,11 +50,14 @@ async def test_openai():
         )
         return {"response": response.choices[0].message.content}
     except OpenAIError as e:
-        # Specific OpenAI API errors
         print("❌ OpenAIError:", e)
         return {"error": str(e)}
     except Exception as e:
-        # Catch-all fallback for unexpected issues
         import traceback
         traceback.print_exc()
         return {"error": f"Unexpected error: {str(e)}"}
+
+# === OPTIONS wildcard route to handle CORS preflight ===
+@router.options("/{path:path}")
+async def options_handler(path: str):
+    return JSONResponse(status_code=200)

@@ -1,8 +1,13 @@
-# main.py (bulletproof version)
 from dotenv import load_dotenv
 load_dotenv()
 import os
-print("OPENAI KEY IN USE:", os.getenv("OPENAI_API_KEY"))
+
+# ✅ Redacted API key confirmation for safety
+openai_key = os.getenv("OPENAI_API_KEY")
+if openai_key:
+    print("✅ OPENAI API key loaded:", openai_key[:5] + "..." + openai_key[-4:])
+else:
+    print("❌ OPENAI API key is missing or empty!")
 
 from pathlib import Path  # ✅ Needed for directory setup
 from fastapi import FastAPI
@@ -18,10 +23,14 @@ for subdir in ["docs/imported", "docs/generated"]:
 
 app = FastAPI()
 
-# === Enable CORS for frontend (locked to production domain) ===
+# === Enable CORS for frontend and local dev ===
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://relay.wildfireranch.us"],  # Change this if you have more trusted origins
+    allow_origins=[
+        "https://relay.wildfireranch.us",
+        "http://localhost:3000",
+        "https://yourproject.vercel.app"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
