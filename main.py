@@ -1,3 +1,5 @@
+# File: main.py
+
 from dotenv import load_dotenv
 load_dotenv()
 import os
@@ -9,13 +11,13 @@ if openai_key:
 else:
     print("❌ OPENAI API key is missing or empty!")
 
-from pathlib import Path  # ✅ Needed for directory setup
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 # === Route modules ===
-from routes import ask, status, control, docs  # 'docs' now handles sync, context, view, list
+from routes import ask, status, control, docs
 
 # === Ensure docs directory structure exists at startup ===
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -24,13 +26,13 @@ for subdir in ["docs/imported", "docs/generated"]:
 
 app = FastAPI()
 
-# === Enable CORS for frontend and local dev ===
+# === CORS configuration for Relay frontend & public domain ===
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://wildfireranch.us",
         "https://relay.wildfireranch.us",
-        "http://localhost:3000",
-        "https://yourproject.vercel.app"
+        "http://localhost:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
