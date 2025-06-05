@@ -12,15 +12,21 @@ export default function AskAgent() {
   // === Send query to Relay backend ===
   async function sendQuery() {
     console.log("🔑 Sending query:", query)
+    console.log("🔐 Using key:", process.env.NEXT_PUBLIC_RELAY_KEY)
 
     if (!query) return
     setLoading(true)
     setResponse(null)
 
     try {
-      // Temporarily remove custom headers to bypass CORS preflight
+      // Call Relay backend using correct query param (?question=...) and CORS-safe request
       const res = await fetch(
-        "https://relay.wildfireranch.us/ask?question=" + encodeURIComponent(query)
+        "https://relay.wildfireranch.us/ask?question=" + encodeURIComponent(query),
+        {
+          // 🚫 Do not send custom headers that trigger preflight
+          // X-API-Key will be handled via proxy or backend if needed
+          method: "GET"
+        }
       )
 
       const data = await res.json()

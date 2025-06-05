@@ -68,14 +68,19 @@ async def answer(query: str) -> str:
         {"role": "user", "content": query},
     ]
 
-    response = await client.chat.completions.create(
-        model="gpt-4o",
-        messages=messages,
-        stream=False,
-        temperature=0.3,
-    )
-
-    return response.choices[0].message.content
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            stream=False,
+            temperature=0.3,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print("❌ OpenAI call failed:", str(e))
+        import traceback
+        traceback.print_exc()
+        return "[error] OpenAI call failed. Check logs."
 
 # === Generate and queue documentation for a specific source file ===
 async def generate_doc_for_path(rel_path: str) -> str:
@@ -130,7 +135,11 @@ File: {rel_path}
 
 # === Helper: Load source code from multiple folders ===
 def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
-    base = Path(__file__).resolve().parents[1]
+    # Allow dynamic base path resolution via RELAY_PROJECT_ROOT
+    env_root = os.getenv("RELAY_PROJECT_ROOT")
+    base = Path(env_root).resolve() if env_root else Path.cwd()
+    print(f"[agent] Using base path: {base}")
+
     code = []
     excluded = ["node_modules", ".git", ".venv", "__pycache__", ".next"]
 
