@@ -8,7 +8,7 @@ from services import agent
 router = APIRouter(prefix="/ask", tags=["ask"])
 
 # === Allow CORS preflight OPTIONS without auth ===
-@router.options("")
+@router.options("/{path:path}")
 async def handle_options(_: Request):
     return JSONResponse(status_code=200)
 
