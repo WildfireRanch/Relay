@@ -1,4 +1,4 @@
-// components/DocsViewer.tsx
+// File: components/DocsViewer/DocsViewer.tsx
 "use client"
 
 import { useEffect, useState } from "react"
@@ -11,7 +11,7 @@ export default function DocsViewer() {
 
   // Fetch available document filenames on mount
   useEffect(() => {
-    fetch("/api/docs/list")
+    fetch("https://relay.wildfireranch.us/docs/list")
       .then(res => res.json())
       .then(data => setDocs(data.files || []))
   }, [])
@@ -19,7 +19,7 @@ export default function DocsViewer() {
   // Fetch selected document content
   useEffect(() => {
     if (activeDoc) {
-      fetch(`/api/docs/view?path=${encodeURIComponent(activeDoc)}`)
+      fetch(`https://relay.wildfireranch.us/docs/view?path=${encodeURIComponent(activeDoc)}`)
         .then(res => res.json())
         .then(data => setContent(data.content || ""))
     }
