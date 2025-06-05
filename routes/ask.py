@@ -1,34 +1,59 @@
-# routes/ask.py (CORS-safe, Railway-ready)
-import os
-import re
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
-from services import agent
+from fastapi import APIRouter, Query
+from services.agent import answer, client
+from openai import OpenAIError
 
-router = APIRouter(prefix="/ask", tags=["ask"])
+# Create the FastAPI router
+router = APIRouter()
 
-# === Allow CORS preflight OPTIONS without auth ===
-@router.options("/{path:path}")
-async def handle_options(_: Request):
-    return JSONResponse(status_code=200)
+# === GET-based /ask endpoint ===
+# Usage: /ask?question=your+query
+@router.get("/ask")
+async def ask_get(question: str = Query(..., description="User query")):
+    try:
+        print(f"[ask.py] Received GET question: {question}")
+        response = await answer(question)
+        return {"response": response}
+    except Exception as e:
+        # Print traceback to Railway logs for debugging
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
-# === Simple API key header auth ===
-def auth(x_api_key: str = Header(..., alias="X-API-Key")):
-    if x_api_key != os.getenv("API_KEY"):
-        raise HTTPException(status_code=401, detail="bad key")
+# === POST-based /ask endpoint ===
+# Usage: POST /ask with JSON payload: { "question": "your query" }
+@router.post("/ask")
+async def ask_post(payload: dict):
+    try:
+        question = payload.get("question", "")
+        print(f"[ask.py] Received POST question: {question}")
+        response = await answer(question)
+        return {"response": response}
+    except Exception as e:
+        # Full traceback for better error visibility
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
-# === GET support for legacy /ask?q=... ===
-@router.get("")
-async def ask_get(q: str, user=Depends(auth)):
-    answer_text: str = await agent.answer(q)
-    return {"answer": answer_text}
-
-# === POST support for JSON { "q": "..." } ===
-@router.post("")
-async def ask_post(request: Request, user=Depends(auth)):
-    data = await request.json()
-    q = data.get("q")
-    if not q:
-        raise HTTPException(status_code=400, detail="Missing 'q' in request body")
-    answer_text: str = await agent.answer(q)
-    return {"answer": answer_text}
+# === /test_openai route ===
+# Purpose: Isolate and verify that OpenAI API is working from Railway
+@router.get("/test_openai")
+async def test_openai():
+    try:
+        print("[test_openai] Sending test request to OpenAI...")
+        response = await client.chat.completions.create(
+            model="gpt-4o",  # Change this if you're using a different model
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Ping test"}
+            ]
+        )
+        return {"response": response.choices[0].message.content}
+    except OpenAIError as e:
+        # Specific OpenAI API errors
+        print("❌ OpenAIError:", e)
+        return {"error": str(e)}
+    except Exception as e:
+        # Catch-all fallback for unexpected issues
+        import traceback
+        traceback.print_exc()
+        return {"error": f"Unexpected error: {str(e)}"}
