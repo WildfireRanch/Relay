@@ -16,7 +16,7 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googlea
 CREDENTIALS_PATH = Path("/tmp/credentials.json")
 TOKEN_PATH = Path("frontend/sync/token.json")
 IMPORT_PATH = Path("docs/imported")
-COMMAND_CENTER_FOLDER_NAME = "Command_Center"
+COMMAND_CENTER_FOLDER_NAME = "COMMAND_CENTER"
 IMPORT_PATH.mkdir(parents=True, exist_ok=True)
 
 # === Auth ===
