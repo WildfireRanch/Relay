@@ -1,4 +1,5 @@
-# services/google_docs_sync.py (bulletproof: uses run_console for Codespaces/dev)
+# File: services/google_docs_sync.py (bulletproof: uses run_console for Codespaces/dev)
+
 import os
 import json
 from pathlib import Path
@@ -17,20 +18,29 @@ IMPORT_PATH = Path("docs/imported")
 COMMAND_CENTER_FOLDER_NAME = "Command_Center"
 IMPORT_PATH.mkdir(parents=True, exist_ok=True)
 
+# === Debug: Show where credentials and token are expected ===
+print(f"📂 Checking for credentials at: {CREDENTIALS_PATH.resolve()}")
+print(f"📂 Checking for token at: {TOKEN_PATH.resolve()}")
+
 # === Auth ===
 def get_google_service():
     creds = None
+
+    if not CREDENTIALS_PATH.exists():
+        raise FileNotFoundError(f"❌ Missing credentials.json at: {CREDENTIALS_PATH.resolve()}")
+
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            # Bulletproof: use run_console() in Codespaces/headless environments
             creds = flow.run_console()
         with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
+
     drive_service = build('drive', 'v3', credentials=creds)
     docs_service = build('docs', 'v1', credentials=creds)
     return drive_service, docs_service
@@ -73,3 +83,4 @@ def sync_google_docs():
         raise RuntimeError(f"Folder '{COMMAND_CENTER_FOLDER_NAME}' not found in Google Drive")
     files = get_docs_in_folder(drive_service, folder_id)
     return [fetch_and_save_doc(docs_service, f) for f in files]
+
