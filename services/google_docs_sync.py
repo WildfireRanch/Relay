@@ -1,4 +1,10 @@
-# File: services/google_docs_sync.py (bulletproof: decode credentials/token at runtime only)
+# File: services/google_docs_sync.py
+# Purpose: Google Docs sync for COMMAND_CENTER folder → local /docs/imported
+# Directory Structure:
+# - GOOGLE_CREDS_JSON is decoded at runtime into /tmp/credentials.json
+# - GOOGLE_TOKEN_JSON is decoded (if present) into frontend/sync/token.json
+# - Synced .md files are saved into docs/imported/
+# - OAuth flow is launched only if token is missing or invalid
 
 import os
 import json
@@ -28,7 +34,6 @@ def get_google_service():
 
     # Decode credentials from env at runtime only
     if not CREDENTIALS_PATH.exists():
-        # 💻 Local dev fallback (Codespaces or dev override)
         if os.getenv("ENV") == "local":
             local_path = Path("frontend/sync/credentials.json")
             print("🔧 Using local credentials.json from frontend/sync/")
@@ -44,7 +49,7 @@ def get_google_service():
             CREDENTIALS_PATH.write_text(decoded)
             print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
 
-    # Decode token from env at runtime only
+    # Decode token from env at runtime only (optional bootstrap)
     if not TOKEN_PATH.exists():
         token_raw = os.getenv("GOOGLE_TOKEN_JSON")
         print("🧪 GOOGLE_TOKEN_JSON found:", bool(token_raw))
@@ -56,18 +61,19 @@ def get_google_service():
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
-    # If no valid creds, perform OAuth flow
+    # If token missing or expired, launch interactive auth flow
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            print("🌐 Launching OAuth flow on http://localhost:8888...")
-            creds = flow.run_local_server(port=8080)  # 🔐 Patched: force static port to avoid redirect_uri_mismatch
+            print("🌐 Launching OAuth flow on dynamic localhost port...")
+            creds = flow.run_local_server(port=0)
+        # Save new token
         with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
 
-    # Build Google API clients
+    # Build API clients
     drive_service = build('drive', 'v3', credentials=creds)
     docs_service = build('docs', 'v1', credentials=creds)
     return drive_service, docs_service
