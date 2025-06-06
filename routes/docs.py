@@ -1,19 +1,21 @@
-# routes/docs.py (absolute path fix for Codespaces)
+# File: routes/docs.py (absolute path fix for Codespaces)
+
 from fastapi import APIRouter, HTTPException, Query
 from services.logs import get_recent_logs, log_and_refresh
 from services.google_docs_sync import sync_google_docs
+from services.kb import embed_docs
 from openai import OpenAI
 from pathlib import Path
 import os
 
 router = APIRouter(prefix="/docs", tags=["docs"])
 
-# === Absolute path to docs directory (based on Codespaces layout) ===
+# === Absolute path to docs directory (Codespaces-friendly) ===
 DOCS_PATH = Path("/workspaces/codespaces-blank/docs")
 doc_path = DOCS_PATH / "generated/relay_context.md"
 doc_path.parent.mkdir(parents=True, exist_ok=True)
 
-# === Context summarization ===
+# === Auto-generate context summary from recent logs ===
 @router.post("/update_context")
 def update_context_summary():
     try:
@@ -55,7 +57,28 @@ def sync_docs_and_update():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# === File viewer endpoints ===
+# === Embed all .md files into vector database (manual refresh) ===
+@router.post("/refresh_kb")
+def refresh_kb():
+    try:
+        embed_docs()
+        log_and_refresh("system", "Re-embedded all Markdown docs into KB.")
+        return {"status": "ok", "message": "Knowledge base updated."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === Combined: sync Google Docs and re-embed KB ===
+@router.post("/full_sync")
+def full_sync():
+    try:
+        synced = sync_google_docs()
+        embed_docs()
+        log_and_refresh("system", f"Full sync: {len(synced)} docs pulled and embedded.")
+        return {"status": "ok", "synced_docs": synced, "message": "Docs pulled and KB updated."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === List available Markdown and text files in /docs ===
 @router.get("/list")
 def list_docs():
     if not DOCS_PATH.exists():
@@ -67,6 +90,7 @@ def list_docs():
     ]
     return {"files": sorted(files)}
 
+# === Return the contents of a single Markdown doc ===
 @router.get("/view")
 def view_doc(path: str = Query(..., description="Path relative to /docs")):
     full_path = DOCS_PATH / path
