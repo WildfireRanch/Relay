@@ -1,7 +1,8 @@
-# File: services/google_docs_sync.py (bulletproof: uses run_console for Codespaces/dev)
+# File: services/google_docs_sync.py (bulletproof: uses run_console + base64 env for Railway)
 
 import os
 import json
+import base64
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -12,22 +13,29 @@ from google.auth.transport.requests import Request
 
 # === Config ===
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"]
-CREDENTIALS_PATH = Path("frontend/sync/credentials.json")
+
+# Use in-memory credential path (mounted securely via env)
+CREDENTIALS_PATH = Path("/tmp/credentials.json")
 TOKEN_PATH = Path("frontend/sync/token.json")
 IMPORT_PATH = Path("docs/imported")
 COMMAND_CENTER_FOLDER_NAME = "Command_Center"
 IMPORT_PATH.mkdir(parents=True, exist_ok=True)
 
-# === Debug: Show where credentials and token are expected ===
+# === Decode credentials from Railway secret if not present ===
+if not CREDENTIALS_PATH.exists():
+    raw = os.getenv("GOOGLE_CREDS_JSON")
+    if not raw:
+        raise FileNotFoundError("❌ Missing GOOGLE_CREDS_JSON in environment variables")
+    decoded = base64.b64decode(raw.encode()).decode()
+    CREDENTIALS_PATH.write_text(decoded)
+    print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
+
 print(f"📂 Checking for credentials at: {CREDENTIALS_PATH.resolve()}")
 print(f"📂 Checking for token at: {TOKEN_PATH.resolve()}")
 
 # === Auth ===
 def get_google_service():
     creds = None
-
-    if not CREDENTIALS_PATH.exists():
-        raise FileNotFoundError(f"❌ Missing credentials.json at: {CREDENTIALS_PATH.resolve()}")
 
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
