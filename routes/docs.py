@@ -6,6 +6,7 @@ from services.google_docs_sync import sync_google_docs
 from services.kb import embed_docs
 from openai import OpenAI
 from pathlib import Path
+import traceback
 import os
 
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -55,6 +56,7 @@ def sync_docs_and_update():
         log_and_refresh("system", f"Synced {len(synced)} docs from Google Drive into /docs/imported")
         return {"status": "ok", "synced_docs": synced}
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Embed all .md files into vector database (manual refresh) ===
@@ -65,6 +67,7 @@ def refresh_kb():
         log_and_refresh("system", "Re-embedded all Markdown docs into KB.")
         return {"status": "ok", "message": "Knowledge base updated."}
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Combined: sync Google Docs and re-embed KB ===
@@ -76,6 +79,8 @@ def full_sync():
         log_and_refresh("system", f"Full sync: {len(synced)} docs pulled and embedded.")
         return {"status": "ok", "synced_docs": synced, "message": "Docs pulled and KB updated."}
     except Exception as e:
+        print("❌ Full sync failed:", str(e))
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # === List available Markdown and text files in /docs ===
@@ -97,3 +102,4 @@ def view_doc(path: str = Query(..., description="Path relative to /docs")):
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
     return {"content": full_path.read_text(encoding="utf-8")}
+
