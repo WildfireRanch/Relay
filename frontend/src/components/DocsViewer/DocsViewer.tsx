@@ -11,7 +11,7 @@ export default function DocsViewer() {
   const [syncing, setSyncing] = useState(false)
   const [syncStatus, setSyncStatus] = useState<string | null>(null)
 
-  // Fetch available document filenames on mount or after sync
+  // Fetch available document filenames
   const loadDocs = () => {
     fetch("https://relay.wildfireranch.us/docs/list")
       .then(res => res.json())
@@ -31,7 +31,7 @@ export default function DocsViewer() {
     }
   }, [activeDoc])
 
-  // Trigger backend sync of Google Docs
+  // Trigger Google Docs sync
   const handleSync = async () => {
     setSyncing(true)
     setSyncStatus(null)
@@ -41,9 +41,9 @@ export default function DocsViewer() {
       })
       const data = await res.json()
       setSyncStatus(data.status || "✅ Sync complete")
-      loadDocs() // Refresh doc list after sync
+      loadDocs()
     } catch (err) {
-      setSyncStatus("❌ Sync failed")
+      setSyncStatus(`❌ Sync failed: ${err}`)
     } finally {
       setSyncing(false)
     }
@@ -51,7 +51,7 @@ export default function DocsViewer() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-      {/* Sidebar: Document list and sync control */}
+      {/* Sidebar */}
       <div className="space-y-4 col-span-1">
         <div className="space-y-2">
           <h2 className="font-semibold">Docs</h2>
@@ -69,7 +69,7 @@ export default function DocsViewer() {
           </div>
         </div>
 
-        {/* Sync Button */}
+        {/* Sync button */}
         <div>
           <Button
             onClick={handleSync}
@@ -84,7 +84,7 @@ export default function DocsViewer() {
         </div>
       </div>
 
-      {/* Content viewer */}
+      {/* Viewer */}
       <div className="col-span-3">
         <h2 className="font-semibold mb-2">{activeDoc}</h2>
         <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm">
