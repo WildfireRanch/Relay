@@ -4,9 +4,19 @@
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 
-export default function StatusPanel() {
-  const [status, setStatus] = useState<any>(null)
+// === Define a type-safe interface for the status response ===
+type StatusSummary = {
+  version?: { git_commit?: string }
+  paths?: {
+    base_path?: string
+    resolved_paths?: Record<string, boolean>
+  }
+}
 
+export default function StatusPanel() {
+  const [status, setStatus] = useState<StatusSummary | null>(null)
+
+  // === Fetch backend /status/summary on load ===
   useEffect(() => {
     fetch("https://relay.wildfireranch.us/status/summary")
       .then(res => res.json())

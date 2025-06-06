@@ -8,8 +8,8 @@ import StatusPanel from "@/components/StatusPanel"
 export default function Home() {
   return (
     <main className="p-6 space-y-6">
-      <h1 className="text-3xl font-bold">CommandCenter</h1>
-      <p className="text-muted-foreground">Your Relay agent is ready for action.</p>
+      <h1 className="text-3xl font-bold">WildfireRanchCommandCenter</h1>
+      <p className="text-muted-foreground">Relay is ready for action.</p>
 
       {/* === Quick Navigation === */}
       <div className="mt-4 space-x-4 text-sm text-muted-foreground">

@@ -52,13 +52,13 @@ export default function AskAgent() {
   return (
     <div className="max-w-xl space-y-4">
       <Textarea
-        placeholder="Ask Echo something..."
+        placeholder="Ask Relay something..."
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         disabled={loading}
       />
       <Button onClick={sendQuery} disabled={loading || !query}>
-        {loading ? "Thinking..." : "Ask Echo"}
+        {loading ? "Thinking..." : "Ask Relay"}
       </Button>
       {response && (
         <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border">
