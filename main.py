@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 # === Route modules ===
-from routes import ask, status, control, docs, oauth  # ✅ Added oauth
+from routes import ask, status, control, docs, oauth, debug  # ✅ Added debug
 
 # === Ensure docs directory structure exists at startup ===
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -41,23 +41,4 @@ app.add_middleware(
 
 # === Register all route groups ===
 app.include_router(ask.router)
-app.include_router(status.router)
-app.include_router(control.router)
-app.include_router(docs.router)
-app.include_router(oauth.router)  # ✅ New OAuth routes
-
-# === Global OPTIONS route to handle all CORS preflight ===
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str):
-    return Response(status_code=200)
-
-# === Heartbeat endpoint ===
-@app.get("/")
-def root():
-    """Sanity check for load balancers, UptimeRobot, etc."""
-    return {"message": "Relay Agent is Online"}
-
-# === Entry point for local dev ===
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8080)
+app.inclu
