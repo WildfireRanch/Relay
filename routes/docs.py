@@ -16,6 +16,17 @@ DOCS_PATH = Path("/workspaces/codespaces-blank/docs")
 doc_path = DOCS_PATH / "generated/relay_context.md"
 doc_path.parent.mkdir(parents=True, exist_ok=True)
 
+# === Debug route to check environment variable presence ===
+@router.get("/debug/env")
+def debug_env():
+    creds_present = bool(os.getenv("GOOGLE_CREDS_JSON"))
+    token_present = bool(os.getenv("GOOGLE_TOKEN_JSON"))
+    return {
+        "GOOGLE_CREDS_JSON_PRESENT": creds_present,
+        "GOOGLE_TOKEN_JSON_PRESENT": token_present,
+        "cwd": os.getcwd()
+    }
+
 # === Auto-generate context summary from recent logs ===
 @router.post("/update_context")
 def update_context_summary():
@@ -102,4 +113,3 @@ def view_doc(path: str = Query(..., description="Path relative to /docs")):
     if not full_path.exists() or not full_path.is_file():
         raise HTTPException(status_code=404, detail=f"File not found: {path}")
     return {"content": full_path.read_text(encoding="utf-8")}
-

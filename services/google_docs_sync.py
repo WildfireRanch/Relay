@@ -25,16 +25,26 @@ def get_google_service():
 
     # Decode credentials from env at runtime only
     if not CREDENTIALS_PATH.exists():
-        raw = os.getenv("GOOGLE_CREDS_JSON")
-        if not raw:
-            raise FileNotFoundError("❌ Missing GOOGLE_CREDS_JSON in environment variables")
-        decoded = base64.b64decode(raw.encode()).decode()
-        CREDENTIALS_PATH.write_text(decoded)
-        print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
+        # 💻 Local dev fallback (override for Codespaces/dev only)
+        if os.getenv("ENV") == "local":
+            local_path = Path("frontend/sync/credentials.json")
+            print("🔧 Using local credentials.json from frontend/sync/")
+            if not local_path.exists():
+                raise FileNotFoundError("❌ Local credentials.json not found at frontend/sync/")
+            CREDENTIALS_PATH.write_text(local_path.read_text())
+        else:
+            raw = os.getenv("GOOGLE_CREDS_JSON")
+            print("🧪 Length of GOOGLE_CREDS_JSON:", len(raw) if raw else "Not Found")
+            if not raw:
+                raise FileNotFoundError("❌ Missing GOOGLE_CREDS_JSON in environment variables")
+            decoded = base64.b64decode(raw.encode()).decode()
+            CREDENTIALS_PATH.write_text(decoded)
+            print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
 
     # Decode token from env at runtime only
     if not TOKEN_PATH.exists():
         token_raw = os.getenv("GOOGLE_TOKEN_JSON")
+        print("🧪 GOOGLE_TOKEN_JSON found:", bool(token_raw))
         if token_raw:
             TOKEN_PATH.write_text(base64.b64decode(token_raw).decode())
             print(f"✅ token.json written to: {TOKEN_PATH}")
@@ -47,7 +57,7 @@ def get_google_service():
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            creds = flow.run_console()
+            creds = flow.run_local_server(port=0)
         with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
 
@@ -93,4 +103,3 @@ def sync_google_docs():
         raise RuntimeError(f"Folder '{COMMAND_CENTER_FOLDER_NAME}' not found in Google Drive")
     files = get_docs_in_folder(drive_service, folder_id)
     return [fetch_and_save_doc(docs_service, f) for f in files]
-
