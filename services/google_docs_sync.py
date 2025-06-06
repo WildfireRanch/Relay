@@ -1,10 +1,8 @@
 # File: services/google_docs_sync.py
 # Purpose: Google Docs sync for COMMAND_CENTER folder → local /docs/imported
-# Directory Structure:
-# - GOOGLE_CREDS_JSON is decoded at runtime into /tmp/credentials.json
-# - GOOGLE_TOKEN_JSON is decoded (if present) into frontend/sync/token.json
-# - Synced .md files are saved into docs/imported/
-# - OAuth flow is launched only if token is missing or invalid
+# - Uses base64-encoded GOOGLE_CREDS_JSON and optional GOOGLE_TOKEN_JSON
+# - Converts Google Docs to Markdown
+# - Avoids browser-based OAuth in production environments
 
 import os
 import json
@@ -13,9 +11,8 @@ from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from markdownify import markdownify as md
 from google.auth.transport.requests import Request
+from markdownify import markdownify as md
 
 # === Config ===
 SCOPES = [
@@ -34,20 +31,13 @@ def get_google_service():
 
     # Decode credentials from env at runtime only
     if not CREDENTIALS_PATH.exists():
-        if os.getenv("ENV") == "local":
-            local_path = Path("frontend/sync/credentials.json")
-            print("🔧 Using local credentials.json from frontend/sync/")
-            if not local_path.exists():
-                raise FileNotFoundError("❌ Local credentials.json not found at frontend/sync/")
-            CREDENTIALS_PATH.write_text(local_path.read_text())
-        else:
-            raw = os.getenv("GOOGLE_CREDS_JSON")
-            print("🧪 Length of GOOGLE_CREDS_JSON:", len(raw) if raw else "Not Found")
-            if not raw:
-                raise FileNotFoundError("❌ Missing GOOGLE_CREDS_JSON in environment variables")
-            decoded = base64.b64decode(raw.encode()).decode()
-            CREDENTIALS_PATH.write_text(decoded)
-            print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
+        raw = os.getenv("GOOGLE_CREDS_JSON")
+        print("🧪 Length of GOOGLE_CREDS_JSON:", len(raw) if raw else "Not Found")
+        if not raw:
+            raise FileNotFoundError("❌ Missing GOOGLE_CREDS_JSON in environment variables")
+        decoded = base64.b64decode(raw.encode()).decode()
+        CREDENTIALS_PATH.write_text(decoded)
+        print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
 
     # Decode token from env at runtime only (optional bootstrap)
     if not TOKEN_PATH.exists():
@@ -61,19 +51,22 @@ def get_google_service():
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
-    # If token missing or expired, launch interactive auth flow
+    # Handle login flow or refresh
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            print("🌐 Launching OAuth flow on dynamic localhost port...")
-            creds = flow.run_local_server(port=0)
-        # Save new token
-        with open(TOKEN_PATH, 'w') as token:
-            token.write(creds.to_json())
+            if os.getenv("ENV") == "local":
+                flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
+                print("🌐 Launching OAuth flow on dynamic localhost port...")
+                creds = flow.run_local_server(port=0)
+                with open(TOKEN_PATH, 'w') as token:
+                    token.write(creds.to_json())
+                    print(f"✅ token.json saved to: {TOKEN_PATH}")
+            else:
+                raise RuntimeError("❌ GOOGLE_TOKEN_JSON is missing and interactive login is not allowed in production.")
 
-    # Build API clients
+    # Build Google API clients
     drive_service = build('drive', 'v3', credentials=creds)
     docs_service = build('docs', 'v1', credentials=creds)
     return drive_service, docs_service
@@ -116,3 +109,4 @@ def sync_google_docs():
         raise RuntimeError(f"Folder '{COMMAND_CENTER_FOLDER_NAME}' not found in Google Drive")
     files = get_docs_in_folder(drive_service, folder_id)
     return [fetch_and_save_doc(docs_service, f) for f in files]
+
