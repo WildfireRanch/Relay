@@ -1,112 +1,156 @@
 # File: services/google_docs_sync.py
-# Purpose: Google Docs sync for COMMAND_CENTER folder → local /docs/imported
-# - Uses base64-encoded GOOGLE_CREDS_JSON and optional GOOGLE_TOKEN_JSON
-# - Converts Google Docs to Markdown
-# - Avoids browser-based OAuth in production environments
+# Directory: /services
+# Purpose: Synchronize Google Docs from the COMMAND_CENTER Drive folder into local Markdown files
+# Usage:
+#   1. Set env var GOOGLE_CREDS_JSON to a base64-encoded Google client secret JSON
+#   2. (Optional) Set env var GOOGLE_TOKEN_JSON to a base64-encoded OAuth token JSON for bootstrapping
+#   3. For local development, set ENV=local to allow interactive OAuth login
+#   4. Call sync_google_docs() to fetch and convert all docs into docs/imported/
 
 import os
-import json
 import base64
 from pathlib import Path
+
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 from markdownify import markdownify as md
 
-# === Config ===
+# === Configuration Constants ===
 SCOPES = [
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/documents.readonly"
+    "https://www.googleapis.com/auth/documents.readonly",
 ]
 CREDENTIALS_PATH = Path("/tmp/credentials.json")
 TOKEN_PATH = Path("frontend/sync/token.json")
 IMPORT_PATH = Path("docs/imported")
-COMMAND_CENTER_FOLDER_NAME = "COMMAND_CENTER"
 IMPORT_PATH.mkdir(parents=True, exist_ok=True)
+COMMAND_CENTER_FOLDER_NAME = "COMMAND_CENTER"
 
-# === Auth ===
+# === Authentication and Service Setup ===
 def get_google_service():
+    """
+    Ensure we have valid Google API credentials, then build Drive and Docs services.
+    - Writes out credentials.json from GOOGLE_CREDS_JSON if missing
+    - Bootstraps token.json from GOOGLE_TOKEN_JSON env var or runs interactive OAuth
+    """
     creds = None
 
-    # Decode credentials from env at runtime only
+    # Write out credentials.json if not already present
     if not CREDENTIALS_PATH.exists():
         raw = os.getenv("GOOGLE_CREDS_JSON")
-        print("🧪 Length of GOOGLE_CREDS_JSON:", len(raw) if raw else "Not Found")
         if not raw:
-            raise FileNotFoundError("❌ Missing GOOGLE_CREDS_JSON in environment variables")
+            raise FileNotFoundError("Missing GOOGLE_CREDS_JSON environment variable.")
         decoded = base64.b64decode(raw.encode()).decode()
         CREDENTIALS_PATH.write_text(decoded)
-        print(f"✅ credentials.json written to: {CREDENTIALS_PATH}")
+        print(f"✅ Wrote client secrets to {CREDENTIALS_PATH}")
 
-    # Decode token from env at runtime only (optional bootstrap)
-    if not TOKEN_PATH.exists():
+    # Bootstrap token.json from env, if provided
+    if not TOKEN_PATH.exists() and os.getenv("GOOGLE_TOKEN_JSON"):
         token_raw = os.getenv("GOOGLE_TOKEN_JSON")
-        print("🧪 GOOGLE_TOKEN_JSON found:", bool(token_raw))
-        if token_raw:
+        try:
             TOKEN_PATH.write_text(base64.b64decode(token_raw).decode())
-            print(f"✅ token.json written to: {TOKEN_PATH}")
+            print(f"✅ Bootstrapped token.json to {TOKEN_PATH}")
+        except Exception as e:
+            print(f"❌ Failed to decode GOOGLE_TOKEN_JSON: {e}")
 
-    # Load token if available
+    # Load existing credentials
     if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
+        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
 
-    # Handle login flow or refresh
+    # Refresh or start OAuth flow
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Interactive login only allowed in local dev
             if os.getenv("ENV") == "local":
                 flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-                print("🌐 Launching OAuth flow on dynamic localhost port...")
                 creds = flow.run_local_server(port=0)
-                with open(TOKEN_PATH, 'w') as token:
-                    token.write(creds.to_json())
-                    print(f"✅ token.json saved to: {TOKEN_PATH}")
+                TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+                TOKEN_PATH.write_text(creds.to_json())
+                print(f"✅ Saved new token.json to {TOKEN_PATH}")
             else:
-                raise RuntimeError("❌ GOOGLE_TOKEN_JSON is missing and interactive login is not allowed in production.")
+                raise RuntimeError(
+                    "Missing valid credentials and interactive login is disabled in production."
+                )
 
-    # Build Google API clients
-    drive_service = build('drive', 'v3', credentials=creds)
-    docs_service = build('docs', 'v1', credentials=creds)
+    # Build and return API clients
+    drive_service = build("drive", "v3", credentials=creds)
+    docs_service = build("docs", "v1", credentials=creds)
     return drive_service, docs_service
 
-# === Google Docs Operations ===
-def find_folder_id(drive_service, folder_name):
-    results = drive_service.files().list(
-        q=f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}'",
-        spaces='drive',
-        fields="files(id, name)",
-    ).execute()
-    folders = results.get('files', [])
-    return folders[0]['id'] if folders else None
+# === Google Docs Fetching Utilities ===
+def find_folder_id(drive_service, folder_name: str) -> str:
+    """
+    Find the Drive folder ID by name.
+    Returns folder ID or raises if not found.
+    """
+    query = f"mimeType='application/vnd.google-apps.folder' and name='{folder_name}'"
+    result = (
+        drive_service.files()
+        .list(q=query, spaces="drive", fields="files(id, name)")
+        .execute()
+    )
+    files = result.get("files", [])
+    if not files:
+        raise RuntimeError(f"Folder '{folder_name}' not found in Drive.")
+    return files[0]["id"]
 
-def get_docs_in_folder(drive_service, folder_id):
+
+def get_docs_in_folder(drive_service, folder_id: str) -> list:
+    """
+    List all Google Docs files within the given folder ID.
+    """
     query = f"'{folder_id}' in parents and mimeType='application/vnd.google-apps.document'"
-    results = drive_service.files().list(q=query, fields="files(id, name)").execute()
-    return results.get('files', [])
+    result = (
+        drive_service.files()
+        .list(q=query, fields="files(id, name)")
+        .execute()
+    )
+    return result.get("files", [])
 
-def fetch_and_save_doc(docs_service, file):
-    doc = docs_service.documents().get(documentId=file['id']).execute()
-    title = file['name'].replace(" ", "_").lower()
-    content = doc.get("body", {}).get("content", [])
+
+def fetch_and_save_doc(docs_service, file: dict) -> str:
+    """
+    Fetch a Google Doc by ID, convert its content to Markdown, and save locally.
+    Returns the filename of the saved Markdown file.
+    """
+    doc = docs_service.documents().get(documentId=file["id"]).execute()
+    # Build plain-text HTML-like content
+    elements = doc.get("body", {}).get("content", [])
     html = ""
-    for element in content:
-        if 'paragraph' in element:
-            for el in element['paragraph'].get('elements', []):
-                html += el.get('textRun', {}).get('content', '')
+    for element in elements:
+        if "paragraph" in element:
+            for part in element["paragraph"].get("elements", []):
+                html += part.get("textRun", {}).get("content", "")
             html += "\n"
+    # Convert to Markdown
     markdown = md(html)
-    out_path = IMPORT_PATH / f"{title}.md"
-    out_path.write_text(markdown, encoding='utf-8')
+    # Prepare output filename
+    title_slug = file["name"].replace(" ", "_").lower()
+    out_path = IMPORT_PATH / f"{title_slug}.md"
+    out_path.write_text(markdown, encoding="utf-8")
     return out_path.name
 
-# === Main Sync Function ===
-def sync_google_docs():
+# === Main Entry Point ===
+def sync_google_docs() -> list:
+    """
+    Main sync function.
+    - Authenticates
+    - Finds the COMMAND_CENTER folder
+    - Fetches and saves each doc to docs/imported/
+    Returns a list of saved filenames.
+    """
     drive_service, docs_service = get_google_service()
     folder_id = find_folder_id(drive_service, COMMAND_CENTER_FOLDER_NAME)
-    if not folder_id:
-        raise RuntimeError(f"Folder '{COMMAND_CENTER_FOLDER_NAME}' not found in Google Drive")
     files = get_docs_in_folder(drive_service, folder_id)
-    return [fetch_and_save_doc(docs_service, f) for f in files]
+    saved_files = [fetch_and_save_doc(docs_service, f) for f in files]
+    print(f"✅ Synced {len(saved_files)} files:", saved_files)
+    return saved_files
 
+# If run as a script, perform sync immediately
+enabled = __name__ == "__main__"
+if enabled:
+    sync_google_docs()
