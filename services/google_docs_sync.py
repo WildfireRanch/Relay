@@ -12,7 +12,10 @@ from markdownify import markdownify as md
 from google.auth.transport.requests import Request
 
 # === Config ===
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/documents.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/documents.readonly"
+]
 CREDENTIALS_PATH = Path("/tmp/credentials.json")
 TOKEN_PATH = Path("frontend/sync/token.json")
 IMPORT_PATH = Path("docs/imported")
@@ -25,7 +28,7 @@ def get_google_service():
 
     # Decode credentials from env at runtime only
     if not CREDENTIALS_PATH.exists():
-        # 💻 Local dev fallback (override for Codespaces/dev only)
+        # 💻 Local dev fallback (Codespaces or dev override)
         if os.getenv("ENV") == "local":
             local_path = Path("frontend/sync/credentials.json")
             print("🔧 Using local credentials.json from frontend/sync/")
@@ -49,18 +52,22 @@ def get_google_service():
             TOKEN_PATH.write_text(base64.b64decode(token_raw).decode())
             print(f"✅ token.json written to: {TOKEN_PATH}")
 
+    # Load token if available
     if TOKEN_PATH.exists():
         creds = Credentials.from_authorized_user_file(TOKEN_PATH, SCOPES)
 
+    # If no valid creds, perform OAuth flow
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
             flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
-            creds = flow.run_local_server(port=0)
+            print("🌐 Launching OAuth flow on http://localhost:8888...")
+            creds = flow.run_local_server(port=8080)  # 🔐 Patched: force static port to avoid redirect_uri_mismatch
         with open(TOKEN_PATH, 'w') as token:
             token.write(creds.to_json())
 
+    # Build Google API clients
     drive_service = build('drive', 'v3', credentials=creds)
     docs_service = build('docs', 'v1', credentials=creds)
     return drive_service, docs_service

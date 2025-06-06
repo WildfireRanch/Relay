@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 # === Route modules ===
-from routes import ask, status, control, docs
+from routes import ask, status, control, docs, oauth  # ✅ Added oauth
 
 # === Ensure docs directory structure exists at startup ===
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -44,6 +44,7 @@ app.include_router(ask.router)
 app.include_router(status.router)
 app.include_router(control.router)
 app.include_router(docs.router)
+app.include_router(oauth.router)  # ✅ New OAuth routes
 
 # === Global OPTIONS route to handle all CORS preflight ===
 @app.options("/{rest_of_path:path}")
