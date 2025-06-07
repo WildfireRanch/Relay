@@ -5,6 +5,7 @@ from pathlib import Path
 from openai import AsyncOpenAI
 import services.kb as kb
 import httpx
+from services.context_engine import ContextEngine
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -26,11 +27,6 @@ If the user asks about code, structure, or documentation, include relevant conte
 You can generate and queue new documentation entries by calling /control/queue_action.
 """
 
-# === Trigger logic to determine if code/doc context is needed ===
-def needs_code_context(query: str) -> bool:
-    keywords = ["code", "review", "audit", "directory", "structure", "files", "access", "source"]
-    return any(kw in query.lower() for kw in keywords)
-
 # === Trigger to detect docgen requests ===
 def wants_docgen(query: str) -> str | None:
     match = re.search(r"(?:generate|create|make).*doc.*for (.+\.\w+)", query.lower())
@@ -49,18 +45,9 @@ async def answer(query: str) -> str:
         print(f"[agent] Generating doc for: {target_path}")
         return await generate_doc_for_path(target_path)
 
-    if needs_code_context(query_lower):
-        print("[agent] Context-aware mode triggered.")
-        code = read_source_files(["services", "frontend/src/app", "frontend/src/components", "routes", "."], exts=[".py", ".ts", ".tsx", ".json", ".env"])
-        docs = read_docs("docs/")
-        context = code[:5000] + "\n\n" + docs[:3000]  # limit total context
-        print(f"[agent] Combined context length: {len(context)}")
-    else:
-        hits = kb.search(query, k=4)
-        context = "\n\n".join(
-            f"[{i+1}] {h['path']}\n{h['snippet']}" for i, h in enumerate(hits)
-        ) or "No internal docs matched."
-        print(f"[agent] KB search context length: {len(context)}")
+    engine = ContextEngine()
+    context = engine.build_context(query_lower)
+    print(f"[agent] Context length: {len(context)}")
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -133,53 +120,3 @@ File: {rel_path}
         else:
             return f"❌ Failed to queue documentation: {res.status_code} {res.text}"
 
-# === Helper: Load source code from multiple folders ===
-def read_source_files(roots=["services"], exts=[".py", ".tsx", ".ts"]):
-    env_root = os.getenv("RELAY_PROJECT_ROOT")
-    base = Path(env_root).resolve() if env_root else Path.cwd()
-    print(f"[agent] Using base path: {base}")
-
-    code = []
-    excluded = ["node_modules", ".git", ".venv", "__pycache__", ".next"]
-
-    for root in roots:
-        path = base / root
-        if not path.exists():
-            print(f"[agent] Path does not exist: {path}")
-            continue
-
-        for f in path.rglob("*"):
-            if (
-                f.suffix in exts
-                and f.is_file()
-                and not any(ex in str(f) for ex in excluded)
-            ):
-                try:
-                    content = f.read_text()
-                    snippet = f"\n# File: {f.relative_to(base)}\n{content}"
-                    code.append(snippet)
-                except Exception as e:
-                    print(f"[agent] Failed to read {f}: {e}")
-                    continue
-    return "\n".join(code)
-
-# === Helper: Read plain text or markdown docs from /docs ===
-def read_docs(root="docs", exts=[".md", ".txt"]):
-    env_root = os.getenv("RELAY_PROJECT_ROOT")
-    base = Path(env_root).resolve() if env_root else Path.cwd()
-    path = base / root
-    if not path.exists():
-        print(f"[agent] Docs path not found: {path}")
-        return ""
-
-    docs = []
-    for f in path.rglob("*"):
-        if f.suffix in exts and f.is_file():
-            try:
-                content = f.read_text()
-                snippet = f"\n# Doc: {f.relative_to(base)}\n{content}"
-                docs.append(snippet)
-            except Exception as e:
-                print(f"[agent] Failed to read doc {f}: {e}")
-                continue
-    return "\n".join(docs)
