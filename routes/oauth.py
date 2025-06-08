@@ -19,19 +19,19 @@ SCOPES = [
 ]
 CREDENTIALS_PATH = Path("/tmp/credentials.json")
 TOKEN_PATH = Path("frontend/sync/token.json")
-# Post-auth landing page (path on the same host), can override with POST_AUTH_REDIRECT_URI
-default_post_redirect = "/status/summary"
-# Optional override for full OAuth callback URI
+# Default post-auth landing page (relative path)
+DEFAULT_POST_REDIRECT = "/status/summary"
+# Optional overrides (full URIs)
 OVERRIDE_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI")
-# Optional override for post-auth redirect URI
 OVERRIDE_POST_REDIRECT = os.getenv("POST_AUTH_REDIRECT_URI")
 
 @router.get("/google/auth")
 async def start_oauth(request: Request):
     """
+    Initiates the OAuth flow:
     1. Ensure client secrets in /tmp/credentials.json from GOOGLE_CREDS_JSON.
-    2. Determine redirect URI (env override or based on request.base_url).
-    3. Redirect user to Google's OAuth consent screen.
+    2. Determine redirect URI (override or based on request.base_url).
+    3. Redirect browser to Google consent screen.
     """
     # 1. Write client secrets if missing
     if not CREDENTIALS_PATH.exists():
@@ -41,20 +41,20 @@ async def start_oauth(request: Request):
         try:
             creds_json = base64.b64decode(raw).decode()
             CREDENTIALS_PATH.write_text(creds_json)
-            print(f"✅ Wrote client secrets to {CREDENTIALS_PATH} ({len(creds_json)} bytes)")
+            print(f"✅ Wrote client secrets to {CREDENTIALS_PATH}")
         except Exception as e:
             raise HTTPException(500, detail=f"Error decoding GOOGLE_CREDS_JSON: {e}")
 
     # 2. Determine redirect URI
     if OVERRIDE_REDIRECT_URI:
         redirect_uri = OVERRIDE_REDIRECT_URI
-        print(f"🔧 Using OVERRIDE redirect URI: {redirect_uri}")
+        print(f"🔧 Using override redirect URI: {redirect_uri}")
     else:
         base = str(request.base_url).rstrip("/")
         redirect_uri = f"{base}/google/callback"
         print(f"🔧 Using dynamic redirect URI: {redirect_uri}")
 
-    # 3. Create OAuth2 flow
+    # 3. Create flow and authorization URL
     flow = Flow.from_client_secrets_file(
         str(CREDENTIALS_PATH),
         scopes=SCOPES,
@@ -71,22 +71,22 @@ async def start_oauth(request: Request):
 @router.get("/google/callback")
 async def oauth_callback(request: Request, code: str = None, state: str = None):
     """
-    1. Validate 'code' parameter.
-    2. Exchange code for credentials using same redirect URI logic.
+    Handles the OAuth callback:
+    1. Validate 'code'.
+    2. Exchange code for credentials using redirect URI.
     3. Persist token.json.
-    4. Redirect user to post-auth page.
+    4. Redirect to post-auth landing (relative path).
     """
     if not code:
         raise HTTPException(400, detail="Missing authorization code in callback.")
 
-    # Ensure client secrets exist
     if not CREDENTIALS_PATH.exists():
         raise HTTPException(500, detail="Client secrets not found.")
 
-    # 2. Determine redirect URI for token exchange
+    # Determine redirect URI for token exchange
     if OVERRIDE_REDIRECT_URI:
         redirect_uri = OVERRIDE_REDIRECT_URI
-        print(f"🔧 Exchanging token with OVERRIDE redirect URI: {redirect_uri}")
+        print(f"🔧 Exchanging token with override redirect URI: {redirect_uri}")
     else:
         base = str(request.base_url).rstrip("/")
         redirect_uri = f"{base}/google/callback"
@@ -103,24 +103,23 @@ async def oauth_callback(request: Request, code: str = None, state: str = None):
         creds = flow.credentials
         print(f"✅ Obtained credentials (expires: {creds.expiry})")
     except Exception as e:
-        print(f"❌ Token exchange error: {e}")
+        print(f"❌ Token exchange failed: {e}")
         raise HTTPException(500, detail=f"Token exchange failed: {e}")
 
-    # 3. Persist token.json
+    # Persist token.json
     try:
         TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         TOKEN_PATH.write_text(creds.to_json())
         print(f"✅ Saved token.json to {TOKEN_PATH}")
     except Exception as e:
-        print(f"❌ Failed to save token.json: {e}")
-        raise HTTPException(500, detail=f"Failed to write token.json: {e}")
+        print(f"❌ Could not save token.json: {e}")
+        raise HTTPException(500, detail=f"Could not write token.json: {e}")
 
-    # 4. Redirect to post-auth page
+    # Redirect to post-auth page (use relative path to avoid port issues)
     if OVERRIDE_POST_REDIRECT:
         post_redirect = OVERRIDE_POST_REDIRECT
-        print(f"🔄 Redirecting user to OVERRIDE post-auth: {post_redirect}")
+        print(f"🔄 Redirecting to override post-auth: {post_redirect}")
     else:
-        base = str(request.base_url).rstrip("/")
-        post_redirect = f"{base}{default_post_redirect}"
-        print(f"🔄 Redirecting user to dynamic post-auth: {post_redirect}")
+        post_redirect = DEFAULT_POST_REDIRECT
+        print(f"🔄 Redirecting to relative post-auth path: {post_redirect}")
     return RedirectResponse(post_redirect)
