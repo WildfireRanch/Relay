@@ -1,7 +1,7 @@
 # File: routes/oauth.py
 # Directory: /routes
-# Purpose: Provide Google OAuth endpoints for both development (Codespaces) and production environments.
-#          Dynamic redirect URIs are derived from the incoming request to support dev previews.
+# Purpose: Provide Google OAuth endpoints for both development (Codespaces) and production.
+#          Supports dynamic and environment-overridden redirect URIs, robust logging, and token persistence.
 
 import os
 import base64
@@ -19,93 +19,108 @@ SCOPES = [
 ]
 CREDENTIALS_PATH = Path("/tmp/credentials.json")
 TOKEN_PATH = Path("frontend/sync/token.json")
-# Optional override for post-auth landing page in production
-DEFAULT_POST_AUTH_REDIRECT = "/status/summary"
+# Post-auth landing page (path on the same host), can override with POST_AUTH_REDIRECT_URI
+default_post_redirect = "/status/summary"
+# Optional override for full OAuth callback URI
+OVERRIDE_REDIRECT_URI = os.getenv("OAUTH_REDIRECT_URI")
+# Optional override for post-auth redirect URI
+OVERRIDE_POST_REDIRECT = os.getenv("POST_AUTH_REDIRECT_URI")
 
 @router.get("/google/auth")
 async def start_oauth(request: Request):
     """
-    Initiates the OAuth flow:
-    1. Ensure client secrets are written to /tmp/credentials.json from GOOGLE_CREDS_JSON.
-    2. Build an OAuth2 Flow with a redirect URI based on request.base_url.
-    3. Redirect the browser to Google's consent screen.
+    1. Ensure client secrets in /tmp/credentials.json from GOOGLE_CREDS_JSON.
+    2. Determine redirect URI (env override or based on request.base_url).
+    3. Redirect user to Google's OAuth consent screen.
     """
     # 1. Write client secrets if missing
     if not CREDENTIALS_PATH.exists():
         raw = os.getenv("GOOGLE_CREDS_JSON")
         if not raw:
-            raise HTTPException(status_code=500, detail="Missing GOOGLE_CREDS_JSON environment variable.")
+            raise HTTPException(500, detail="Missing GOOGLE_CREDS_JSON environment variable.")
         try:
-            decoded = base64.b64decode(raw.encode()).decode()
-            CREDENTIALS_PATH.write_text(decoded)
-            print(f"✅ Wrote client secrets to {CREDENTIALS_PATH} (length={len(decoded)})")
+            creds_json = base64.b64decode(raw).decode()
+            CREDENTIALS_PATH.write_text(creds_json)
+            print(f"✅ Wrote client secrets to {CREDENTIALS_PATH} ({len(creds_json)} bytes)")
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to decode/write client secrets: {e}")
+            raise HTTPException(500, detail=f"Error decoding GOOGLE_CREDS_JSON: {e}")
 
-    # 2. Build dynamic redirect URI
-    base = str(request.base_url).rstrip("/")
-    redirect_uri = f"{base}/google/callback"
-    print(f"🔧 Using redirect URI: {redirect_uri}")
+    # 2. Determine redirect URI
+    if OVERRIDE_REDIRECT_URI:
+        redirect_uri = OVERRIDE_REDIRECT_URI
+        print(f"🔧 Using OVERRIDE redirect URI: {redirect_uri}")
+    else:
+        base = str(request.base_url).rstrip("/")
+        redirect_uri = f"{base}/google/callback"
+        print(f"🔧 Using dynamic redirect URI: {redirect_uri}")
 
-    # 3. Create OAuth2 flow and authorization URL
+    # 3. Create OAuth2 flow
     flow = Flow.from_client_secrets_file(
-        client_secrets_file=str(CREDENTIALS_PATH),
+        str(CREDENTIALS_PATH),
         scopes=SCOPES,
         redirect_uri=redirect_uri,
     )
     auth_url, state = flow.authorization_url(
-        access_type='offline',
-        include_granted_scopes='true',
-        prompt='consent'
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent"
     )
-    print(f"🌐 Redirecting user to Google consent screen: {auth_url}")
+    print(f"🌐 Redirecting to Google consent: {auth_url}")
     return RedirectResponse(auth_url)
 
 @router.get("/google/callback")
 async def oauth_callback(request: Request, code: str = None, state: str = None):
     """
-    Handles the OAuth callback:
-    1. Validates the authorization code.
-    2. Exchanges code for credentials using the same dynamic redirect URI.
-    3. Persists token.json for subsequent API calls.
-    4. Redirects user to a post-auth landing page.
+    1. Validate 'code' parameter.
+    2. Exchange code for credentials using same redirect URI logic.
+    3. Persist token.json.
+    4. Redirect user to post-auth page.
     """
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code in callback request.")
+        raise HTTPException(400, detail="Missing authorization code in callback.")
 
     # Ensure client secrets exist
     if not CREDENTIALS_PATH.exists():
-        raise HTTPException(status_code=500, detail="Client secrets file not found.")
+        raise HTTPException(500, detail="Client secrets not found.")
 
-    # Reconstruct redirect URI for token exchange
-    base = str(request.base_url).rstrip("/")
-    redirect_uri = f"{base}/google/callback"
-    print(f"🔧 Exchanging token with redirect URI: {redirect_uri}")
+    # 2. Determine redirect URI for token exchange
+    if OVERRIDE_REDIRECT_URI:
+        redirect_uri = OVERRIDE_REDIRECT_URI
+        print(f"🔧 Exchanging token with OVERRIDE redirect URI: {redirect_uri}")
+    else:
+        base = str(request.base_url).rstrip("/")
+        redirect_uri = f"{base}/google/callback"
+        print(f"🔧 Exchanging token with dynamic redirect URI: {redirect_uri}")
 
-    # Exchange the authorization code for credentials
+    # Exchange code for credentials
     try:
         flow = InstalledAppFlow.from_client_secrets_file(
-            client_secrets_file=str(CREDENTIALS_PATH),
+            str(CREDENTIALS_PATH),
             scopes=SCOPES,
             redirect_uri=redirect_uri,
         )
         flow.fetch_token(code=code)
         creds = flow.credentials
-        print("✅ Fetched OAuth tokens successfully.")
+        print(f"✅ Obtained credentials (expires: {creds.expiry})")
     except Exception as e:
-        print(f"❌ Token exchange failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Token exchange failed: {e}")
+        print(f"❌ Token exchange error: {e}")
+        raise HTTPException(500, detail=f"Token exchange failed: {e}")
 
-    # Persist token.json
+    # 3. Persist token.json
     try:
         TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
         TOKEN_PATH.write_text(creds.to_json())
-        print(f"✅ token.json written to: {TOKEN_PATH} (expiry: {creds.expiry})")
+        print(f"✅ Saved token.json to {TOKEN_PATH}")
     except Exception as e:
-        print(f"❌ Failed to write token.json: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to write token.json: {e}")
+        print(f"❌ Failed to save token.json: {e}")
+        raise HTTPException(500, detail=f"Failed to write token.json: {e}")
 
-    # Determine post-auth redirect target
-    post_auth = os.getenv("POST_AUTH_REDIRECT_URI") or f"{base}{DEFAULT_POST_AUTH_REDIRECT}"
-    print(f"🔄 Redirecting user to post-auth page: {post_auth}")
-    return RedirectResponse(post_auth)
+    # 4. Redirect to post-auth page
+    if OVERRIDE_POST_REDIRECT:
+        post_redirect = OVERRIDE_POST_REDIRECT
+        print(f"🔄 Redirecting user to OVERRIDE post-auth: {post_redirect}")
+    else:
+        base = str(request.base_url).rstrip("/")
+        post_redirect = f"{base}{default_post_redirect}"
+        print(f"🔄 Redirecting user to dynamic post-auth: {post_redirect}")
+    return RedirectResponse(post_redirect)
