@@ -11,8 +11,9 @@ import os
 
 router = APIRouter(prefix="/docs", tags=["docs"])
 
-# === Absolute path to docs directory (Codespaces-friendly) ===
-DOCS_PATH = Path("/workspaces/codespaces-blank/docs")
+# === Path to docs directory relative to project root ===
+ENV_ROOT = os.getenv("RELAY_PROJECT_ROOT")
+DOCS_PATH = Path(ENV_ROOT).resolve() / "docs" if ENV_ROOT else Path(__file__).resolve().parents[1] / "docs"
 doc_path = DOCS_PATH / "generated/relay_context.md"
 doc_path.parent.mkdir(parents=True, exist_ok=True)
 

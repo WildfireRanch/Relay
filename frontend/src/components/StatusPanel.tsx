@@ -15,14 +15,25 @@ type StatusSummary = {
 
 export default function StatusPanel() {
   const [status, setStatus] = useState<StatusSummary | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
   // === Fetch backend /status/summary on load ===
   useEffect(() => {
-    fetch("https://relay.wildfireranch.us/status/summary")
-      .then(res => res.json())
-      .then(data => setStatus(data))
+    const loadStatus = async () => {
+      try {
+        const res = await fetch("/api/status/summary")
+        if (!res.ok) throw new Error(res.statusText)
+        const data = await res.json()
+        setStatus(data)
+      } catch (err) {
+        console.error("Failed to fetch status", err)
+        setError("Failed to load status")
+      }
+    }
+    loadStatus()
   }, [])
 
+  if (error) return <p>{error}</p>
   if (!status) return <p>Loading status...</p>
 
   return (
