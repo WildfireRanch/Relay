@@ -1,5 +1,12 @@
-# Sensitive files
-# Python
+# File: .gitignore
+# Directory: project root
+# Purpose: Ignore credentials, tokens, env files, caches, and build artifacts
+
+# === Environment files ===
+.env
+*.env
+
+# === Python caches & venv ===
 __pycache__/
 *.py[cod]
 *.pyo
@@ -7,23 +14,30 @@ __pycache__/
 .venv/
 venv/
 env/
-*.env
 
-# Node-RED/Node.js
+# === Google OAuth artifacts ===
+# Client secrets (bootstrapped at runtime)
+frontend/sync/credentials.json
+# OAuth tokens (should never be committed)
+frontend/sync/token.json
+# Catch any stray credentials.json
+**/credentials.json
+# Temporary credentials path
+/tmp/credentials.json
+
+# === Node.js / frontend ===
 node_modules/
 npm-debug.log
+
+# === Node-RED data ===
 nodered-data/
 nodered-data/*
 
-# VSCode/Codespace
+# === VSCode / Codespaces ===
 .vscode/
 *.code-workspace
 
-# System
+# === System files ===
 .DS_Store
 *.swp
 *.swo
-__pycache__/
-*.pyc
-frontend/sync/credentials.json
-**/credentials.json
