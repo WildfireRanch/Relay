@@ -1,6 +1,8 @@
 // File: frontend/src/app/docs/page.tsx
+// Directory: frontend/src/app/docs
+// Purpose: Server component for the '/docs' route that embeds the client-side DocsViewer UI
 
-import DocsViewer from "../../components/DocsViewer/DocsViewer"
+import DocsViewer from "@/components/DocsViewer/DocsViewer"
 
 export default function DocsPage() {
   return (
