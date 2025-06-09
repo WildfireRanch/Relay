@@ -26,8 +26,7 @@ required_env = ["API_KEY", "OPENAI_API_KEY", "GOOGLE_CREDS_JSON"]
 missing = [key for key in required_env if not os.getenv(key)]
 if missing:
     logging.error(f"Missing required env vars: {missing}")
-    # In production, you might want to raise or exit
-    # raise RuntimeError(f"Missing required env vars: {missing}")
+    # Optionally raise or exit here in production
 else:
     logging.info("✅ All required environment variables are present.")
 
@@ -46,12 +45,15 @@ app = FastAPI(
 )
 
 # === Configure CORS ===
-# In production, configure origins via environment or hardcoded list below
+# Always keep this up to date with all frontend domains!
 frontend_origins = [
-    os.getenv("PROD_ORIGIN", "https://relay.wildfireranch.us"),
-    "https://status.wildfireranch.us",   # enable Status UI domain
-    "http://localhost:3000"             # local dev origin
-    "https://status.staging.wildfireranch.us"
+    "https://relay.wildfireranch.us",             # Main production backend
+    "https://status.wildfireranch.us",            # Main production UI
+    "https://relay.staging.wildfireranch.us",     # Staging backend (if API calls come from it)
+    "https://status.staging.wildfireranch.us",    # Staging UI
+    "http://localhost:3000",                      # Local dev UI
+    "http://127.0.0.1:3000"                       # Local dev alternate
+    # Add any other frontends as needed!
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -81,7 +83,7 @@ logging.info("✅ Registered all route modules.")
 # === Global preflight handler ===
 @app.options("/{rest_of_path:path}")
 async def preflight_handler(rest_of_path: str):
-    """Return 200 for all OPTIONS requests."""
+    """Return 200 for all OPTIONS requests (CORS preflight)."""
     return Response(status_code=200)
 
 # === Health check endpoint ===
