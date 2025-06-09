@@ -46,10 +46,11 @@ app = FastAPI(
 )
 
 # === Configure CORS ===
-# In production, replace wildcard or list with env-driven ORIGINS
+# In production, configure origins via environment or hardcoded list below
 frontend_origins = [
     os.getenv("PROD_ORIGIN", "https://relay.wildfireranch.us"),
-    "http://localhost:3000"
+    "https://status.wildfireranch.us",   # enable Status UI domain
+    "http://localhost:3000"             # local dev origin
 ]
 app.add_middleware(
     CORSMiddleware,
