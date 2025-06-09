@@ -1,41 +1,45 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# File: .gitignore
+# Directory: project root
+# Purpose: Ignore credentials, tokens, env files, caches, and build artifacts
 
-# dependencies
-/node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
+# === Environment files ===
+.env
+*.env
 
-# testing
-/coverage
+# === Python caches & venv ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
 
-# next.js
-/.next/
-/out/
+# === Google OAuth artifacts ===
+# Client secrets (bootstrapped at runtime)
+frontend/sync/credentials.json
+# OAuth tokens (should never be committed)
+frontend/sync/token.json
+# Catch any token.json in any location
+**/token.json
+# Catch any stray credentials.json files
+**/credentials.json
+# Temporary credentials path
+/tmp/credentials.json
 
-# production
-/build
+# === Node.js / frontend ===
+node_modules/
+npm-debug.log
 
-# misc
+# === Node-RED data ===
+nodered-data/
+nodered-data/*
+
+# === VSCode / Codespaces ===
+.vscode/
+*.code-workspace
+
+# === System files ===
 .DS_Store
-*.pem
-
-# debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-.pnpm-debug.log*
-
-# env files (can opt-in for committing if needed)
-.env*
-
-# vercel
-.vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts
+*.swp
+*.swo
