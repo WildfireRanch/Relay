@@ -1,11 +1,21 @@
 // File: components/StatusPanel.tsx
+// Directory: frontend/src/components
+// Purpose: Display Relay service status and embed a UI panel for Google Docs sync and KB refresh
+
 "use client"
 
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
+import DocsSyncPanel from "@/components/DocsSyncPanel"  // Corrected import path
 
-// === Define a type-safe interface for the status response ===
-type StatusSummary = {
+// Base API URL from environment
+const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
+if (process.env.NODE_ENV === 'development' && !API_URL) {
+  console.error("NEXT_PUBLIC_API_URL is not defined")
+}
+
+// Type definitions for status summary response
+interface StatusSummary {
   version?: { git_commit?: string }
   paths?: {
     base_path?: string
@@ -16,45 +26,60 @@ type StatusSummary = {
 export default function StatusPanel() {
   const [status, setStatus] = useState<StatusSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState<boolean>(true)
 
-  // === Fetch backend /status/summary on load ===
   useEffect(() => {
-    const loadStatus = async () => {
+    async function fetchStatus() {
+      if (!API_URL) {
+        setError("API URL not configured.")
+        setLoading(false)
+        return
+      }
       try {
-        const res = await fetch("/api/status/summary")
-        if (!res.ok) throw new Error(res.statusText)
-        const data = await res.json()
+        const res = await fetch(`${API_URL}/status/summary`)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data: StatusSummary = await res.json()
         setStatus(data)
       } catch (err) {
-        console.error("Failed to fetch status", err)
-        setError("Failed to load status")
+        console.error("Status fetch error:", err)
+        setError("Failed to load status.")
+      } finally {
+        setLoading(false)
       }
     }
-    loadStatus()
+    fetchStatus()
   }, [])
 
-  if (error) return <p>{error}</p>
-  if (!status) return <p>Loading status...</p>
+  if (loading) return <p className="text-sm text-muted-foreground">Loading service status…</p>
+  if (error) return <p className="text-sm text-red-500">{error}</p>
+  if (!status) return <p className="text-sm">No status data available.</p>
 
   return (
-    <Card className="mt-6">
-      <CardContent className="p-4 space-y-2">
-        <h2 className="text-xl font-bold">📊 Relay Status</h2>
-        <div>
-          <strong>Version:</strong> {status.version?.git_commit || "unknown"}
-        </div>
-        <div>
-          <strong>Base Path:</strong> {status.paths?.base_path}
-        </div>
-        <div>
-          <strong>Docs Folder Visibility:</strong>
-          <ul className="list-disc ml-6">
-            {Object.entries(status.paths?.resolved_paths || {}).map(([key, value]) => (
-              <li key={key}>{key}: {value ? "✅" : "❌"}</li>
-            ))}
-          </ul>
-        </div>
-      </CardContent>
-    </Card>
+    <>
+      <Card className="mt-6">
+        <CardContent className="p-4 space-y-3">
+          <h2 className="text-xl font-bold">📊 Relay Service Status</h2>
+          <div><strong>Version:</strong> {status.version?.git_commit || "unknown"}</div>
+          <div><strong>Base Path:</strong> {status.paths?.base_path || "—"}</div>
+          <div>
+            <strong>Docs Folder Health:</strong>
+            <ul className="list-disc ml-6">
+              {Object.entries(status.paths?.resolved_paths || {}).map(
+                ([pathKey, ok]) => (
+                  <li key={pathKey} className="text-sm">
+                    {pathKey}: {ok ? "✅ OK" : "❌ Missing"}
+                  </li>
+                )
+              )}
+            </ul>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Embed DocsSyncPanel below status */}
+      <div className="mt-6">
+        <DocsSyncPanel />
+      </div>
+    </>
   )
 }
