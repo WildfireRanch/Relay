@@ -51,6 +51,7 @@ frontend_origins = [
     os.getenv("PROD_ORIGIN", "https://relay.wildfireranch.us"),
     "https://status.wildfireranch.us",   # enable Status UI domain
     "http://localhost:3000"             # local dev origin
+    "https://status.staging.wildfireranch.us"
 ]
 app.add_middleware(
     CORSMiddleware,
