@@ -43,3 +43,6 @@ nodered-data/*
 .DS_Store
 *.swp
 *.swo
+
+*storybook.log
+storybook-static
