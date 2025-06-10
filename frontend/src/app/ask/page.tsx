@@ -85,6 +85,8 @@ export default function AskEchoPage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={loading}
+          name="echo-message"
+          id="echo-message"
         />
         <button
           type="submit"
