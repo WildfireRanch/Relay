@@ -1,6 +1,7 @@
 # File: ask.py
 # Directory: routes/ask.py
 
+import os
 from fastapi import APIRouter, Query, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 from services.agent import answer
@@ -60,6 +61,8 @@ async def ask_post(
 # Purpose: Verify OpenAI API connectivity
 @router.get("/test_openai")
 async def test_openai():
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
         print("[test_openai] Sending test request to OpenAI...")
         response = await client.chat.completions.create(
