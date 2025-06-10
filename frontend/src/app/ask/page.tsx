@@ -1,5 +1,5 @@
 "use client";
-// File: frongitend/src/app/ask/page.tsx
+// File: frontend/src/app/ask/page.tsx
 
 import React, { useState, useRef, useEffect } from "react";
 
@@ -45,7 +45,7 @@ export default function AskEchoPage() {
         ...msgs,
         { role: "assistant", content: data.response || "[no response]" },
       ]);
-    } catch (err) {
+    } catch {
       setMessages((msgs) => [
         ...msgs,
         { role: "assistant", content: "[error] Unable to get response." },
