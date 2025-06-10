@@ -6,13 +6,8 @@
 
 import { useEffect, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
-import DocsSyncPanel from "@/components/DocsSyncPanel"  // Corrected import path
-
-// Base API URL from environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
-if (process.env.NODE_ENV === 'development' && !API_URL) {
-  console.error("NEXT_PUBLIC_API_URL is not defined")
-}
+import DocsSyncPanel from "@/components/DocsSyncPanel"
+import { API_ROOT } from "@/lib/api" // ✅ Centralized import
 
 // Type definitions for status summary response
 interface StatusSummary {
@@ -30,13 +25,13 @@ export default function StatusPanel() {
 
   useEffect(() => {
     async function fetchStatus() {
-      if (!API_URL) {
+      if (!API_ROOT) {
         setError("API URL not configured.")
         setLoading(false)
         return
       }
       try {
-        const res = await fetch(`${API_URL}/status/summary`)
+        const res = await fetch(`${API_ROOT}/status/summary`)
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         const data: StatusSummary = await res.json()
         setStatus(data)

@@ -1,5 +1,7 @@
 // File: frontend/src/app/page.tsx
 
+import { API_ROOT } from "@/lib/api";  // ✅ Only import, don't redefine
+
 import AskAgent from "@/components/AskAgent/AskAgent"
 import Link from "next/link"
 import SearchPanel from "@/components/SearchPanel"
@@ -18,7 +20,7 @@ export default function Home() {
         <Link href="/status" className="underline hover:text-foreground">📊 Status</Link>
       </div>
 
-      {/* === AskAgent module === */}
+      {/* === AskAgent module (uses API_ROOT for API calls) === */}
       <div className="mt-6">
         <AskAgent />
       </div>
@@ -31,6 +33,11 @@ export default function Home() {
 
       {/* === Inline Relay Status === */}
       <StatusPanel />
+
+      {/* === Show API root in footer for debugging/visibility === */}
+      <div className="text-xs text-gray-400 text-center mt-6">
+        API root: <span className="font-mono">{API_ROOT}</span>
+      </div>
     </main>
   )
 }

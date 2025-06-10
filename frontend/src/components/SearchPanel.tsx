@@ -7,12 +7,7 @@
 import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-
-// Base API URL from environment
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || ""
-if (process.env.NODE_ENV === 'development' && !apiUrl) {
-  console.error("NEXT_PUBLIC_API_URL is not defined")
-}
+import { API_ROOT } from "@/lib/api" // ✅ Centralized import
 
 // Type definition for KB search result
 export type KBResult = {
@@ -22,6 +17,8 @@ export type KBResult = {
   updated: string
   similarity: number
 }
+
+const USER_ID = "bret-demo" // Replace with real user/session logic if available
 
 export default function SearchPanel() {
   // Component state
@@ -36,16 +33,19 @@ export default function SearchPanel() {
   const search = async () => {
     const q = query.trim()
     if (!q) return
-    if (!apiUrl) {
+    if (!API_ROOT) {
       setError("API URL not configured.")
       return
     }
     setError(null)
     setLoading(true)
     try {
-      const res = await fetch(`${apiUrl}/kb/search`, {
+      const res = await fetch(`${API_ROOT}/kb/search`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": USER_ID, // Multi-user context ready!
+        },
         body: JSON.stringify({ query: q, k: 5 }),
       })
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -68,6 +68,8 @@ export default function SearchPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && search()}
+          name="kb-query"
+          id="kb-query"
         />
         <Button onClick={search} disabled={loading}>
           {loading ? "⏳ Searching..." : "Search"}
@@ -83,7 +85,7 @@ export default function SearchPanel() {
           {results.map((r, idx) => (
             <div key={idx} className="border rounded p-4 text-sm space-y-1">
               <div className="text-muted-foreground">
-                <strong>{r.title}</strong> ({r.similarity.toFixed(2)})
+                <strong>{r.title}</strong> ({r.similarity?.toFixed?.(2) ?? "?"})
               </div>
               <div className="whitespace-pre-wrap">{r.snippet}</div>
               <div className="text-xs text-muted-foreground">Updated: {r.updated}</div>

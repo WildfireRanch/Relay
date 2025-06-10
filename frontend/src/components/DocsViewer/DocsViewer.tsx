@@ -1,3 +1,4 @@
+import { API_ROOT } from "@/lib/api";
 // File: components/DocsViewer.tsx
 // Directory: frontend/src/components/DocsViewer
 // Purpose: List and view Markdown docs, with ability to trigger Google Docs sync
@@ -8,7 +9,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 
 // Base API URL from environment
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || ""
+const apiUrl = API_ROOT || ""
 if (process.env.NODE_ENV === 'development' && !apiUrl) {
   console.error("NEXT_PUBLIC_API_URL is not defined")
 }

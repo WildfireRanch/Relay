@@ -4,6 +4,9 @@
 import { useState } from "react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import { API_ROOT } from "@/lib/api" // ✅ Use your new centralized API_ROOT
+
+const USER_ID = "bret-demo" // Replace with your actual user/session logic
 
 export default function AskAgent() {
   const [query, setQuery] = useState("")
@@ -12,21 +15,20 @@ export default function AskAgent() {
 
   // === Sends a question to the Relay backend's /ask endpoint ===
   async function sendQuery() {
-    console.log("🔑 Sending query:", query)
-    console.log("🔐 Using key:", process.env.NEXT_PUBLIC_RELAY_KEY)
-
     if (!query) return
     setLoading(true)
     setResponse(null)
 
     try {
-      // Make a GET request without triggering CORS preflight
-      const res = await fetch(
-        "https://relay.wildfireranch.us/ask?question=" + encodeURIComponent(query),
-        {
-          method: "GET"
-        }
-      )
+      // POST to /ask with JSON payload and user header
+      const res = await fetch(`${API_ROOT}/ask`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": USER_ID,
+        },
+        body: JSON.stringify({ question: query }),
+      })
 
       // Log raw response
       console.log("📦 Raw response:", res)
@@ -56,6 +58,8 @@ export default function AskAgent() {
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         disabled={loading}
+        name="relay-query"
+        id="relay-query"
       />
       <Button onClick={sendQuery} disabled={loading || !query}>
         {loading ? "Thinking..." : "Ask Relay"}

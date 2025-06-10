@@ -6,14 +6,9 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
+import { API_ROOT } from "@/lib/api" // ✅ Centralized API root
 
 export default function DocsSyncPanel() {
-  // Base API URL from environment
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL
-  if (!apiUrl) {
-    console.error("NEXT_PUBLIC_API_URL is not defined")
-  }
-
   // Component state
   const [status, setStatus] = useState<string | null>(null)
   const [files, setFiles] = useState<string[]>([])
@@ -24,7 +19,7 @@ export default function DocsSyncPanel() {
    * @param endpoint 'sync', 'refresh_kb', or 'full_sync'
    */
   const triggerSync = async (endpoint: string) => {
-    if (!apiUrl) {
+    if (!API_ROOT) {
       setStatus("❌ API URL not configured")
       return
     }
@@ -33,7 +28,7 @@ export default function DocsSyncPanel() {
     setFiles([])
     setLoading(true)
     try {
-      const res = await fetch(`${apiUrl}/docs/${endpoint}`, { method: "POST" })
+      const res = await fetch(`${API_ROOT}/docs/${endpoint}`, { method: "POST" })
       if (!res.ok) {
         throw new Error(`Request failed: ${res.status}`)
       }
