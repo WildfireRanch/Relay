@@ -1,42 +1,63 @@
-from fastapi import APIRouter, Query
+# File: ask.py
+# Directory: routes/ask.py
+
+from fastapi import APIRouter, Query, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
 from services.agent import answer, client
 from openai import OpenAIError
+from typing import Optional
 
-# Create the FastAPI router
 router = APIRouter()
 
 # === GET-based /ask endpoint ===
-# Usage: /ask?question=your+query
+# Usage: GET /ask?question=your+query
 @router.get("/ask")
-async def ask_get(question: str = Query(..., description="User query")):
+async def ask_get(
+    request: Request,
+    question: str = Query(..., description="User query"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
+    """
+    Handle GET requests to /ask.
+    Extracts user_id from header for multi-turn context.
+    """
+    user_id = x_user_id or "anonymous"
     try:
-        print(f"[ask.py] Received GET question: {question}")
-        response = await answer(question)
+        print(f"[ask.py] Received GET question from {user_id}: {question}")
+        response = await answer(user_id, question)
         return {"response": response}
     except Exception as e:
-        # Print traceback to Railway logs for debugging
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # === POST-based /ask endpoint ===
 # Usage: POST /ask with JSON payload: { "question": "your query" }
 @router.post("/ask")
-async def ask_post(payload: dict):
+async def ask_post(
+    request: Request,
+    payload: dict,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
+    """
+    Handle POST requests to /ask.
+    Extracts user_id from header for multi-turn context.
+    """
+    user_id = x_user_id or "anonymous"
+    question = payload.get("question", "")
     try:
-        question = payload.get("question", "")
-        print(f"[ask.py] Received POST question: {question}")
-        response = await answer(question)
+        print(f"[ask.py] Received POST question from {user_id}: {question}")
+        response = await answer(user_id, question)
         return {"response": response}
     except Exception as e:
-        # Full traceback for better error visibility
         import traceback
         traceback.print_exc()
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # === /test_openai route ===
-# Purpose: Isolate and verify that OpenAI API is working from Railway
+# Purpose: Verify OpenAI API connectivity
 @router.get("/test_openai")
 async def test_openai():
     try:
@@ -51,11 +72,12 @@ async def test_openai():
         return {"response": response.choices[0].message.content}
     except OpenAIError as e:
         print("❌ OpenAIError:", e)
-        return {"error": str(e)}
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return {"error": f"Unexpected error: {str(e)}"}
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
 
 # === OPTIONS wildcard route to handle CORS preflight ===
 @router.options("/{path:path}")
