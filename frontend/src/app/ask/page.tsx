@@ -1,4 +1,5 @@
-// File: frontend/src/app/ask/page.tsx
+"use client";
+// File: frongitend/src/app/ask/page.tsx
 
 import React, { useState, useRef, useEffect } from "react";
 
