@@ -1,10 +1,9 @@
-import { API_ROOT } from "@/lib/api";
 // File: components/DocsViewer.tsx
 // Directory: frontend/src/components/DocsViewer
 // Purpose: List and view Markdown docs, with ability to trigger Google Docs sync
-
 "use client";
 
+import { API_ROOT } from "@/lib/api";
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 
