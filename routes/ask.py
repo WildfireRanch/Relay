@@ -3,7 +3,7 @@
 
 from fastapi import APIRouter, Query, Request, Header, HTTPException
 from fastapi.responses import JSONResponse
-from services.agent import answer, client
+from services.agent import answer
 from openai import OpenAIError
 from typing import Optional
 
