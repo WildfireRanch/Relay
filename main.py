@@ -5,7 +5,7 @@
 #  - Validates critical configs
 #  - Applies CORS for dev and production origins
 #  - Mounts modular route groups (ask, status, control, docs, oauth, debug)
-#  - Provides health and preflight endpoints
+#  - Provides health and readiness endpoints
 #  - Ensures required directories exist for docs import/generation
 #  - Supports both local (uvicorn) and Railway deployment
 
@@ -16,7 +16,7 @@ import logging
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import JSONResponse
 
 # === Load environment configuration ===
 load_dotenv()  # load .env into os.environ
@@ -79,12 +79,6 @@ app.include_router(docs_router)
 app.include_router(oauth_router)
 app.include_router(debug_router)
 logging.info("✅ Registered all route modules.")
-
-# === Global preflight handler ===
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str):
-    """Return 200 for all OPTIONS requests (CORS preflight)."""
-    return Response(status_code=200)
 
 # === Health check endpoint ===
 @app.get("/", summary="Health check")
