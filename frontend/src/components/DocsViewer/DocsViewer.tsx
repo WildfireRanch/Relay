@@ -3,7 +3,7 @@ import { API_ROOT } from "@/lib/api";
 // Directory: frontend/src/components/DocsViewer
 // Purpose: List and view Markdown docs, with ability to trigger Google Docs sync
 
-"use client"
+"use client";
 
 import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
