@@ -128,17 +128,15 @@ class ContextEngine:
                 exts=[".py", ".ts", ".tsx", ".json", ".env"],
             )[:5000]
             docs = self.read_docs("docs")[:3000]
-            # Append KB summaries for user (if supported by your kb module)
             kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
             context = f"{code}\n\n{docs}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
         else:
-            # Use KB search for semantic context
-            hits = kb.search(query, k=4)
+            # Use KB search for semantic context (per-user)
+            hits = kb.search(query, user_id=self.user_id, k=4)
             snippets = []
             for i, h in enumerate(hits):
                 snippets.append(f"[{i+1}] {h['path']}\n{h['snippet']}")
             kb_context = "\n\n".join(snippets) or "No internal docs matched."
-            # Append KB summaries as well (if supported)
             kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
             context = f"{kb_context}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
         return context
