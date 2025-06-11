@@ -1,5 +1,6 @@
 # File: ask.py
-# Directory: routes/ask.py
+# Directory: routes/
+# Purpose: API routes for user chat/ask endpoint with per-user memory, multi-turn support, and OpenAI test.
 
 import os
 from fastapi import APIRouter, Query, Request, Header, HTTPException
@@ -32,7 +33,6 @@ async def ask_get(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # === POST-based /ask endpoint ===
 # Usage: POST /ask with JSON payload: { "question": "your query" }
 @router.post("/ask")
@@ -47,6 +47,8 @@ async def ask_post(
     """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
+    if not question:
+        raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
     try:
         print(f"[ask.py] Received POST question from {user_id}: {question}")
         response = await answer(user_id, question)
@@ -56,9 +58,8 @@ async def ask_post(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # === /test_openai route ===
-# Purpose: Verify OpenAI API connectivity
+# Purpose: Verify OpenAI API connectivity (for debugging only)
 @router.get("/test_openai")
 async def test_openai():
     from openai import AsyncOpenAI
@@ -80,9 +81,3 @@ async def test_openai():
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
-
-
-# === OPTIONS wildcard route to handle CORS preflight ===
-@router.options("/{path:path}")
-async def options_handler(path: str):
-    return JSONResponse(status_code=200)

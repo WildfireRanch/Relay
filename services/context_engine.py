@@ -131,8 +131,12 @@ class ContextEngine:
             kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
             context = f"{code}\n\n{docs}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
         else:
-            # Use KB search for semantic context (per-user)
-            hits = kb.search(query, user_id=self.user_id, k=4)
+            # Use KB search for semantic context (per-user if supported)
+            try:
+                hits = kb.search(query, user_id=self.user_id, k=4)
+            except TypeError:
+                # Fallback if kb.search doesn't accept user_id
+                hits = kb.search(query, k=4)
             snippets = []
             for i, h in enumerate(hits):
                 snippets.append(f"[{i+1}] {h['path']}\n{h['snippet']}")

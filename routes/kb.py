@@ -1,5 +1,6 @@
 # File: kb.py
-# Directory: routes/kb.py
+# Directory: routes/
+# Purpose: API routes for knowledge base (KB) semantic search and summary endpoints.
 
 from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
@@ -24,7 +25,11 @@ async def search_kb(
     """
     user_id = x_user_id or "anonymous"
     try:
-        results = kb.search(query=q.query, user_id=user_id, k=q.k)
+        # Try user-aware KB search, fallback to all docs if not supported
+        try:
+            results = kb.search(query=q.query, user_id=user_id, k=q.k)
+        except TypeError:
+            results = kb.search(query=q.query, k=q.k)
         return {"results": results}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -34,14 +39,11 @@ async def get_summary(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
     """
-    Retrieve the recent context summary for the user.
-    Uses a user-specific summary file if available, else a generic summary.
+    Fetch the recent context summary for a given user, or fallback to generic summary.
     """
     user_id = x_user_id or "anonymous"
     try:
         summary = kb.get_recent_summaries(user_id)
-        return {"user_id": user_id, "summary": summary}
+        return {"summary": summary}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-# EOF routes/kb.py
