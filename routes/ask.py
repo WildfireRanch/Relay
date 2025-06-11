@@ -1,49 +1,66 @@
-# File: ask.py
+# routes/ask.py
 # Directory: routes/
-# Purpose: API routes for user chat/ask endpoint with per-user memory, multi-turn support, and OpenAI test.
+# Purpose: API routes for user chat/ask endpoint with per-user memory, context pipeline, streaming, and audit logging.
 
 import os
 from fastapi import APIRouter, Query, Request, Header, HTTPException
-from fastapi.responses import JSONResponse
-from services.agent import answer
+from fastapi.responses import JSONResponse, StreamingResponse
+from typing import Optional, AsyncGenerator
+from services.context_engine import ContextEngine
+from services.agent import answer  # Should accept (user_id, question, context=None, stream=False)
 from openai import OpenAIError
-from typing import Optional
+import logging
+import datetime
 
 router = APIRouter()
 
+def log_interaction(user_id, question, context, response):
+    """Log user interaction for audit and future training."""
+    ts = datetime.datetime.utcnow().isoformat()
+    logline = f"{ts}\t{user_id}\tQ: {question}\tCTX: {len(context)} chars\tA: {str(response)[:80]}"
+    logging.info(logline)
+    # Optionally: append to file, DB, or Elastic
+
 # === GET-based /ask endpoint ===
-# Usage: GET /ask?question=your+query
 @router.get("/ask")
 async def ask_get(
     request: Request,
     question: str = Query(..., description="User query"),
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    debug: Optional[bool] = Query(False, description="Include context for debug")
 ):
     """
     Handle GET requests to /ask.
-    Extracts user_id from header for multi-turn context.
+    Uses ContextEngine for max-relevant context.
+    Optional debug param returns the context window.
     """
     user_id = x_user_id or "anonymous"
     try:
         print(f"[ask.py] Received GET question from {user_id}: {question}")
-        response = await answer(user_id, question)
-        return {"response": response}
+        ce = ContextEngine(user_id=user_id)
+        context = ce.build_context(question)
+        response = await answer(user_id, question, context=context)
+        log_interaction(user_id, question, context, response)
+        out = {"response": response}
+        if debug:
+            out["context"] = context
+        return out
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # === POST-based /ask endpoint ===
-# Usage: POST /ask with JSON payload: { "question": "your query" }
 @router.post("/ask")
 async def ask_post(
     request: Request,
     payload: dict,
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    debug: Optional[bool] = Query(False, description="Include context for debug")
 ):
     """
     Handle POST requests to /ask.
-    Extracts user_id from header for multi-turn context.
+    Uses ContextEngine for context.
     """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
@@ -51,15 +68,50 @@ async def ask_post(
         raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
     try:
         print(f"[ask.py] Received POST question from {user_id}: {question}")
-        response = await answer(user_id, question)
-        return {"response": response}
+        ce = ContextEngine(user_id=user_id)
+        context = ce.build_context(question)
+        response = await answer(user_id, question, context=context)
+        log_interaction(user_id, question, context, response)
+        out = {"response": response}
+        if debug:
+            out["context"] = context
+        return out
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === Streaming /ask endpoint (Optional, for LLM streaming agents) ===
+@router.post("/ask/stream")
+async def ask_stream(
+    request: Request,
+    payload: dict,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
+    """
+    POST /ask/stream - Streams agent responses as they're generated.
+    Requires agent.answer() to yield text chunks.
+    """
+    user_id = x_user_id or "anonymous"
+    question = payload.get("question", "")
+    if not question:
+        raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
+    try:
+        ce = ContextEngine(user_id=user_id)
+        context = ce.build_context(question)
+
+        async def streamer() -> AsyncGenerator[str, None]:
+            async for chunk in answer(user_id, question, context=context, stream=True):
+                yield chunk
+
+        # Optionally log start/end
+        return StreamingResponse(streamer(), media_type="text/plain")
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 # === /test_openai route ===
-# Purpose: Verify OpenAI API connectivity (for debugging only)
 @router.get("/test_openai")
 async def test_openai():
     from openai import AsyncOpenAI

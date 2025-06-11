@@ -1,27 +1,47 @@
 {
+  // TypeScript compiler options for a Next.js project
   "compilerOptions": {
-    "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "esnext",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
+    // --- ALIAS SUPPORT (crucial for @/ imports) ---
+    // The following two lines enable `@/` to refer to your `src/` directory
+    "baseUrl": ".",                   // Sets project root as the base for imports
+    "paths": {
+      "@/*": ["src/*"]                // Now, `@/lib/api` resolves to `src/lib/api`
+    },
+    // --- PLUGINS (Next.js will pick this up) ---
     "plugins": [
       {
         "name": "next"
       }
-    ],
-    "paths": {
-      "@/*": ["./src/*"]
-    }
+    ]
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  // --- Which files to include for type checking ---
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "next-env.d.ts",
+    "types/**/*.d.ts",
+    ".next/types/**/*.ts"
+  ],
+  // --- Which files/folders to ignore ---
+  "exclude": [
+    "node_modules"
+  ]
 }

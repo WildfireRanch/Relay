@@ -1,98 +1,96 @@
-# File: kb.py
+# services/kb.py
 # Directory: services/
-# Purpose: Semantic document knowledge base (KB) for context, search, and per-user summaries.
+# Purpose: LlamaIndex-powered semantic knowledge base for context, code/doc search, and summaries.
 
-import pathlib, sqlite3, json
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from services.settings import assert_env
-import numpy as np
-import hashlib
-from datetime import datetime
 import os
+from typing import List, Optional, Any
+from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, SimpleDirectoryReader
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
+from pathlib import Path
 
-# === Paths ===
-ROOT = pathlib.Path(__file__).resolve().parent  # /services
+# === Paths and Config ===
+ROOT = Path(__file__).resolve().parent
+CODE_DIRS = [ROOT.parent / "src", ROOT.parent / "backend", ROOT.parent / "frontend"]
 DOCS_DIR = ROOT.parent / "docs"
-DB_PATH = ROOT / "kb.sqlite3"
+INDEX_DIR = ROOT.parent / "data/index"
+EMBED_MODEL = OpenAIEmbedding(model="text-embedding-3-large")
 
-print(f"Using SQLite DB at: {DB_PATH}")
-
-# === Initialize Embedding + Splitter ===
-OPENAI_API_KEY = assert_env("OPENAI_API_KEY", "Used for LangChain embedding")
-_EMBED  = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
-_SPLIT  = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
-
-# === DB Setup ===
-def _connect():
-    con = sqlite3.connect(DB_PATH)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS docs(
-            id TEXT PRIMARY KEY,
-            path TEXT,
-            chunk TEXT,
-            embedding BLOB,
-            title TEXT,
-            updated TEXT,
-            user_id TEXT DEFAULT NULL
-        )
-    """)
-    return con
-
-# === Embed all Markdown docs into the KB ===
-def embed_docs(user_id: str = None):
-    con = _connect()
-    for md in DOCS_DIR.rglob("*.md"):
-        text = md.read_text("utf-8")
-        chunks = _SPLIT.split_text(text)
-        embeddings = _EMBED.embed_documents(chunks)
-        title = md.stem.replace("_", " ").title()
-        updated = datetime.fromtimestamp(md.stat().st_mtime).isoformat()
-        for chunk, emb in zip(chunks, embeddings):
-            uid = hashlib.sha256((str(md) + chunk + (user_id or "")).encode()).hexdigest()
-            con.execute(
-                "INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?,?)",
-                (uid, str(md), chunk, json.dumps(emb), title, updated, user_id)
-            )
-    con.commit()
-    con.close()
-
-# === Vector similarity search ===
-def cosine_similarity(v1, v2):
-    v1, v2 = np.array(v1), np.array(v2)
-    return float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
-
-def search(query, user_id=None, k=4):
+# === Indexing Function ===
+def embed_all(user_id: Optional[str] = None):
     """
-    Search the KB for documents/snippets matching the query.
-    If user_id is given, limit to per-user docs if present, else search all.
+    Index all code and docs recursively for semantic search.
+    Use this to (re)build your KB index.
     """
-    con = _connect()
-    q_emb = _EMBED.embed_query(query)
-    if user_id:
-        rows = con.execute(
-            "SELECT path, chunk, embedding, title, updated FROM docs WHERE user_id=?",
-            (user_id,)
-        ).fetchall()
-        if not rows:
-            rows = con.execute("SELECT path, chunk, embedding, title, updated FROM docs WHERE user_id IS NULL").fetchall()
-    else:
-        rows = con.execute("SELECT path, chunk, embedding, title, updated FROM docs").fetchall()
-    results = []
-    for path, chunk, emb_json, title, updated in rows:
-        sim = cosine_similarity(q_emb, json.loads(emb_json))
-        results.append((sim, path, chunk, title, updated))
-    con.close()
-    top = sorted(results, key=lambda r: r[0], reverse=True)[:k]
-    return [
-        {"path": path, "title": title, "snippet": chunk, "updated": updated, "similarity": sim}
-        for sim, path, chunk, title, updated in top
-    ]
+    documents = []
+    # Index all code files
+    for code_dir in CODE_DIRS:
+        if code_dir.exists():
+            docs = SimpleDirectoryReader(str(code_dir), recursive=True).load_data()
+            for doc in docs:
+                doc.metadata['type'] = "code"
+            documents.extend(docs)
+    # Index all markdown/docs
+    if DOCS_DIR.exists():
+        docs = SimpleDirectoryReader(str(DOCS_DIR), recursive=True).load_data()
+        for doc in docs:
+            doc.metadata['type'] = "doc"
+        documents.extend(docs)
+    # Split by file type
+    code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30, chunk_overlap=10)
+    text_splitter = SentenceSplitter(max_chunk_size=1024)
+    for doc in documents:
+        if doc.metadata.get('type') == "code":
+            doc.chunks = code_splitter.split(doc.text)
+        else:
+            doc.chunks = text_splitter.split(doc.text)
+    # Build and persist vector index
+    index = VectorStoreIndex.from_documents(
+        documents, embed_model=EMBED_MODEL, show_progress=True
+    )
+    index.storage_context.persist(persist_dir=str(INDEX_DIR))
+    print("[KB] Indexing complete!")
 
-def get_recent_summaries(user_id: str = None):
+# === Load Vector Index ===
+def get_index():
+    storage_context = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
+    return load_index_from_storage(storage_context)
+
+# === Semantic Search ===
+def search(
+    query: str,
+    user_id: Optional[str] = None,
+    k: int = 4,
+    search_type: str = "all",
+    score_threshold: Optional[float] = None
+) -> List[dict]:
     """
-    Load the most recent context summary for this user (if available),
-    else return the generic relay context summary.
+    Search code/docs for semantic matches.
+    - search_type: 'all', 'code', or 'doc'
+    - score_threshold: only return hits above this score (if provided)
+    """
+    index = get_index()
+    results = index.query(query, embed_model=EMBED_MODEL, top_k=k)
+    # Format each hit for easy API/UI/agent consumption
+    formatted = []
+    for r in results:
+        if score_threshold is not None and r.score < score_threshold:
+            continue
+        formatted.append({
+            "snippet": r.text,
+            "score": r.score,
+            "file": r.metadata.get("file_path"),
+            "type": r.metadata.get("type"),
+            "line": r.metadata.get("line_number"),
+        })
+    if search_type in ("code", "doc"):
+        formatted = [h for h in formatted if h.get("type") == search_type]
+    return formatted
+
+# === Per-user or Generic Context Summaries ===
+def get_recent_summaries(user_id: Optional[str] = None) -> str:
+    """
+    Load most recent context summary for this user, or fallback to generic.
     """
     base = ROOT.parent
     if user_id:
@@ -106,6 +104,26 @@ def get_recent_summaries(user_id: str = None):
     generic = base / "docs/generated/relay_context.md"
     return generic.read_text() if generic.exists() else ""
 
-# === Run embedding when invoked directly ===
+# === API Helper Functions ===
+def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
+    """
+    API-friendly wrapper for search (for FastAPI).
+    """
+    return search(query, k=k, search_type=search_type)
+
+def api_reindex() -> dict:
+    """
+    API-friendly wrapper to (re)build the index.
+    """
+    embed_all()
+    return {"status": "ok", "message": "Re-index complete"}
+
+# === CLI Entrypoint ===
 if __name__ == "__main__":
-    embed_docs()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "search":
+        q = " ".join(sys.argv[2:]) or "agent context"
+        for hit in search(q):
+            print(f"{hit['file']} (score={hit['score']:.2f})\n{hit['snippet'][:160]}...\n")
+    else:
+        embed_all()

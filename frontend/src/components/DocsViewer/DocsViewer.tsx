@@ -1,148 +1,254 @@
-// File: components/DocsViewer.tsx
-// Directory: frontend/src/components/DocsViewer
-// Purpose: List and view Markdown docs, with ability to trigger Google Docs sync
+// File: frontend/src/components/DocsViewer.tsx
+// Purpose: Browse docs, run semantic search, and preview agent context for any question.
+
 "use client";
 
 import { API_ROOT } from "@/lib/api";
-import { useEffect, useState } from "react"
-import { Button } from "@/components/ui/button"
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 
-// Base API URL from environment
-const apiUrl = API_ROOT || ""
-if (process.env.NODE_ENV === 'development' && !apiUrl) {
-  console.error("NEXT_PUBLIC_API_URL is not defined")
-}
+const apiUrl = API_ROOT || "";
+
+type KBHit = {
+  file?: string;
+  snippet: string;
+  score?: number;
+  type?: string;
+  line?: number;
+};
 
 export default function DocsViewer() {
-  // State for doc list, active doc, content, and sync status
-  const [docs, setDocs] = useState<string[]>([])
-  const [activeDoc, setActiveDoc] = useState<string | null>(null)
-  const [content, setContent] = useState<string>("")
-  const [syncing, setSyncing] = useState<boolean>(false)
-  const [syncStatus, setSyncStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // Tabs: docs, search, context
+  const [tab, setTab] = useState<"docs" | "search" | "context">("docs");
 
-  /**
-   * Load the list of available Markdown files from the backend.
-   */
-  const loadDocs = async () => {
-    if (!apiUrl) {
-      setError("API URL not configured")
-      return
-    }
-    try {
-      const res = await fetch(`${apiUrl}/docs/list`)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setDocs(data.files || [])
-    } catch (err) {
-      console.error("Failed to load docs list:", err)
-      setError("Could not load docs list.")
-    }
-  }
+  // ----- Docs state -----
+  const [docs, setDocs] = useState<string[]>([]);
+  const [activeDoc, setActiveDoc] = useState<string | null>(null);
+  const [content, setContent] = useState<string>("");
 
-  /**
-   * Fetch content for the selected document.
-   */
-  const loadContent = async (path: string) => {
-    if (!apiUrl) {
-      setError("API URL not configured")
-      return
-    }
-    try {
-      const res = await fetch(
-        `${apiUrl}/docs/view?path=${encodeURIComponent(path)}`
-      )
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setContent(data.content || "")
-    } catch (err) {
-      console.error("Failed to load doc content:", err)
-      setError("Could not load document content.")
-    }
-  }
+  // ---- Google sync ----
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
-  /**
-   * Trigger Google Docs sync and refresh the list.
-   */
-  const handleSync = async () => {
-    if (!apiUrl) {
-      setSyncStatus("API URL not configured")
-      return
-    }
-    setSyncing(true)
-    setSyncStatus(null)
-    try {
-      const res = await fetch(`${apiUrl}/docs/sync`, { method: "POST" })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setSyncStatus(`✅ Synced ${data.synced_docs.length} docs.`)
-      await loadDocs()
-    } catch (err) {
-      console.error("Sync error:", err)
-      setSyncStatus(`❌ Sync failed: ${err}`)
-    } finally {
-      setSyncing(false)
-    }
-  }
+  // ---- Semantic Search state ----
+  const [search, setSearch] = useState("");
+  const [hits, setHits] = useState<KBHit[]>([]);
+  const [selectedHit, setSelectedHit] = useState<number | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
-  // Initial load of docs list
+  // ---- Agent Context Trace state ----
+  const [ctxQuestion, setCtxQuestion] = useState("");
+  const [ctxLoading, setCtxLoading] = useState(false);
+  const [ctxResult, setCtxResult] = useState<string>("");
+
+  // ---- Effects: load docs on docs tab ----
   useEffect(() => {
-    loadDocs()
-  }, [])
+    if (tab === "docs") {
+      loadDocs();
+    }
+  }, [tab]);
 
-  // Load content when activeDoc changes
   useEffect(() => {
     if (activeDoc) {
-      loadContent(activeDoc)
+      loadContent(activeDoc);
     } else {
-      setContent("")
+      setContent("");
     }
-  }, [activeDoc])
+  }, [activeDoc]);
 
+  // ---- Docs ----
+  async function loadDocs() {
+    try {
+      const res = await fetch(`${apiUrl}/docs/list`);
+      const data = await res.json();
+      setDocs(data.files || []);
+    } catch {
+      setDocs([]);
+    }
+  }
+  async function loadContent(path: string) {
+    try {
+      const res = await fetch(`${apiUrl}/docs/view?path=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      setContent(data.content || "");
+    } catch {
+      setContent("Failed to load doc.");
+    }
+  }
+  async function handleSync() {
+    setSyncing(true);
+    setSyncStatus(null);
+    try {
+      const res = await fetch(`${apiUrl}/docs/sync`, { method: "POST" });
+      const data = await res.json();
+      setSyncStatus(`✅ Synced ${data.synced_docs.length} docs.`);
+      await loadDocs();
+    } catch {
+      setSyncStatus(`❌ Sync failed`);
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  // ---- Semantic Search ----
+  async function doSearch(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    setSearchLoading(true);
+    setHits([]);
+    setSelectedHit(null);
+    try {
+      const res = await fetch(`${apiUrl}/kb/search?query=${encodeURIComponent(search)}`);
+      const data = await res.json();
+      setHits(data.results || []);
+    } catch {
+      setHits([]);
+    }
+    setSearchLoading(false);
+  }
+
+  // ---- Agent Context Tab ----
+  async function fetchContextForPrompt(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    if (!ctxQuestion) return;
+    setCtxLoading(true);
+    setCtxResult("");
+    try {
+      // Call /ask?question=...&debug=true to get actual context window
+      const res = await fetch(
+        `${apiUrl}/ask?question=${encodeURIComponent(ctxQuestion)}&debug=true`
+      );
+      const data = await res.json();
+      setCtxResult(data.context || "No context returned.");
+    } catch {
+      setCtxResult("Failed to fetch context window.");
+    }
+    setCtxLoading(false);
+  }
+
+  // ---- UI ----
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-      {/* Sidebar: doc list and sync control */}
-      <div className="space-y-4 col-span-1">
-        <div className="space-y-2">
-          <h2 className="font-semibold">Docs</h2>
-          <div className="h-[400px] overflow-auto border rounded-md p-2">
-            {error && <p className="text-xs text-red-500">{error}</p>}
-            {docs.map((doc) => (
-              <Button
-                key={doc}
-                variant={doc === activeDoc ? "default" : "ghost"}
-                className="w-full justify-start text-left"
-                onClick={() => setActiveDoc(doc)}
-              >
-                {doc.replace("imported/", "")}
+    <div className="max-w-5xl mx-auto py-6">
+      <div className="flex gap-4 mb-4">
+        <Button variant={tab === "docs" ? "default" : "outline"} onClick={() => setTab("docs")}>
+          📝 Docs
+        </Button>
+        <Button variant={tab === "search" ? "default" : "outline"} onClick={() => setTab("search")}>
+          🔍 Semantic Search
+        </Button>
+        <Button variant={tab === "context" ? "default" : "outline"} onClick={() => setTab("context")}>
+          🧠 Agent Context
+        </Button>
+      </div>
+
+      {/* ---- DOCS TAB ---- */}
+      {tab === "docs" && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="space-y-4 col-span-1">
+            <div className="space-y-2">
+              <h2 className="font-semibold">Docs</h2>
+              <div className="h-[400px] overflow-auto border rounded-md p-2">
+                {docs.map((doc) => (
+                  <Button
+                    key={doc}
+                    variant={doc === activeDoc ? "default" : "ghost"}
+                    className="w-full justify-start text-left"
+                    onClick={() => setActiveDoc(doc)}
+                  >
+                    {doc.replace("imported/", "")}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <Button onClick={handleSync} disabled={syncing} className="w-full text-sm">
+                {syncing ? "🔄 Syncing..." : "🔄 Sync Google Docs"}
               </Button>
-            ))}
+              {syncStatus && <p className="text-xs text-muted-foreground mt-2">{syncStatus}</p>}
+            </div>
+          </div>
+          <div className="col-span-3">
+            <h2 className="font-semibold mb-2">{activeDoc || "Select a document"}</h2>
+            <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm">
+              {content || "Select a document to view its content."}
+            </div>
           </div>
         </div>
+      )}
 
-        {/* Sync button */}
-        <div>
-          <Button
-            onClick={handleSync}
-            disabled={syncing}
-            className="w-full text-sm"
-          >
-            {syncing ? "🔄 Syncing..." : "🔄 Sync Google Docs"}
-          </Button>
-          {syncStatus && (
-            <p className="text-xs text-muted-foreground mt-2">{syncStatus}</p>
-          )}
+      {/* ---- SEMANTIC SEARCH TAB ---- */}
+      {tab === "search" && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <div className="space-y-4 col-span-1">
+            <form className="flex gap-2 mb-2" onSubmit={doSearch}>
+              <input
+                className="border px-2 py-1 rounded w-full"
+                placeholder="Semantic search code/docs…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+              />
+              <Button className="px-3" type="submit" disabled={searchLoading}>
+                {searchLoading ? "…" : "Go"}
+              </Button>
+            </form>
+            <div className="h-[400px] overflow-auto border rounded-md p-2">
+              {hits.map((hit, i) => (
+                <Button
+                  key={i}
+                  variant={selectedHit === i ? "default" : "ghost"}
+                  className="w-full justify-start text-left text-xs"
+                  onClick={() => setSelectedHit(i)}
+                >
+                  {(hit.file || hit.type || "snippet") +
+                    (hit.line ? ` :L${hit.line}` : "")}
+                  <div className="truncate">{hit.snippet.slice(0, 70)}…</div>
+                  <span className="text-gray-500">{hit.score !== undefined ? `score: ${hit.score.toFixed(2)}` : ""}</span>
+                </Button>
+              ))}
+            </div>
+          </div>
+          <div className="col-span-3">
+            {selectedHit !== null && hits[selectedHit] ? (
+              <div>
+                <div className="font-bold mb-2">{hits[selectedHit].file || "Semantic Snippet"}</div>
+                <pre className="bg-gray-100 p-3 rounded max-h-[70vh] overflow-y-auto whitespace-pre-wrap text-xs">
+                  {hits[selectedHit].snippet}
+                </pre>
+                <div className="text-xs text-gray-500 mt-2">
+                  Score: {hits[selectedHit].score?.toFixed(2) || "N/A"} | Type: {hits[selectedHit].type || "?"}
+                </div>
+              </div>
+            ) : (
+              <div className="text-gray-500 text-center pt-10">
+                {searchLoading ? "Searching…" : "Select a semantic hit to preview context."}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Viewer for document content */}
-      <div className="col-span-3">
-        <h2 className="font-semibold mb-2">{activeDoc || 'Select a document'}</h2>
-        <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm">
-          {content || "Select a document to view its content."}
+      {/* ---- AGENT CONTEXT TAB ---- */}
+      {tab === "context" && (
+        <div className="max-w-2xl mx-auto mt-8">
+          <form className="flex gap-2 mb-4" onSubmit={fetchContextForPrompt}>
+            <input
+              className="border px-2 py-1 rounded w-full"
+              placeholder="Type a user/agent prompt…"
+              value={ctxQuestion}
+              onChange={e => setCtxQuestion(e.target.value)}
+            />
+            <Button type="submit" disabled={ctxLoading}>
+              {ctxLoading ? "…" : "Show Context"}
+            </Button>
+          </form>
+          <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-xs bg-gray-50">
+            {ctxLoading
+              ? "Fetching context…"
+              : ctxResult
+                ? ctxResult
+                : "Enter a prompt to see what context the agent would use."}
+          </div>
         </div>
-      </div>
+      )}
     </div>
-  )
+  );
 }

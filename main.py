@@ -1,6 +1,6 @@
-# File: main.py
+# main.py
 # Directory: project root
-# Purpose: Relay backend FastAPI application
+# Purpose: Relay backend FastAPI application (with embeddings debug endpoints)
 
 from dotenv import load_dotenv
 import os
@@ -61,7 +61,9 @@ from routes.control import router as control_router
 from routes.docs import router as docs_router
 from routes.oauth import router as oauth_router
 from routes.debug import router as debug_router
-from routes.kb import router as kb_router  # <-- Added KB router
+from routes.kb import router as kb_router
+from routes.search import router as search_router
+from routes.embeddings import router as embeddings_router  # <--- NEW
 
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -69,8 +71,11 @@ app.include_router(control_router)
 app.include_router(docs_router)
 app.include_router(oauth_router)
 app.include_router(debug_router)
-app.include_router(kb_router)  # <-- Mount KB router!
-logging.info("✅ Registered all route modules.")
+app.include_router(kb_router)
+app.include_router(search_router)
+app.include_router(embeddings_router)  # <--- NEW
+
+logging.info("✅ Registered all route modules (including embeddings debug).")
 
 # === Health check endpoint ===
 @app.get("/", summary="Health check")
