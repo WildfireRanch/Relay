@@ -1,13 +1,6 @@
 # File: main.py
 # Directory: project root
 # Purpose: Relay backend FastAPI application
-#  - Loads environment variables
-#  - Validates critical configs
-#  - Applies CORS for dev and production origins
-#  - Mounts modular route groups (ask, status, control, docs, oauth, debug)
-#  - Provides health and readiness endpoints
-#  - Ensures required directories exist for docs import/generation
-#  - Supports both local (uvicorn) and Railway deployment
 
 from dotenv import load_dotenv
 import os
@@ -26,7 +19,6 @@ required_env = ["API_KEY", "OPENAI_API_KEY", "GOOGLE_CREDS_JSON"]
 missing = [key for key in required_env if not os.getenv(key)]
 if missing:
     logging.error(f"Missing required env vars: {missing}")
-    # Optionally raise or exit here in production
 else:
     logging.info("✅ All required environment variables are present.")
 
@@ -45,15 +37,13 @@ app = FastAPI(
 )
 
 # === Configure CORS ===
-# Always keep this up to date with all frontend domains!
 frontend_origins = [
-    "https://relay.wildfireranch.us",             # Main production backend
-    "https://status.wildfireranch.us",            # Main production UI
-    "https://relay.staging.wildfireranch.us",     # Staging backend (if API calls come from it)
-    "https://status.staging.wildfireranch.us",    # Staging UI
-    "http://localhost:3000",                      # Local dev UI
-    "http://127.0.0.1:3000"                       # Local dev alternate
-    # Add any other frontends as needed!
+    "https://relay.wildfireranch.us",
+    "https://status.wildfireranch.us",
+    "https://relay.staging.wildfireranch.us",
+    "https://status.staging.wildfireranch.us",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -71,6 +61,7 @@ from routes.control import router as control_router
 from routes.docs import router as docs_router
 from routes.oauth import router as oauth_router
 from routes.debug import router as debug_router
+from routes.kb import router as kb_router  # <-- Added KB router
 
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -78,6 +69,7 @@ app.include_router(control_router)
 app.include_router(docs_router)
 app.include_router(oauth_router)
 app.include_router(debug_router)
+app.include_router(kb_router)  # <-- Mount KB router!
 logging.info("✅ Registered all route modules.")
 
 # === Health check endpoint ===
@@ -92,12 +84,10 @@ def health_check():
     """Check service readiness: verifies docs dirs and key env vars."""
     ok = True
     details = {}
-    # Env var check
     for key in required_env:
         present = bool(os.getenv(key))
         details[key] = present
         ok = ok and present
-    # Directory check
     for sub in ["docs/imported", "docs/generated"]:
         exists = (PROJECT_ROOT / sub).exists()
         details[sub] = exists
