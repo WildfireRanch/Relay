@@ -27,3 +27,35 @@ langchain-core>=0.2
 langchain-community>=0.2
 langchain-openai>=0.1
 transformers>=4.30
+
+# === Semantic Search & Embeddings ===
+llama-index>=0.10.11   # <--- ADD THIS (core semantic engine for KB, DocsViewer, etc.)
+
+# === Markdown & Text Processing ===
+python-frontmatter>=1.1.0    # <--- Recommended for markdown meta parsing (if needed)
+markdown>=3.4.1              # <--- Native markdown support
+
+# === File I/O & Utilities ===
+aiofiles>=23.1.0             # <--- If any async file ops in FastAPI routes
+
+# === Authentication (optional for JWT backend validation) ===
+pyjwt[crypto]>=2.8           # <--- If you want to verify Google/NextAuth JWTs on backend
+itsdangerous>=2.1            # <--- Useful for secure token work
+
+# === Structured Data ===
+pydantic>=1.10
+
+# === Async Utilities ===
+anyio>=3.7
+
+# === Databases (if using SQLite/SQLAlchemy) ===
+sqlalchemy>=2.0              # <--- If you use a DB, otherwise skip
+
+# === Testing ===
+pytest>=7.0
+pytest-asyncio>=0.21
+
+# === Linting/Formatting ===
+black>=24.0
+
+# (Rest as before; keep, remove, or merge with requirements-dev.txt as needed)
