@@ -44,29 +44,19 @@ conversation_history: Dict[str, List[Dict[str, Any]]] = {}
 
 # === Tool dispatchers ===
 async def search_docs(query: str, user_id: str) -> Dict[str, Any]:
-    """
-    Search the local /docs directory via the KB service.
-    Returns matching paths and snippets.
-    """
     hits = kb.search(query, user_id=user_id, k=5) if 'user_id' in kb.search.__code__.co_varnames else kb.search(query, k=5)
     return {"matches": hits}
 
 async def run_code_review(path: str) -> Dict[str, Any]:
-    """
-    Basic static analysis stub for a source file.
-    Returns a placeholder issue list with file summary.
-    """
     base = Path(__file__).resolve().parents[1]
     target = base / path
     if not target.exists() or not target.is_file():
         return {"issues": [{"path": path, "error": "File not found"}]}  
     content = target.read_text()
-    # Stub: return file length as a summary issue
     return {"issues": [{"path": path, "summary": f"File loaded, {len(content)} characters"}]}  
 
 # === Reflection & plan generation ===
 async def reflect_and_plan(user_id: str, query: str) -> Dict[str, Any]:
-    # Introspect user intent and decide next actions
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "assistant", "content": f"Previous context:\n{kb.get_recent_summaries(user_id)}" if hasattr(kb, "get_recent_summaries") else ""},
@@ -78,7 +68,6 @@ async def reflect_and_plan(user_id: str, query: str) -> Dict[str, Any]:
         temperature=0.0,
         stream=False
     )
-    # Expect JSON plan from reflection
     try:
         return json.loads(response.choices[0].message.content)
     except json.JSONDecodeError:
@@ -113,7 +102,6 @@ async def answer(user_id: str, query: str) -> str:
         {"role": "assistant", "content": f"Plan: {json.dumps(plan)}"},
     ] + history
 
-    # --- Call OpenAI with tool support ---
     try:
         response = await client.chat.completions.create(
             model="gpt-4o",
@@ -135,10 +123,12 @@ async def answer(user_id: str, query: str) -> str:
             function_call="auto"
         )
         message = response.choices[0].message
+
         # --- Handle any function calls ---
-        if message.get("function_call"):
-            fname = message["function_call"]["name"]
-            fargs = json.loads(message["function_call"]["arguments"])
+        # (Fix: use hasattr/attribute access, not dict get)
+        if hasattr(message, "function_call") and message.function_call:
+            fname = message.function_call.name
+            fargs = json.loads(message.function_call.arguments)
             if fname == "search_docs":
                 result = await search_docs(**fargs)
             elif fname == "run_code_review":
@@ -200,4 +190,3 @@ File: {rel_path}
             return f"✅ Documentation queued to: {doc_path}"
         else:
             return f"❌ Failed to queue documentation: {res.status_code} {res.text}"
-
