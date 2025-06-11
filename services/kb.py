@@ -12,9 +12,11 @@ from datetime import datetime
 import os
 
 # === Paths ===
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-DOCS_DIR = ROOT / "docs"
-DB_PATH  = ROOT / "kb.sqlite3"
+ROOT = pathlib.Path(__file__).resolve().parent  # /services
+DOCS_DIR = ROOT.parent / "docs"
+DB_PATH = ROOT / "kb.sqlite3"
+
+print(f"Using SQLite DB at: {DB_PATH}")
 
 # === Initialize Embedding + Splitter ===
 OPENAI_API_KEY = assert_env("OPENAI_API_KEY", "Used for LangChain embedding")
@@ -22,7 +24,6 @@ _EMBED  = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI
 _SPLIT  = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
 
 # === DB Setup ===
-print(f"Using SQLite DB at: {DB_PATH}")
 def _connect():
     con = sqlite3.connect(DB_PATH)
     con.execute("""
@@ -33,7 +34,7 @@ def _connect():
             embedding BLOB,
             title TEXT,
             updated TEXT,
-            user_id TEXT DEFAULT NULL   -- Add this column for per-user if needed
+            user_id TEXT DEFAULT NULL
         )
     """)
     return con
@@ -68,13 +69,11 @@ def search(query, user_id=None, k=4):
     """
     con = _connect()
     q_emb = _EMBED.embed_query(query)
-    # Try user-specific search first
     if user_id:
         rows = con.execute(
             "SELECT path, chunk, embedding, title, updated FROM docs WHERE user_id=?",
             (user_id,)
         ).fetchall()
-        # Fallback to all docs if no user docs found
         if not rows:
             rows = con.execute("SELECT path, chunk, embedding, title, updated FROM docs WHERE user_id IS NULL").fetchall()
     else:
@@ -95,7 +94,7 @@ def get_recent_summaries(user_id: str = None):
     Load the most recent context summary for this user (if available),
     else return the generic relay context summary.
     """
-    base = ROOT
+    base = ROOT.parent
     if user_id:
         summary = base / f"docs/generated/{user_id}_context.md"
         if summary.exists():
