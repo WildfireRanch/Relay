@@ -22,6 +22,7 @@ _EMBED  = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI
 _SPLIT  = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
 
 # === DB Setup ===
+print(f"Using SQLite DB at: {DB_PATH}")
 def _connect():
     con = sqlite3.connect(DB_PATH)
     con.execute("""
