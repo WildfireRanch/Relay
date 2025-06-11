@@ -5,7 +5,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"; // swap to cjs if you ever get a module error
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"; // use cjs if esm fails
 import { API_ROOT } from "@/lib/api";
 
 type Message = {
@@ -29,7 +29,6 @@ export default function AskEchoPage() {
   const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Persist to localStorage and scroll to bottom on change
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
@@ -37,7 +36,6 @@ export default function AskEchoPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Streaming chat function (works even if backend doesn't stream)
   async function sendMessage(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
@@ -58,7 +56,6 @@ export default function AskEchoPage() {
         body: JSON.stringify({ question: input }),
       });
 
-      // Check for streaming support (event-stream or chunked)
       if (res.body && res.headers.get("content-type")?.includes("text/event-stream")) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -73,7 +70,6 @@ export default function AskEchoPage() {
           );
         }
       } else {
-        // Fallback: non-streaming JSON
         const data = await res.json();
         assistantContent = data.response || "[no response]";
         setMessages(msgs =>
@@ -106,6 +102,7 @@ export default function AskEchoPage() {
             <span className="block whitespace-pre-wrap">
               <ReactMarkdown
                 components={{
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   code({ inline, className, children, ...props }: any) {
                     const match = /language-(\w+)/.exec(className || "");
                     return !inline && match ? (
