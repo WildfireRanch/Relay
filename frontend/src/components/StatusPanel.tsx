@@ -2,52 +2,51 @@
 // Directory: frontend/src/components
 // Purpose: Display Relay service status and embed a UI panel for Google Docs sync and KB refresh
 
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { Card, CardContent } from "@/components/ui/card"
-import DocsSyncPanel from "@/components/DocsSyncPanel"
-import { API_ROOT } from "@/lib/api" // ✅ Centralized import
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import DocsSyncPanel from "@/components/DocsSyncPanel";
+import { API_ROOT } from "@/lib/api";
 
-// Type definitions for status summary response
 interface StatusSummary {
-  version?: { git_commit?: string }
+  version?: { git_commit?: string };
   paths?: {
-    base_path?: string
-    resolved_paths?: Record<string, boolean>
-  }
+    base_path?: string;
+    resolved_paths?: Record<string, boolean>;
+  };
 }
 
 export default function StatusPanel() {
-  const [status, setStatus] = useState<StatusSummary | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState<boolean>(true)
+  const [status, setStatus] = useState<StatusSummary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     async function fetchStatus() {
       if (!API_ROOT) {
-        setError("API URL not configured.")
-        setLoading(false)
-        return
+        setError("API URL not configured.");
+        setLoading(false);
+        return;
       }
       try {
-        const res = await fetch(`${API_ROOT}/status/summary`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data: StatusSummary = await res.json()
-        setStatus(data)
+        const res = await fetch(`${API_ROOT}/status/summary`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data: StatusSummary = await res.json();
+        setStatus(data);
       } catch (err) {
-        console.error("Status fetch error:", err)
-        setError("Failed to load status.")
+        console.error("Status fetch error:", err);
+        setError("Failed to load status.");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    fetchStatus()
-  }, [])
+    fetchStatus();
+  }, []);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading service status…</p>
-  if (error) return <p className="text-sm text-red-500">{error}</p>
-  if (!status) return <p className="text-sm">No status data available.</p>
+  if (loading) return <p className="text-sm text-muted-foreground">Loading service status…</p>;
+  if (error) return <p className="text-sm text-red-500">{error}</p>;
+  if (!status) return <p className="text-sm">No status data available.</p>;
 
   return (
     <>
@@ -76,5 +75,5 @@ export default function StatusPanel() {
         <DocsSyncPanel />
       </div>
     </>
-  )
+  );
 }

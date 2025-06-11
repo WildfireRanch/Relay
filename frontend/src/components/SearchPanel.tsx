@@ -2,62 +2,58 @@
 // Directory: frontend/src/components
 // Purpose: UI panel for semantic knowledge base search against the backend API
 
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { API_ROOT } from "@/lib/api" // ✅ Centralized import
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { API_ROOT } from "@/lib/api";
 
-// Type definition for KB search result
+const USER_ID = "bret-demo"; // TODO: Replace with real user/session logic in production
+
 export type KBResult = {
-  path: string
-  title: string
-  snippet: string
-  updated: string
-  similarity: number
-}
-
-const USER_ID = "bret-demo" // Replace with real user/session logic if available
+  path: string;
+  title: string;
+  snippet: string;
+  updated: string;
+  similarity: number;
+};
 
 export default function SearchPanel() {
-  // Component state
-  const [query, setQuery] = useState<string>("")
-  const [results, setResults] = useState<KBResult[]>([])
-  const [loading, setLoading] = useState<boolean>(false)
-  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState<string>("");
+  const [results, setResults] = useState<KBResult[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Trigger a semantic search against the KB endpoint.
-   */
+  // Trigger a semantic search against the KB endpoint.
   const search = async () => {
-    const q = query.trim()
-    if (!q) return
+    const q = query.trim();
+    if (!q) return;
     if (!API_ROOT) {
-      setError("API URL not configured.")
-      return
+      setError("API URL not configured.");
+      return;
     }
-    setError(null)
-    setLoading(true)
+    setError(null);
+    setLoading(true);
     try {
       const res = await fetch(`${API_ROOT}/kb/search`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-User-Id": USER_ID, // Multi-user context ready!
+          "X-User-Id": USER_ID,
         },
         body: JSON.stringify({ query: q, k: 5 }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setResults(data.results || [])
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      setResults(data.results || []);
     } catch (err) {
-      console.error("Search error:", err)
-      setError("Search failed. Check console for details.")
+      console.error("Search error:", err);
+      setError("Search failed. Check console for details.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="space-y-4">
@@ -66,8 +62,8 @@ export default function SearchPanel() {
         <Input
           placeholder="Ask a question..."
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && search()}
+          onChange={e => setQuery(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && search()}
           name="kb-query"
           id="kb-query"
         />
@@ -94,5 +90,5 @@ export default function SearchPanel() {
         </div>
       )}
     </div>
-  )
+  );
 }

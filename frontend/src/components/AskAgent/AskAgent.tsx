@@ -1,26 +1,27 @@
-// File: components/AskAgent.tsx
-"use client"
+// File: components/AskAgent/AskAgent.tsx
+// Directory: frontend/src/components/AskAgent
+// Purpose: Main Relay AI chat input and display component
 
-import { useState } from "react"
-import { Textarea } from "@/components/ui/textarea"
-import { Button } from "@/components/ui/button"
-import { API_ROOT } from "@/lib/api" // ✅ Use your new centralized API_ROOT
+"use client";
 
-const USER_ID = "bret-demo" // Replace with your actual user/session logic
+import { useState } from "react";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
+import { API_ROOT } from "@/lib/api"; // Centralized API root
+
+const USER_ID = "bret-demo"; // TODO: Replace with real user/session logic in production
 
 export default function AskAgent() {
-  const [query, setQuery] = useState("")
-  const [response, setResponse] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [query, setQuery] = useState("");
+  const [response, setResponse] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  // === Sends a question to the Relay backend's /ask endpoint ===
+  // Send a question to the Relay backend's /ask endpoint
   async function sendQuery() {
-    if (!query) return
-    setLoading(true)
-    setResponse(null)
-
+    if (!query.trim()) return;
+    setLoading(true);
+    setResponse(null);
     try {
-      // POST to /ask with JSON payload and user header
       const res = await fetch(`${API_ROOT}/ask`, {
         method: "POST",
         headers: {
@@ -28,26 +29,15 @@ export default function AskAgent() {
           "X-User-Id": USER_ID,
         },
         body: JSON.stringify({ question: query }),
-      })
+      });
 
-      // Log raw response
-      console.log("📦 Raw response:", res)
-
-      // Try to parse JSON and log it
-      const data = await res.json().catch(err => {
-        console.error("❌ Failed to parse JSON:", err)
-        return { error: "Invalid JSON response" }
-      })
-
-      console.log("📨 Parsed response:", data)
-
-      // Display response from backend
-      setResponse(data?.response ?? data?.answer ?? "No answer.")
+      const data = await res.json();
+      setResponse(data?.response ?? data?.answer ?? "[no answer]");
     } catch (error) {
-      console.error("❌ Failed to get response:", error)
-      setResponse("Error contacting Relay.")
+      console.error("❌ Failed to get response:", error);
+      setResponse("Error contacting Relay.");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
@@ -56,19 +46,25 @@ export default function AskAgent() {
       <Textarea
         placeholder="Ask Relay something..."
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={e => setQuery(e.target.value)}
         disabled={loading}
         name="relay-query"
         id="relay-query"
+        onKeyDown={e => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            sendQuery();
+          }
+        }}
       />
-      <Button onClick={sendQuery} disabled={loading || !query}>
+      <Button onClick={sendQuery} disabled={loading || !query.trim()}>
         {loading ? "Thinking..." : "Ask Relay"}
       </Button>
       {response && (
-        <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border">
+        <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border mt-2">
           {response}
         </div>
       )}
     </div>
-  )
+  );
 }
