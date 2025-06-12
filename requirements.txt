@@ -29,7 +29,7 @@ langchain-openai>=0.1
 transformers>=4.30
 
 # === Semantic Search & Embeddings ===
-llama-index>=0.10.11   # <--- ADD THIS (core semantic engine for KB, DocsViewer, etc.)
+llama-index-core   # <--- ADD THIS (core semantic engine for KB, DocsViewer, etc.)
 
 # === Markdown & Text Processing ===
 python-frontmatter>=1.1.0    # <--- Recommended for markdown meta parsing (if needed)
