@@ -103,12 +103,13 @@ def search(
             logger.info("[search] Hit: score=%.3f, text[0:30]='%s...'", score, node.text[:30].replace("\n", " "))
             if score_threshold and score < score_threshold:
                 continue
+            # ==== KEY: Frontend-compatible output ====
             hits.append({
                 "snippet": node.text,
-                "score": score,
-                "file": node.metadata.get("file_path"),
-                "type": node.metadata.get("type"),
-                "line": node.metadata.get("line_number"),
+                "similarity": score,
+                "path": node.metadata.get("file_path"),
+                "title": node.metadata.get("title", node.metadata.get("file_path") or "Untitled"),
+                "updated": node.metadata.get("updated", ""),
             })
         if search_type in ("code", "doc"):
             hits = [h for h in hits if h["type"] == search_type]
@@ -136,6 +137,6 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "search":
         for h in search(" ".join(sys.argv[2:]) or "test"):
-            print(f"{h['file']} (score={h['score']:.2f}): {h['snippet'][:120]}…")
+            print(f"{h['title']} (score={h['similarity']:.2f}): {h['snippet'][:120]}…")
     else:
         embed_all()

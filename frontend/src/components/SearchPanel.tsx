@@ -46,7 +46,15 @@ export default function SearchPanel() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      setResults(data.results || []);
+      // Defensive mapping for compatibility
+      const mappedResults: KBResult[] = (data.results || []).map((r: any) => ({
+        path: r.path ?? r.file ?? "",
+        title: r.title ?? r.file ?? "Untitled",
+        snippet: r.snippet ?? "",
+        updated: r.updated ?? "",
+        similarity: r.similarity ?? r.score ?? 0,
+      }));
+      setResults(mappedResults);
     } catch (err) {
       console.error("Search error:", err);
       setError("Search failed. Check console for details.");
@@ -81,7 +89,7 @@ export default function SearchPanel() {
           {results.map((r, idx) => (
             <div key={idx} className="border rounded p-4 text-sm space-y-1">
               <div className="text-muted-foreground">
-                <strong>{r.title}</strong> ({r.similarity?.toFixed?.(2) ?? "?"})
+                <strong>{r.title}</strong> ({typeof r.similarity === "number" ? r.similarity.toFixed(2) : "?"})
               </div>
               <div className="whitespace-pre-wrap">{r.snippet}</div>
               <div className="text-xs text-muted-foreground">Updated: {r.updated}</div>
