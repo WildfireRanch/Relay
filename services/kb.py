@@ -28,6 +28,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
+logger.info("=== [LOADED kb.py: LLAMAINDEX v0.10+ API, %s] ===", __file__)
 
 # === Config Paths & Settings ===
 ROOT = Path(__file__).resolve().parent
@@ -45,17 +46,7 @@ INGEST_PIPELINE = IngestionPipeline(
 )
 
 def embed_all(user_id: Optional[str] = None) -> None:
-    """
-    Rebuilds the semantic index from scratch using Documents → Nodes → Index.
-
-    Steps:
-    1. Loads all documents from specified dirs.
-    2. Runs ingestion pipeline to produce Node objects.
-    3. Builds VectorStoreIndex from nodes.
-    4. Persists the storage context.
-    """
-    logger.info("📦 Starting ingestion pipeline...")
-
+    logger.info("=== [EMBED_ALL] Rebuilding semantic KB index ===")
     # 1. Load documents
     docs = []
     for path in CODE_DIRS + [DOCS_DIR]:
@@ -97,20 +88,19 @@ def search(
     search_type: str = "all",
     score_threshold: Optional[float] = None,
 ) -> List[dict]:
-    """
-    Executes semantic search against the vector index.
-    Returns top-k hits with optional filtering by type or score.
-    Compatible with LlamaIndex v0.10+ querying.
-    """
+    logger.info("[search] Called with query='%s', k=%d, user_id=%s", query, k, user_id)
     try:
         idx = get_index()
+        logger.info("[search] Loaded index: %s", type(idx))
         query_engine = idx.as_query_engine(similarity_top_k=k)
+        logger.info("[search] Created query_engine: %s", type(query_engine))
         results = query_engine.query(query)
+        logger.info("[search] Query completed, got results type: %s", type(results))
         hits = []
-        # LlamaIndex v0.10+ returns a "Response" object with .source_nodes
         for node_with_score in getattr(results, "source_nodes", []):
             node = node_with_score.node
             score = node_with_score.score
+            logger.info("[search] Hit: score=%.3f, text[0:30]='%s...'", score, node.text[:30].replace("\n", " "))
             if score_threshold and score < score_threshold:
                 continue
             hits.append({
@@ -122,6 +112,7 @@ def search(
             })
         if search_type in ("code", "doc"):
             hits = [h for h in hits if h["type"] == search_type]
+        logger.info("[search] Returning %d hits.", len(hits))
         return hits
     except Exception:
         logger.exception("Search failed")
