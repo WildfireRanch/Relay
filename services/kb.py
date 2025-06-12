@@ -1,6 +1,12 @@
 # services/kb.py
 # Directory: services/
 # Purpose: LlamaIndex-powered semantic knowledge base for context, code/doc search, and summaries.
+# Author: [Your Name]
+# Last Updated: 2025-06-11 (Echo/ChatGPT thorough review)
+# Notes:
+#   - Modular LlamaIndex (v0.10+) only!
+#   - Index auto-rebuild logic included
+#   - Handles AV file exclusion, recursive directory walking, code/text chunking
 
 import os
 from typing import List, Optional, Any
@@ -9,12 +15,13 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from pathlib import Path
 
-# === Exclude Audio/Video Files ===
+# === Exclude Audio/Video Files (file extensions to skip during indexing) ===
 EXCLUDED_SUFFIXES = {".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flac"}
 
-def safe_simple_directory_reader(directory, recursive=True):
+def safe_simple_directory_reader(directory: Path, recursive: bool = True) -> SimpleDirectoryReader:
     """
     Create a SimpleDirectoryReader that ignores audio/video files.
+    Scans 'directory' recursively, skipping files with EXCLUDED_SUFFIXES.
     """
     all_files = []
     for root, dirs, files in os.walk(directory):
@@ -33,10 +40,10 @@ INDEX_DIR = ROOT.parent / "data/index"
 EMBED_MODEL = OpenAIEmbedding(model="text-embedding-3-large")
 
 # === Indexing Function ===
-def embed_all(user_id: Optional[str] = None):
+def embed_all(user_id: Optional[str] = None) -> None:
     """
     Index all code and docs recursively for semantic search.
-    Use this to (re)build your KB index.
+    Use this to (re)build your KB index. Designed to run headless/CLI.
     """
     documents = []
     # Index all code files
@@ -67,8 +74,15 @@ def embed_all(user_id: Optional[str] = None):
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     print("[KB] Indexing complete!")
 
-# === Load Vector Index ===
+# === Load Vector Index with Auto-Build Logic ===
 def get_index():
+    """
+    Loads the persisted semantic index. If missing, auto-builds from scratch.
+    (Avoids FileNotFoundError at first query after new deploy.)
+    """
+    if not INDEX_DIR.exists() or not any(INDEX_DIR.iterdir()):
+        print("[KB] Index not found, building it now...")
+        embed_all()
     storage_context = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
     return load_index_from_storage(storage_context)
 
@@ -120,7 +134,7 @@ def get_recent_summaries(user_id: Optional[str] = None) -> str:
     generic = base / "docs/generated/relay_context.md"
     return generic.read_text() if generic.exists() else ""
 
-# === API Helper Functions ===
+# === API Helper Functions (for FastAPI) ===
 def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
     """
     API-friendly wrapper for search (for FastAPI).
@@ -134,7 +148,7 @@ def api_reindex() -> dict:
     embed_all()
     return {"status": "ok", "message": "Re-index complete"}
 
-# === CLI Entrypoint ===
+# === CLI Entrypoint for direct use/testing ===
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "search":
@@ -143,3 +157,11 @@ if __name__ == "__main__":
             print(f"{hit['file']} (score={hit['score']:.2f})\n{hit['snippet'][:160]}...\n")
     else:
         embed_all()
+
+# === End kb.py ===
+
+"""
+CHANGELOG:
+- 2025-06-11 (Echo/ChatGPT): Modular LlamaIndex, AV file exclusion, auto-rebuild logic, docstrings/comments cleanup.
+- [Add your own update notes as you iterate!]
+"""
