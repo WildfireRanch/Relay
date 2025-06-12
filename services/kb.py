@@ -9,16 +9,21 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from pathlib import Path
 
-# === Patch: Exclude Audio/Video Files ===
-from llama_index.core.readers.file.base import DEFAULT_FILE_EXTRACTOR
+# === Exclude Audio/Video Files ===
 EXCLUDED_SUFFIXES = {".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flac"}
 
 def safe_simple_directory_reader(directory, recursive=True):
     """
     Create a SimpleDirectoryReader that ignores audio/video files.
     """
-    file_extractor = {k: v for k, v in DEFAULT_FILE_EXTRACTOR.items() if k not in EXCLUDED_SUFFIXES}
-    return SimpleDirectoryReader(str(directory), recursive=recursive, file_extractor=file_extractor)
+    all_files = []
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if not any(file.lower().endswith(ext) for ext in EXCLUDED_SUFFIXES):
+                all_files.append(os.path.join(root, file))
+        if not recursive:
+            break
+    return SimpleDirectoryReader(input_files=all_files)
 
 # === Paths and Config ===
 ROOT = Path(__file__).resolve().parent
