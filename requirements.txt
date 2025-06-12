@@ -30,7 +30,7 @@ transformers>=4.30
 
 # === Semantic Search & Embeddings ===
 llama-index-core   # <--- (core semantic engine for KB, DocsViewer, etc.)
-llama-index-readers
+llama-index-readers-file
 llama-index-embeddings-openai
 
 # === Markdown & Text Processing ===
