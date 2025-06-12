@@ -22,6 +22,6 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
 # Start with uvicorn (production best practice for FastAPI); adjust if you want python main.py instead
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
 # If you must run as a script instead, uncomment the line below and comment the above
 # CMD ["python", "main.py"]
