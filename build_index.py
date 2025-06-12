@@ -1,7 +1,10 @@
 # File: build_index.py
+# Purpose: Manual trigger for semantic KB (LlamaIndex) reindex/build from CLI
+# Usage: python build_index.py
 
-from services.kb import build_index
+from services.kb import embed_all
 
 if __name__ == "__main__":
-    build_index()
+    embed_all()
     print("Index built successfully.")
+

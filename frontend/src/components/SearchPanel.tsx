@@ -1,6 +1,8 @@
 // File: components/SearchPanel.tsx
 // Directory: frontend/src/components
 // Purpose: UI panel for semantic knowledge base search against the backend API
+// Author: [Your Name]
+// Last Updated: 2025-06-12
 
 "use client";
 
@@ -9,8 +11,10 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 
-const USER_ID = "bret-demo"; // TODO: Replace with real user/session logic in production
+// Simulated user/session ID for API calls (replace with real auth in production)
+const USER_ID = "bret-demo";
 
+// Data structure for KB search results
 export type KBResult = {
   path: string;
   title: string;
@@ -25,7 +29,7 @@ export default function SearchPanel() {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Trigger a semantic search against the KB endpoint.
+  // Triggers a semantic search against the KB endpoint.
   const search = async () => {
     const q = query.trim();
     if (!q) return;
@@ -46,13 +50,14 @@ export default function SearchPanel() {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      // Defensive mapping for compatibility
-      const mappedResults: KBResult[] = (data.results || []).map((r: any) => ({
-        path: r.path ?? r.file ?? "",
-        title: r.title ?? r.file ?? "Untitled",
+
+      // Lint-safe mapping: Use Partial<KBResult> to satisfy ESLint/TS
+      const mappedResults: KBResult[] = (data.results || []).map((r: Partial<KBResult>) => ({
+        path: r.path ?? (r as { file?: string }).file ?? "",
+        title: r.title ?? (r as { file?: string }).file ?? "Untitled",
         snippet: r.snippet ?? "",
         updated: r.updated ?? "",
-        similarity: r.similarity ?? r.score ?? 0,
+        similarity: r.similarity ?? (r as { score?: number }).score ?? 0,
       }));
       setResults(mappedResults);
     } catch (err) {
