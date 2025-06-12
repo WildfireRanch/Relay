@@ -1,50 +1,64 @@
+#!/usr/bin/env python3
 """
-zip_project.py
+bundle_project_files.py
 
-Zips up all relevant Relay project files for backup, handoff, or review.
-Usage: python zip_project.py [zipfilename.zip]
+Bundles key backend (FastAPI, services) and frontend (Next.js/React) source files for review.
+Outputs: project_bundle.zip and manifest.txt
+
+Usage:
+    python bundle_project_files.py
 """
 
 import os
 import zipfile
-import sys
 
-# What to include
-INCLUDE_EXTS = [".py", ".ts", ".tsx", ".js", ".md", ".json", ".yml", ".yaml", ".env", ".sh"]
+# === CONFIG: Update as needed ===
 INCLUDE_DIRS = [
-    "relay-backend/app",
-    "relay-backend/docs",
-    "relay-frontend/components",
-    "relay-frontend/pages",
-    "relay-frontend/lib",
-    "docs",  # If project root/docs exists
+    "services",      # Backend core logic
+    "pages"
+    "routes",        # FastAPI API routes
+    "frontend/src/app",       # Next.js (pages, API routes)
+    "frontend/src/api"
+    "frontend/src/components",# React components
+    "docs",          # Documentation/specs
 ]
-EXCLUDE = ["__pycache__", ".git", "node_modules", ".venv", "file_embeddings.pkl"]
+INCLUDE_EXTS = (".py", ".js", ".ts", ".tsx", ".jsx", ".md", ".json", ".env")
+EXCLUDE = ("__pycache__", "node_modules", ".venv", ".git", "dist", "build", "out")
 
-def is_relevant_file(path):
-    # Exclude obvious dirs
-    for x in EXCLUDE:
-        if x in path:
-            return False
-    # Only include whitelisted extensions
-    return any(path.endswith(ext) for ext in INCLUDE_EXTS)
+ZIP_NAME = "project_bundle.zip"
+MANIFEST = "manifest.txt"
 
-def add_files_to_zip(zipf, base_dir):
-    for dirpath, _, filenames in os.walk(base_dir):
-        for fname in filenames:
-            fpath = os.path.join(dirpath, fname)
-            relpath = os.path.relpath(fpath)
-            if is_relevant_file(fpath):
-                zipf.write(fpath, relpath)
-                print(f"Added: {relpath}")
+# === Helper functions ===
+def should_include(path):
+    if any(part in EXCLUDE for part in path.split(os.sep)):
+        return False
+    if path.endswith(INCLUDE_EXTS):
+        return True
+    return False
 
-def main():
-    zname = sys.argv[1] if len(sys.argv) > 1 else "relay_project.zip"
-    with zipfile.ZipFile(zname, "w", zipfile.ZIP_DEFLATED) as zipf:
-        for d in INCLUDE_DIRS:
-            if os.path.isdir(d):
-                add_files_to_zip(zipf, d)
-    print(f"\nProject zipped to {zname}")
+def gather_files():
+    files = []
+    for d in INCLUDE_DIRS:
+        for root, dirs, filenames in os.walk(d):
+            for f in filenames:
+                full = os.path.join(root, f)
+                if should_include(full):
+                    files.append(full)
+    return files
+
+def write_manifest(files):
+    with open(MANIFEST, "w") as mf:
+        for f in files:
+            mf.write(f + "\n")
+    print(f"Manifest written to {MANIFEST}")
+
+def bundle_files(files):
+    with zipfile.ZipFile(ZIP_NAME, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            zf.write(f)
+    print(f"Bundled {len(files)} files into {ZIP_NAME}")
 
 if __name__ == "__main__":
-    main()
+    files = gather_files()
+    write_manifest(files)
+    bundle_files(files)

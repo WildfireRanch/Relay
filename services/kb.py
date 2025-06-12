@@ -1,9 +1,8 @@
 # services/kb.py
 # Directory: services/
-# Purpose: Semantic KB using LlamaIndex with ingestion pipeline, node-level control, and overlap mitigation
+# Purpose: Semantic KB using LlamaIndex with ingestion pipeline, node-level control, and robust querying (LlamaIndex ≥0.10)
 # Author: [Your Name]
 # Last Updated: 2025-06-12
-# Approach: Manual node ingestion → VectorStoreIndex(nodes=...)
 
 import os
 import logging
@@ -101,20 +100,25 @@ def search(
     """
     Executes semantic search against the vector index.
     Returns top-k hits with optional filtering by type or score.
+    Compatible with LlamaIndex v0.10+ querying.
     """
     try:
         idx = get_index()
-        results = idx.query(query, embed_model=None, top_k=k)
+        query_engine = idx.as_query_engine(similarity_top_k=k)
+        results = query_engine.query(query)
         hits = []
-        for r in results:
-            if score_threshold and r.score < score_threshold:
+        # LlamaIndex v0.10+ returns a "Response" object with .source_nodes
+        for node_with_score in getattr(results, "source_nodes", []):
+            node = node_with_score.node
+            score = node_with_score.score
+            if score_threshold and score < score_threshold:
                 continue
             hits.append({
-                "snippet": r.text,
-                "score": r.score,
-                "file": r.metadata.get("file_path"),
-                "type": r.metadata.get("type"),
-                "line": r.metadata.get("line_number"),
+                "snippet": node.text,
+                "score": score,
+                "file": node.metadata.get("file_path"),
+                "type": node.metadata.get("type"),
+                "line": node.metadata.get("line_number"),
             })
         if search_type in ("code", "doc"):
             hits = [h for h in hits if h["type"] == search_type]
@@ -129,6 +133,13 @@ def api_search(query: str, k: int = 4, search_type: str = "all"):
 def api_reindex():
     embed_all()
     return {"status": "ok", "message": "Re-index complete"}
+
+def get_recent_summaries(user_id: str) -> list:
+    """
+    Stub for summary API compatibility.
+    Replace this with actual per-user or global summary logic as needed.
+    """
+    return ["No summary implemented yet."]
 
 if __name__ == "__main__":
     import sys
