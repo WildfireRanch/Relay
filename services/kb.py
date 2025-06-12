@@ -2,7 +2,7 @@
 # Directory: services/
 # Purpose: LlamaIndex-powered semantic knowledge base for context, code/doc search, and summaries.
 # Author: [Your Name]
-# Last Updated: 2025-06-12 (Echo thorough review: custom overlap logic for max context)
+# Last Updated: 2025-06-12 (Echo update: fixed SentenceSplitter init per API change)
 # Notes:
 #   - Modular LlamaIndex (v0.10+) only!
 #   - Index auto-rebuild logic included
@@ -10,7 +10,7 @@
 #   - Supports overlapping code chunks for max context
 
 import os
-from typing import List, Optional, Any
+from typing import List, Optional
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, SimpleDirectoryReader
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import SentenceSplitter
@@ -25,7 +25,7 @@ def safe_simple_directory_reader(directory: Path, recursive: bool = True) -> Sim
     Scans 'directory' recursively, skipping files with EXCLUDED_SUFFIXES.
     """
     all_files = []
-    for root, dirs, files in os.walk(directory):
+    for root, _, files in os.walk(directory):
         for file in files:
             if not any(file.lower().endswith(ext) for ext in EXCLUDED_SUFFIXES):
                 all_files.append(os.path.join(root, file))
@@ -33,7 +33,7 @@ def safe_simple_directory_reader(directory: Path, recursive: bool = True) -> Sim
             break
     return SimpleDirectoryReader(input_files=all_files)
 
-# === Overlapping chunk utility ===
+# === Overlapping code chunk utility ===
 def overlapping_chunks(text: str, max_chars: int, chunk_lines: int, overlap_lines: int) -> List[str]:
     """
     Split code into overlapping chunks for max context.
@@ -43,7 +43,6 @@ def overlapping_chunks(text: str, max_chars: int, chunk_lines: int, overlap_line
     i = 0
     while i < len(lines):
         chunk = "\n".join(lines[i:i+chunk_lines])
-        # enforce max_chars per chunk (rarely needed with reasonable line counts)
         if len(chunk) > max_chars:
             chunk = chunk[:max_chars]
         chunks.append(chunk)
@@ -66,34 +65,36 @@ def embed_all(user_id: Optional[str] = None) -> None:
     Use this to (re)build your KB index. Designed to run headless/CLI.
     """
     documents = []
-    # Index all code files
+    # Code files ingestion
     for code_dir in CODE_DIRS:
         if code_dir.exists():
-            docs = safe_simple_directory_reader(code_dir, recursive=True).load_data()
+            docs = safe_simple_directory_reader(code_dir).load_data()
             for doc in docs:
                 doc.metadata['type'] = "code"
             documents.extend(docs)
-    # Index all markdown/docs
+    # Markdown/docs ingestion
     if DOCS_DIR.exists():
-        docs = safe_simple_directory_reader(DOCS_DIR, recursive=True).load_data()
+        docs = safe_simple_directory_reader(DOCS_DIR).load_data()
         for doc in docs:
             doc.metadata['type'] = "doc"
         documents.extend(docs)
-    # Split by file type
-    text_splitter = SentenceSplitter(max_chunk_size=1024)
-    # You can tune these for your use case:
+
+    # Prepare splitters
+    text_splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=200)
+    # Customize code splitter settings
     code_max_chars = 1024
     code_chunk_lines = 30
     code_overlap_lines = 10
+
+    # Split content into chunks
     for doc in documents:
         if doc.metadata.get('type') == "code":
             doc.chunks = overlapping_chunks(doc.text, code_max_chars, code_chunk_lines, code_overlap_lines)
         else:
             doc.chunks = text_splitter.split(doc.text)
-    # Build and persist vector index
-    index = VectorStoreIndex.from_documents(
-        documents, embed_model=EMBED_MODEL, show_progress=True
-    )
+
+    # Build and save index
+    index = VectorStoreIndex.from_documents(documents, embed_model=EMBED_MODEL, show_progress=True)
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     print("[KB] Indexing complete!")
 
@@ -101,7 +102,6 @@ def embed_all(user_id: Optional[str] = None) -> None:
 def get_index():
     """
     Loads the persisted semantic index. If missing, auto-builds from scratch.
-    (Avoids FileNotFoundError at first query after new deploy.)
     """
     if not INDEX_DIR.exists() or not any(INDEX_DIR.iterdir()):
         print("[KB] Index not found, building it now...")
@@ -119,12 +119,9 @@ def search(
 ) -> List[dict]:
     """
     Search code/docs for semantic matches.
-    - search_type: 'all', 'code', or 'doc'
-    - score_threshold: only return hits above this score (if provided)
     """
     index = get_index()
     results = index.query(query, embed_model=EMBED_MODEL, top_k=k)
-    # Format each hit for easy API/UI/agent consumption
     formatted = []
     for r in results:
         if score_threshold is not None and r.score < score_threshold:
@@ -140,7 +137,7 @@ def search(
         formatted = [h for h in formatted if h.get("type") == search_type]
     return formatted
 
-# === Per-user or Generic Context Summaries ===
+# === Recent Summaries Retrieval ===
 def get_recent_summaries(user_id: Optional[str] = None) -> str:
     """
     Load most recent context summary for this user, or fallback to generic.
@@ -157,21 +154,15 @@ def get_recent_summaries(user_id: Optional[str] = None) -> str:
     generic = base / "docs/generated/relay_context.md"
     return generic.read_text() if generic.exists() else ""
 
-# === API Helper Functions (for FastAPI) ===
+# === API Helpers ===
 def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
-    """
-    API-friendly wrapper for search (for FastAPI).
-    """
     return search(query, k=k, search_type=search_type)
 
 def api_reindex() -> dict:
-    """
-    API-friendly wrapper to (re)build the index.
-    """
     embed_all()
     return {"status": "ok", "message": "Re-index complete"}
 
-# === CLI Entrypoint for direct use/testing ===
+# === CLI Entrypoint ===
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "search":
@@ -185,5 +176,8 @@ if __name__ == "__main__":
 
 """
 CHANGELOG:
-- 2025-06-12 (Echo/ChatGPT): Custom overlapping chunker for code, modular LlamaIndex, robust index logic, comments/clarity.
+- 2025-06-12 (Echo): Fixed SentenceSplitter args, preserved overlappingChunks, robust index logic.
+KNOWN ISSUE:
+- Chunk Gap: Context may still be lost at code chunk boundaries—our overlapping_chunk workaround mitigates but
+  is not as seamless as native chunk_overlap in LlamaIndex splitters. Consider native support when available.
 """
