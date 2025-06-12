@@ -1,10 +1,9 @@
 # services/kb.py
 # Directory: services/
-# Purpose: Semantic KB using LlamaIndex with ingestion pipeline, logging, and overlap.
+# Purpose: Semantic KB using LlamaIndex with ingestion pipeline, node-level control, and overlap mitigation
 # Author: [Your Name]
 # Last Updated: 2025-06-12
-# KNOWN ISSUE:
-#  - Chunk Gap: We still use overlap to mitigate boundary context loss.
+# Approach: Manual node ingestion → VectorStoreIndex(nodes=...)
 
 import os
 import logging
@@ -16,6 +15,7 @@ from llama_index.core import (
     VectorStoreIndex,
     StorageContext,
     load_index_from_storage,
+    Document,
 )
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import SentenceSplitter
@@ -36,9 +36,9 @@ CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
 DOCS_DIR = ROOT.parent / "docs"
 INDEX_DIR = ROOT.parent / "data/index"
 
+# Pre‑defined ingestion pipeline (for consistent chunking & embedding)
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        # Sentence splitting of all docs and title extraction
         SentenceSplitter(chunk_size=1024, chunk_overlap=200),
         TitleExtractor(),
         OpenAIEmbedding(model="text-embedding-3-large"),
@@ -46,25 +46,35 @@ INGEST_PIPELINE = IngestionPipeline(
 )
 
 def embed_all(user_id: Optional[str] = None) -> None:
+    """
+    Rebuilds the semantic index from scratch using Documents → Nodes → Index.
+
+    Steps:
+    1. Loads all documents from specified dirs.
+    2. Runs ingestion pipeline to produce Node objects.
+    3. Builds VectorStoreIndex from nodes.
+    4. Persists the storage context.
+    """
     logger.info("📦 Starting ingestion pipeline...")
-    # Load all relevant files
+
+    # 1. Load documents
     docs = []
     for path in CODE_DIRS + [DOCS_DIR]:
         if path.exists():
             docs.extend(SimpleDirectoryReader(path).load_data())
-    logger.info("Loaded %d documents", len(docs))
+    logger.info("Loaded %d Document(s)", len(docs))
 
-    # Run the pipeline once for both splitting & embedding
+    # 2. Convert documents → nodes via pipeline
     try:
         nodes = INGEST_PIPELINE.run(documents=docs)
-        logger.info("Generated %d nodes", len(nodes))
+        logger.info("Generated %d Node(s)", len(nodes))
     except Exception:
         logger.exception("❌ Ingestion pipeline failed")
         raise
 
-    # Build index from nodes
+    # 3. Build vector index from nodes
     try:
-        index = VectorStoreIndex.from_documents(nodes, embed_model=None)
+        index = VectorStoreIndex(nodes=nodes, embed_model=None)
         index.storage_context.persist(persist_dir=str(INDEX_DIR))
         logger.info("✅ Index persisted to %s", INDEX_DIR)
     except Exception:
@@ -72,6 +82,9 @@ def embed_all(user_id: Optional[str] = None) -> None:
         raise
 
 def get_index():
+    """
+    Loads or builds the stored VectorStoreIndex.
+    """
     if not INDEX_DIR.exists() or not any(INDEX_DIR.iterdir()):
         logger.warning("Index missing — rebuilding via ingestion pipeline")
         embed_all()
@@ -85,6 +98,10 @@ def search(
     search_type: str = "all",
     score_threshold: Optional[float] = None,
 ) -> List[dict]:
+    """
+    Executes semantic search against the vector index.
+    Returns top-k hits with optional filtering by type or score.
+    """
     try:
         idx = get_index()
         results = idx.query(query, embed_model=None, top_k=k)
