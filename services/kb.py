@@ -1,46 +1,48 @@
 # services/kb.py
 # Directory: services/
-# Purpose: LlamaIndex-powered semantic knowledge base for context, code/doc search, and summaries.
+# Purpose: Semantic KB using LlamaIndex with logging and overlap chunking.
 # Author: [Your Name]
-# Last Updated: 2025-06-12 (Echo update: fixed SentenceSplitter init per API change)
-# Notes:
-#   - Modular LlamaIndex (v0.10+) only!
-#   - Index auto-rebuild logic included
-#   - Handles AV file exclusion, recursive directory walking, code/text chunking
-#   - Supports overlapping code chunks for max context
+# Last Updated: 2025-06-12
+# KNOWN ISSUE:
+#  - Chunk Gap: This mitigates boundary context loss with overlap, but native support preferred.
 
 import os
+import logging
 from typing import List, Optional
-from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, SimpleDirectoryReader
+from pathlib import Path
+from llama_index.core import (
+    VectorStoreIndex,
+    StorageContext,
+    load_index_from_storage,
+    SimpleDirectoryReader,
+)
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import SentenceSplitter
-from pathlib import Path
 
-# === Exclude Audio/Video Files (file extensions to skip during indexing) ===
+# ——— Logging Setup —————————————————————————————
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+# === AV file exclusion ===
 EXCLUDED_SUFFIXES = {".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flac"}
 
 def safe_simple_directory_reader(directory: Path, recursive: bool = True) -> SimpleDirectoryReader:
-    """
-    Create a SimpleDirectoryReader that ignores audio/video files.
-    Scans 'directory' recursively, skipping files with EXCLUDED_SUFFIXES.
-    """
     all_files = []
     for root, _, files in os.walk(directory):
-        for file in files:
-            if not any(file.lower().endswith(ext) for ext in EXCLUDED_SUFFIXES):
-                all_files.append(os.path.join(root, file))
+        for f in files:
+            if not any(f.lower().endswith(ext) for ext in EXCLUDED_SUFFIXES):
+                all_files.append(os.path.join(root, f))
         if not recursive:
             break
     return SimpleDirectoryReader(input_files=all_files)
 
-# === Overlapping code chunk utility ===
 def overlapping_chunks(text: str, max_chars: int, chunk_lines: int, overlap_lines: int) -> List[str]:
-    """
-    Split code into overlapping chunks for max context.
-    """
     lines = text.splitlines()
-    chunks = []
-    i = 0
+    chunks, i = [], 0
     while i < len(lines):
         chunk = "\n".join(lines[i:i+chunk_lines])
         if len(chunk) > max_chars:
@@ -51,110 +53,85 @@ def overlapping_chunks(text: str, max_chars: int, chunk_lines: int, overlap_line
         i += chunk_lines - overlap_lines
     return chunks
 
-# === Paths and Config ===
+# === Paths & Config ===
 ROOT = Path(__file__).resolve().parent
-CODE_DIRS = [ROOT.parent / "src", ROOT.parent / "backend", ROOT.parent / "frontend"]
+CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
 DOCS_DIR = ROOT.parent / "docs"
 INDEX_DIR = ROOT.parent / "data/index"
 EMBED_MODEL = OpenAIEmbedding(model="text-embedding-3-large")
 
-# === Indexing Function ===
 def embed_all(user_id: Optional[str] = None) -> None:
-    """
-    Index all code and docs recursively for semantic search.
-    Use this to (re)build your KB index. Designed to run headless/CLI.
-    """
+    logger.info("📦 Starting index build...")
     documents = []
-    # Code files ingestion
     for code_dir in CODE_DIRS:
         if code_dir.exists():
             docs = safe_simple_directory_reader(code_dir).load_data()
-            for doc in docs:
-                doc.metadata['type'] = "code"
+            for d in docs:
+                d.metadata["type"] = "code"
             documents.extend(docs)
-    # Markdown/docs ingestion
     if DOCS_DIR.exists():
         docs = safe_simple_directory_reader(DOCS_DIR).load_data()
-        for doc in docs:
-            doc.metadata['type'] = "doc"
+        for d in docs:
+            d.metadata["type"] = "doc"
         documents.extend(docs)
+    logger.info("Found %d docs to index", len(documents))
 
-    # Prepare splitters
     text_splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=200)
-    # Customize code splitter settings
-    code_max_chars = 1024
-    code_chunk_lines = 30
-    code_overlap_lines = 10
+    code_max_chars, code_chunk_lines, code_overlap_lines = 1024, 30, 10
 
-    # Split content into chunks
-    for doc in documents:
-        if doc.metadata.get('type') == "code":
-            doc.chunks = overlapping_chunks(doc.text, code_max_chars, code_chunk_lines, code_overlap_lines)
+    for d in documents:
+        if d.metadata.get("type") == "code":
+            d.chunks = overlapping_chunks(d.text, code_max_chars, code_chunk_lines, code_overlap_lines)
         else:
-            doc.chunks = text_splitter.split(doc.text)
+            d.chunks = text_splitter.split(d.text)
 
-    # Build and save index
-    index = VectorStoreIndex.from_documents(documents, embed_model=EMBED_MODEL, show_progress=True)
-    index.storage_context.persist(persist_dir=str(INDEX_DIR))
-    print("[KB] Indexing complete!")
+    try:
+        index = VectorStoreIndex.from_documents(documents, embed_model=EMBED_MODEL, show_progress=True)
+        index.storage_context.persist(persist_dir=str(INDEX_DIR))
+        logger.info("✅ Indexing complete!")
+    except Exception:
+        logger.exception("❌ Index build failed")
+        raise
 
-# === Load Vector Index with Auto-Build Logic ===
 def get_index():
-    """
-    Loads the persisted semantic index. If missing, auto-builds from scratch.
-    """
     if not INDEX_DIR.exists() or not any(INDEX_DIR.iterdir()):
-        print("[KB] Index not found, building it now...")
+        logger.warning("Index missing—triggering embed_all()")
         embed_all()
-    storage_context = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
-    return load_index_from_storage(storage_context)
+    try:
+        ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
+        return load_index_from_storage(ctx)
+    except Exception:
+        logger.exception("Failed to load index")
+        raise
 
-# === Semantic Search ===
-def search(
-    query: str,
-    user_id: Optional[str] = None,
-    k: int = 4,
-    search_type: str = "all",
-    score_threshold: Optional[float] = None
-) -> List[dict]:
-    """
-    Search code/docs for semantic matches.
-    """
-    index = get_index()
-    results = index.query(query, embed_model=EMBED_MODEL, top_k=k)
-    formatted = []
-    for r in results:
-        if score_threshold is not None and r.score < score_threshold:
-            continue
-        formatted.append({
-            "snippet": r.text,
-            "score": r.score,
-            "file": r.metadata.get("file_path"),
-            "type": r.metadata.get("type"),
-            "line": r.metadata.get("line_number"),
-        })
-    if search_type in ("code", "doc"):
-        formatted = [h for h in formatted if h.get("type") == search_type]
-    return formatted
+def search(query: str, user_id: Optional[str] = None, k: int = 4, search_type: str = "all", score_threshold: Optional[float] = None) -> List[dict]:
+    try:
+        idx = get_index()
+        results = idx.query(query, embed_model=EMBED_MODEL, top_k=k)
+        formatted = []
+        for r in results:
+            if score_threshold is not None and r.score < score_threshold:
+                continue
+            formatted.append({"snippet": r.text, "score": r.score, "file": r.metadata.get("file_path"), "type": r.metadata.get("type"), "line": r.metadata.get("line_number")})
+        if search_type in ("code", "doc"):
+            formatted = [h for h in formatted if h.get("type") == search_type]
+        return formatted
+    except Exception:
+        logger.exception("Search failed")
+        raise
 
-# === Recent Summaries Retrieval ===
 def get_recent_summaries(user_id: Optional[str] = None) -> str:
-    """
-    Load most recent context summary for this user, or fallback to generic.
-    """
     base = ROOT.parent
     if user_id:
-        summary = base / f"docs/generated/{user_id}_context.md"
-        if summary.exists():
+        fn = base / f"docs/generated/{user_id}_context.md"
+        if fn.exists():
             try:
-                return summary.read_text()
-            except Exception as e:
-                print(f"[KB] Error reading user summary: {e}")
-                return ""
-    generic = base / "docs/generated/relay_context.md"
-    return generic.read_text() if generic.exists() else ""
+                return fn.read_text()
+            except Exception:
+                logger.exception("Error loading user summary")
+    fn_gen = base / "docs/generated/relay_context.md"
+    return fn_gen.read_text() if fn_gen.exists() else ""
 
-# === API Helpers ===
 def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
     return search(query, k=k, search_type=search_type)
 
@@ -162,22 +139,11 @@ def api_reindex() -> dict:
     embed_all()
     return {"status": "ok", "message": "Re-index complete"}
 
-# === CLI Entrypoint ===
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "search":
         q = " ".join(sys.argv[2:]) or "agent context"
-        for hit in search(q):
-            print(f"{hit['file']} (score={hit['score']:.2f})\n{hit['snippet'][:160]}...\n")
+        for h in search(q):
+            print(f"{h['file']} (score={h['score']:.2f})\n{h['snippet'][:160]}...\n")
     else:
         embed_all()
-
-# === End kb.py ===
-
-"""
-CHANGELOG:
-- 2025-06-12 (Echo): Fixed SentenceSplitter args, preserved overlappingChunks, robust index logic.
-KNOWN ISSUE:
-- Chunk Gap: Context may still be lost at code chunk boundaries—our overlapping_chunk workaround mitigates but
-  is not as seamless as native chunk_overlap in LlamaIndex splitters. Consider native support when available.
-"""
