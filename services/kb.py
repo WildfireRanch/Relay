@@ -9,6 +9,17 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from pathlib import Path
 
+# === Patch: Exclude Audio/Video Files ===
+from llama_index.core.readers.file.base import DEFAULT_FILE_EXTRACTOR
+EXCLUDED_SUFFIXES = {".mp3", ".wav", ".mp4", ".avi", ".mov", ".mkv", ".flac"}
+
+def safe_simple_directory_reader(directory, recursive=True):
+    """
+    Create a SimpleDirectoryReader that ignores audio/video files.
+    """
+    file_extractor = {k: v for k, v in DEFAULT_FILE_EXTRACTOR.items() if k not in EXCLUDED_SUFFIXES}
+    return SimpleDirectoryReader(str(directory), recursive=recursive, file_extractor=file_extractor)
+
 # === Paths and Config ===
 ROOT = Path(__file__).resolve().parent
 CODE_DIRS = [ROOT.parent / "src", ROOT.parent / "backend", ROOT.parent / "frontend"]
@@ -26,13 +37,13 @@ def embed_all(user_id: Optional[str] = None):
     # Index all code files
     for code_dir in CODE_DIRS:
         if code_dir.exists():
-            docs = SimpleDirectoryReader(str(code_dir), recursive=True).load_data()
+            docs = safe_simple_directory_reader(code_dir, recursive=True).load_data()
             for doc in docs:
                 doc.metadata['type'] = "code"
             documents.extend(docs)
     # Index all markdown/docs
     if DOCS_DIR.exists():
-        docs = SimpleDirectoryReader(str(DOCS_DIR), recursive=True).load_data()
+        docs = safe_simple_directory_reader(DOCS_DIR, recursive=True).load_data()
         for doc in docs:
             doc.metadata['type'] = "doc"
         documents.extend(docs)
