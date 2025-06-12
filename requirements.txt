@@ -30,6 +30,7 @@ transformers>=4.30
 
 # === Semantic Search & Embeddings ===
 llama-index-core                # core semantic engine for KB, DocsViewer, etc.
+llama-index-llms-openai         # OpenAI LLM wrapper (fixes llama_index.llms import)
 llama-index-embeddings-openai   # OpenAI embedding support
 llama-index-readers-file        # file reader for local/markdown/docs
 
