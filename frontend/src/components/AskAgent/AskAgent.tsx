@@ -1,7 +1,3 @@
-// File: components/AskAgent/AskAgent.tsx
-// Directory: frontend/src/components/AskAgent
-// Purpose: Chat with the agent, context/audit aware, future-ready for action queue, streaming, diff
-
 "use client";
 
 import { useState, useRef } from "react";
@@ -53,7 +49,7 @@ export default function AskAgent() {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 100);
       setQuery("");
-    } catch (error) {
+    } catch {
       setMessages(prev => [
         ...prev,
         {
@@ -71,7 +67,7 @@ export default function AskAgent() {
       <div className="border rounded-md p-4 mb-4 h-[320px] overflow-auto bg-gray-50">
         {messages.length === 0 && (
           <div className="text-gray-400 italic text-center pt-10">
-            Type a question and hit Enter or click "Ask Relay"!
+            Type a question and hit Enter or click &quot;Ask Relay&quot;!
           </div>
         )}
         {messages.map((msg, i) => (
@@ -134,7 +130,7 @@ export default function AskAgent() {
         </Button>
       </form>
       <div className="text-xs text-gray-400 mt-2">
-        Tip: Click “Show Context” to reveal what code/docs/logs the agent used for each answer.
+        Tip: Click &quot;Show Context&quot; to reveal what code/docs/logs the agent used for each answer.
       </div>
     </div>
   );

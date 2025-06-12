@@ -1,7 +1,3 @@
-// File: components/AuditPanel/AuditPanel.tsx
-// Directory: frontend/src/components/AuditPanel
-// Purpose: Relay Next-Gen Audit Panel - search/filter/export/log drilldown
-
 "use client";
 
 import { useEffect, useState } from "react";
@@ -17,7 +13,7 @@ type LogEntry = {
   status: string;
   user?: string;
   comment?: string;
-  result?: any;
+  result?: unknown;
 };
 type ActionDetail = {
   id: string;
@@ -57,7 +53,9 @@ export default function AuditPanel() {
       headers: { "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || "" }
     });
     const data = await res.json();
-    setRelatedAction(data.actions?.find((a: any) => a.id === id) || null);
+    // Find the matching action by ID, typed correctly
+    const action: ActionDetail | undefined = (data.actions as ActionDetail[] | undefined)?.find(a => a.id === id);
+    setRelatedAction(action || null);
   }
 
   useEffect(() => {
@@ -89,7 +87,7 @@ export default function AuditPanel() {
       const header = ["id", "type", "path", "timestamp", "status", "user", "comment"];
       const csv = [
         header.join(","),
-        ...filtered.map(l => header.map(k => `"${(l as any)[k] ?? ""}"`).join(","))
+        ...filtered.map(l => header.map(k => `"${(l as Record<string, string | undefined>)[k] ?? ""}"`).join(","))
       ].join("\n");
       blob = new Blob([csv], { type: "text/csv" });
     }

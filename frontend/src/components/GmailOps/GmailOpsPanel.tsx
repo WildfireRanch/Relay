@@ -4,12 +4,20 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
+// Explicitly type the Email shape
+type Email = {
+  from: string;
+  subject: string;
+  date: string;
+  snippet: string;
+};
+
 export default function GmailOpsPanel() {
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
-  const [emails, setEmails] = useState<any[]>([]);
+  const [emails, setEmails] = useState<Email[]>([]);
 
   async function send() {
     const res = await fetch("/control/send_email", {
@@ -26,7 +34,7 @@ export default function GmailOpsPanel() {
       headers: { "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || "" }
     });
     const data = await res.json();
-    setEmails(data.emails || []);
+    setEmails((data.emails as Email[]) || []);
   }
 
   return (

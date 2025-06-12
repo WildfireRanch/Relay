@@ -34,7 +34,7 @@ export default function ActionQueuePanel() {
   const [error, setError] = useState<string | null>(null);
   const [showContext, setShowContext] = useState<{ [id: string]: boolean }>({});
   const [showHistory, setShowHistory] = useState<{ [id: string]: boolean }>({});
-  const [showDiff, setShowDiff] = useState<{ [id: string]: boolean }>({});
+  // REMOVED: const [showDiff, setShowDiff] = useState<{ [id: string]: boolean }>({});
   const [comment, setComment] = useState<{ [id: string]: string }>({});
   const [compareContextId, setCompareContextId] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -50,7 +50,7 @@ export default function ActionQueuePanel() {
       });
       const data = await res.json();
       setActions(data.actions || []);
-    } catch (e) {
+    } catch {
       setError("Failed to fetch action queue.");
     }
   }
@@ -69,7 +69,7 @@ export default function ActionQueuePanel() {
       });
       await fetchQueue();
       setComment((prev) => ({ ...prev, [id]: "" }));
-    } catch (e) {
+    } catch {
       setError(`Failed to ${action} action.`);
     }
     setProcessing(null);
@@ -174,7 +174,6 @@ export default function ActionQueuePanel() {
                 <details>
                   <summary className="cursor-pointer text-xs text-blue-700 mt-1">Show Context Diff</summary>
                   <pre className="bg-yellow-100 p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
-                    {/* Naive diff: highlight lines present in one but not the other */}
                     {diffContext(a.action.context, getActionById(compareContextId)?.action.context || "")}
                   </pre>
                 </details>
@@ -209,8 +208,7 @@ export default function ActionQueuePanel() {
             {a.status === "pending" && (
               <form
                 className="flex flex-col gap-2 mt-2"
-                onSubmit={e => {
-                  e.preventDefault();
+                onSubmit={() => {
                   updateStatus(a.id, "approve");
                 }}
               >
