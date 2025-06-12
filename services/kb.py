@@ -5,7 +5,7 @@
 import os
 from typing import List, Optional, Any
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, SimpleDirectoryReader
-from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.embeddings_openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from pathlib import Path
 
