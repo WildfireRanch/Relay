@@ -2,17 +2,18 @@
 # Directory: services/
 # Purpose: LlamaIndex-powered semantic knowledge base for context, code/doc search, and summaries.
 # Author: [Your Name]
-# Last Updated: 2025-06-11 (Echo/ChatGPT thorough review)
+# Last Updated: 2025-06-12 (Echo thorough review: custom overlap logic for max context)
 # Notes:
 #   - Modular LlamaIndex (v0.10+) only!
 #   - Index auto-rebuild logic included
 #   - Handles AV file exclusion, recursive directory walking, code/text chunking
+#   - Supports overlapping code chunks for max context
 
 import os
 from typing import List, Optional, Any
 from llama_index.core import VectorStoreIndex, StorageContext, load_index_from_storage, SimpleDirectoryReader
 from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
+from llama_index.core.node_parser import SentenceSplitter
 from pathlib import Path
 
 # === Exclude Audio/Video Files (file extensions to skip during indexing) ===
@@ -31,6 +32,25 @@ def safe_simple_directory_reader(directory: Path, recursive: bool = True) -> Sim
         if not recursive:
             break
     return SimpleDirectoryReader(input_files=all_files)
+
+# === Overlapping chunk utility ===
+def overlapping_chunks(text: str, max_chars: int, chunk_lines: int, overlap_lines: int) -> List[str]:
+    """
+    Split code into overlapping chunks for max context.
+    """
+    lines = text.splitlines()
+    chunks = []
+    i = 0
+    while i < len(lines):
+        chunk = "\n".join(lines[i:i+chunk_lines])
+        # enforce max_chars per chunk (rarely needed with reasonable line counts)
+        if len(chunk) > max_chars:
+            chunk = chunk[:max_chars]
+        chunks.append(chunk)
+        if i + chunk_lines >= len(lines):
+            break
+        i += chunk_lines - overlap_lines
+    return chunks
 
 # === Paths and Config ===
 ROOT = Path(__file__).resolve().parent
@@ -60,11 +80,14 @@ def embed_all(user_id: Optional[str] = None) -> None:
             doc.metadata['type'] = "doc"
         documents.extend(docs)
     # Split by file type
-    code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30, chunk_overlap=10)
     text_splitter = SentenceSplitter(max_chunk_size=1024)
+    # You can tune these for your use case:
+    code_max_chars = 1024
+    code_chunk_lines = 30
+    code_overlap_lines = 10
     for doc in documents:
         if doc.metadata.get('type') == "code":
-            doc.chunks = code_splitter.split(doc.text)
+            doc.chunks = overlapping_chunks(doc.text, code_max_chars, code_chunk_lines, code_overlap_lines)
         else:
             doc.chunks = text_splitter.split(doc.text)
     # Build and persist vector index
@@ -162,6 +185,5 @@ if __name__ == "__main__":
 
 """
 CHANGELOG:
-- 2025-06-11 (Echo/ChatGPT): Modular LlamaIndex, AV file exclusion, auto-rebuild logic, docstrings/comments cleanup.
-- [Add your own update notes as you iterate!]
+- 2025-06-12 (Echo/ChatGPT): Custom overlapping chunker for code, modular LlamaIndex, robust index logic, comments/clarity.
 """
