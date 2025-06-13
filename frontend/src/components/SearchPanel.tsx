@@ -28,14 +28,21 @@ const DEBOUNCE_MS = 400;
 const TOP_K = 5;
 
 export default function SearchPanel() {
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState<string>("");
   const [results, setResults] = useState<KBResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const controllerRef = useRef<AbortController | null>(null);
-  const debounceRef = useRef<number | null>(null);
 
-  // Core fetch logic (idempotent)
+  const controllerRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearDebounce = () => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+  };
+
+  // Core fetch logic
   const fetchResults = async (q: string) => {
     if (!API_ROOT) {
       setError("API URL not configured");
@@ -45,9 +52,11 @@ export default function SearchPanel() {
       setError("API key missing");
       return;
     }
+
     setError(null);
     setLoading(true);
-    controllerRef.current?.abort(); // cancel any in‑flight
+
+    controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
 
@@ -68,12 +77,16 @@ export default function SearchPanel() {
       if (res.status === 401 || res.status === 403) {
         throw new Error("Unauthorized – check API key / login");
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
 
       const data: KBResult[] = await res.json();
       setResults(data);
-    } catch (err: unknown) {
-      if ((err as { name?: string }).name === "AbortError") return; // stale request
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return; // request was cancelled
+      }
       console.error("KB search error", err);
       setError((err as Error).message ?? "Search failed");
     } finally {
@@ -81,21 +94,25 @@ export default function SearchPanel() {
     }
   };
 
-  // Debounce user typing
+  // Debounce typing
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
       setError(null);
       return;
     }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => fetchResults(query.trim()), DEBOUNCE_MS);
-    return () => debounceRef.current && clearTimeout(debounceRef.current);
+
+    clearDebounce();
+    debounceRef.current = setTimeout(() => fetchResults(query.trim()), DEBOUNCE_MS);
+
+    return () => {
+      clearDebounce();
+    };
   }, [query]);
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    debounceRef.current && clearTimeout(debounceRef.current);
+    clearDebounce();
     fetchResults(query.trim());
   };
 
