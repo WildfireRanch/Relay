@@ -1,14 +1,20 @@
 // File: SearchPanel.tsx
 // Directory: frontend/src/components
-// Purpose: UI panel for semantic KB search (aligned with GET /kb/search)
-// Last Updated: 2025-06-12
+// Purpose: Robust, debounced UI panel for semantic KB search (GET /kb/search).
+// Notes:
+//   • Uses `query` param (canonical) to avoid 422 mismatch.
+//   • Debounces keystrokes (400 ms) & cancels stale fetches via AbortController.
+//   • Pulls API root/key from @/lib/api; shows config error prominently.
+//   • Accessible: form with <label>, aria‑busy, keyboard submit.
+//   • Staging/prod ready: handles 401/403 specifically.
+// Last Updated: 2025‑06‑13
 
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { API_ROOT, API_KEY } from "@/lib/api"; // expose API_KEY via env
+import { API_ROOT, API_KEY } from "@/lib/api";
 
 export type KBResult = {
   path: string;
@@ -18,79 +24,112 @@ export type KBResult = {
   similarity: number;
 };
 
+const DEBOUNCE_MS = 400;
+const TOP_K = 5;
+
 export default function SearchPanel() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<KBResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  const search = async () => {
-    const q = query.trim();
-    if (!q) return;
-
+  // Core fetch logic (idempotent)
+  const fetchResults = async (q: string) => {
     if (!API_ROOT) {
-      setError("⚠️ API URL not configured");
+      setError("API URL not configured");
+      return;
+    }
+    if (!API_KEY) {
+      setError("API key missing");
       return;
     }
     setError(null);
     setLoading(true);
+    controllerRef.current?.abort(); // cancel any in‑flight
+    const controller = new AbortController();
+    controllerRef.current = controller;
 
     try {
       const url = new URL("/kb/search", API_ROOT);
-      url.searchParams.set("q", q);
-      url.searchParams.set("k", "5");
+      url.searchParams.set("query", q);
+      url.searchParams.set("k", String(TOP_K));
 
       const res = await fetch(url.toString(), {
         method: "GET",
         headers: {
-          "x-api-key": API_KEY ?? "",       // ✱ guarded route
+          "x-api-key": API_KEY,
           Accept: "application/json",
         },
+        signal: controller.signal,
       });
 
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("Unauthorized – check API key / login");
+      }
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-      // Backend returns plain array
       const data: KBResult[] = await res.json();
       setResults(data);
-    } catch (err) {
-      console.error("Search error:", err);
-      setError("Search failed – see console");
+    } catch (err: any) {
+      if (err.name === "AbortError") return; // stale request
+      console.error("KB search error", err);
+      setError(err.message ?? "Search failed");
     } finally {
       setLoading(false);
     }
   };
 
+  // Debounce user typing
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([]);
+      setError(null);
+      return;
+    }
+    debounceRef.current && clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => fetchResults(query.trim()), DEBOUNCE_MS);
+    return () => debounceRef.current && clearTimeout(debounceRef.current);
+  }, [query]);
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    debounceRef.current && clearTimeout(debounceRef.current);
+    fetchResults(query.trim());
+  };
+
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2">
+    <div className="space-y-4" aria-busy={loading}>
+      <form onSubmit={onSubmit} className="flex gap-2">
+        <label htmlFor="kb-query" className="sr-only">
+          Search knowledge base
+        </label>
         <Input
           id="kb-query"
           placeholder="Ask a question…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && search()}
         />
-        <Button disabled={loading} onClick={search}>
+        <Button type="submit" disabled={loading}>
           {loading ? "⏳" : "Search"}
         </Button>
-      </div>
+      </form>
 
       {error && <p className="text-sm text-red-500">{error}</p>}
 
       {results.length > 0 && (
         <div className="space-y-2">
           {results.map((r, i) => (
-            <div key={i} className="border rounded p-4 text-sm space-y-1">
-              <div className="text-muted-foreground">
-                <strong>{r.title}</strong>{" "}
-                ({r.similarity.toFixed(2)})
-              </div>
+            <article key={i} className="border rounded p-4 text-sm space-y-1">
+              <header className="text-muted-foreground">
+                <strong>{r.title}</strong> ({r.similarity.toFixed(2)})
+              </header>
               <pre className="whitespace-pre-wrap">{r.snippet}</pre>
-              <div className="text-xs text-muted-foreground">
+              <footer className="text-xs text-muted-foreground">
                 Updated: {r.updated || "—"}
-              </div>
-            </div>
+              </footer>
+            </article>
           ))}
         </div>
       )}
