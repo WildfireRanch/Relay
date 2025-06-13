@@ -1,103 +1,133 @@
-# services/kb.py
-# Directory: services/
-# Purpose: Semantic KB using LlamaIndex with ingestion pipeline, node-level control, robust querying, and full diagnostics (LlamaIndex ≥0.10)
-# Author: [Your Name]
-# Last Updated: 2025-06-12
+# Directory: services
+# File: kb.py
+# Purpose: Semantic knowledge‑base utilities using LlamaIndex (≥ 0.10.40).
+#          Model‑scoped index dirs + dimension guard to prevent mixed vectors.
+# Author: Bret Westwood & Echo
+# Last Updated: 2025‑06‑12
 
-import os
+"""Semantic KB helper module
+
+Key design points
+-----------------
+* **Model‑scoped persistence** – each embedding model writes to its own
+  `data/index/<model>/` folder, eliminating silent mix‑ups when the model
+  changes between deploys.
+* **Dimension guard** – startup check aborts if stored vectors and current
+  embedding model have mismatched dimensions.
+* **Fully self‑contained** – `python services/kb.py` rebuilds the index.
+* **Verbose logging** – every stage logs for remote debugging (Railway).
+"""
+
+from __future__ import annotations
+
+import json
 import logging
-from typing import List, Optional
+import os
 from pathlib import Path
+from typing import List, Optional
 
+import numpy as np
 from llama_index.core import (
     SimpleDirectoryReader,
-    VectorStoreIndex,
     StorageContext,
+    VectorStoreIndex,
     load_index_from_storage,
-    Document,
 )
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.extractors import TitleExtractor
+from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.openai import OpenAIEmbedding
 
-# ——— Logging Setup ———————————————————————————————————
+# ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
-logger.info("=== [LOADED kb.py: LLAMAINDEX v0.10+ API, %s] ===", __file__)
+logger.info("=== [LOADED kb.py @ %s] ===", __file__)
 
-# === Config Paths & Settings ===
+# ─── Paths & Constants ──────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent
 CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
 DOCS_DIR = ROOT.parent / "docs"
-INDEX_DIR = ROOT.parent / "data/index"
 
-# === Embedding Model (used for both pipeline and index) ===
-EMBED_MODEL = OpenAIEmbedding(model="text-embedding-3-large")
+EMBED_MODEL_NAME = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-large")
+EMBED_MODEL = OpenAIEmbedding(model=EMBED_MODEL_NAME)
 
-# Pre‑defined ingestion pipeline (for consistent chunking & embedding)
+# Model‑scoped index directory
+INDEX_ROOT = ROOT.parent / "data/index"
+INDEX_DIR = INDEX_ROOT / EMBED_MODEL_NAME
+INDEX_DIR.mkdir(parents=True, exist_ok=True)
+
+CHUNK_SIZE = 1024
+CHUNK_OVERLAP = 200
+
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        SentenceSplitter(chunk_size=1024, chunk_overlap=200),
         TitleExtractor(),
+        SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
         EMBED_MODEL,
     ]
 )
 
+# ─── Helpers ────────────────────────────────────────────────────────────────
+
+def _vector_dim_current() -> int:
+    """Return embedding dimension for current model."""
+    return len(EMBED_MODEL.get_text_embedding("dim_check"))
+
+
+def _vector_dim_stored() -> int:
+    """Return embedding dimension detected in stored index or ‑1 if none."""
+    vs_file = INDEX_DIR / "vector_store.json"
+    if not vs_file.exists():
+        return -1
+    store = json.loads(vs_file.read_text())
+    # take first embedding array we find
+    for rec in store.values():
+        if "embedding" in rec and isinstance(rec["embedding"], list):
+            return len(rec["embedding"])
+    return -1
+
+
+STORED_DIM, CURR_DIM = _vector_dim_stored(), _vector_dim_current()
+if STORED_DIM > -1 and STORED_DIM != CURR_DIM:
+    raise RuntimeError(
+        f"Embedding dimension mismatch: stored={STORED_DIM} vs current={CURR_DIM}. "
+        "Delete the index directory or set OPENAI_EMBED_MODEL to match."
+    )
+
+# ─── Build & Load ───────────────────────────────────────────────────────────
+
 def embed_all(user_id: Optional[str] = None) -> None:
-    """
-    Rebuilds the semantic KB index from all code/docs in configured dirs.
-    """
-    logger.info("=== [EMBED_ALL] Rebuilding semantic KB index ===")
-    # 1. Load documents
+    """(Re)build the semantic KB index for all configured files."""
+    logger.info("=== [EMBED_ALL] Rebuilding index with model %s ===", EMBED_MODEL_NAME)
+
     docs = []
     for path in CODE_DIRS + [DOCS_DIR]:
         if path.exists():
             docs.extend(SimpleDirectoryReader(path).load_data())
-    logger.info("Loaded %d Document(s)", len(docs))
-    if not docs:
-        logger.error("No documents found to index! Check CODE_DIRS and DOCS_DIR.")
+    logger.info("Loaded %d documents", len(docs))
 
-    # 2. Convert documents → nodes via pipeline
-    try:
-        nodes = INGEST_PIPELINE.run(documents=docs)
-        logger.info("Generated %d Node(s)", len(nodes))
-        if not nodes:
-            logger.error("Ingestion pipeline produced NO nodes!")
-            raise RuntimeError("No nodes generated during ingestion; cannot build index.")
-        # Log key fields for first node for debugging
-        logger.info("Node[0] fields: %s", vars(nodes[0]))
-        # Check embedding attribute presence and size
-        emb = getattr(nodes[0], "embedding", None)
-        if emb is None or not hasattr(emb, "__len__") or len(emb) < 16:
-            logger.warning("Node[0] missing or has tiny embedding: %s", str(emb))
-    except Exception:
-        logger.exception("❌ Ingestion pipeline failed")
-        raise
+    nodes = INGEST_PIPELINE.run(documents=docs)
+    logger.info("Generated %d nodes", len(nodes))
 
-    # 3. Build vector index from nodes
-    try:
-        # Don't pass embed_model=None—let LlamaIndex auto-detect if embeddings present
-        index = VectorStoreIndex(nodes=nodes)
-        index.storage_context.persist(persist_dir=str(INDEX_DIR))
-        logger.info("✅ Index persisted to %s", INDEX_DIR)
-    except Exception:
-        logger.exception("❌ Index build/persist failed")
-        raise
+    index = VectorStoreIndex(nodes=nodes)
+    index.storage_context.persist(persist_dir=str(INDEX_DIR))
+    logger.info("✅ Index persisted to %s", INDEX_DIR)
 
-def get_index():
-    """
-    Loads or builds the stored VectorStoreIndex.
-    """
-    if not INDEX_DIR.exists() or not any(INDEX_DIR.iterdir()):
-        logger.warning("Index missing — rebuilding via ingestion pipeline")
+
+def get_index() -> VectorStoreIndex:
+    """Load existing index or trigger rebuild."""
+    if not any(INDEX_DIR.iterdir()):
+        logger.warning("Index dir empty – running embed_all()…")
         embed_all()
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
     return load_index_from_storage(ctx)
+
+
+# ─── Search  ───────────────────────────────────────────────────────────────
 
 def search(
     query: str,
@@ -106,59 +136,49 @@ def search(
     search_type: str = "all",
     score_threshold: Optional[float] = None,
 ) -> List[dict]:
-    """
-    Semantic search of the KB index for relevant code/docs.
-    """
-    logger.info("[search] Called with query='%s', k=%d, user_id=%s", query, k, user_id)
-    try:
-        idx = get_index()
-        logger.info("[search] Loaded index: %s", type(idx))
-        query_engine = idx.as_query_engine(similarity_top_k=k)
-        logger.info("[search] Created query_engine: %s", type(query_engine))
-        results = query_engine.query(query)
-        logger.info("[search] Query completed, got results type: %s", type(results))
-        hits = []
-        if not getattr(results, "source_nodes", []):
-            logger.warning("[search] No results returned from index for query='%s'", query)
-        for node_with_score in getattr(results, "source_nodes", []):
-            node = node_with_score.node
-            score = node_with_score.score
-            logger.info("[search] Hit: score=%.3f, text[0:30]='%s...'", score, node.text[:30].replace("\n", " "))
-            if score_threshold and score < score_threshold:
-                continue
-            hits.append({
-                "snippet": node.text,
-                "similarity": score,
-                "path": node.metadata.get("file_path"),
-                "title": node.metadata.get("title", node.metadata.get("file_path") or "Untitled"),
-                "updated": node.metadata.get("updated", ""),
-            })
-        if search_type in ("code", "doc"):
-            hits = [h for h in hits if h["type"] == search_type]
-        logger.info("[search] Returning %d hits.", len(hits))
-        return hits
-    except Exception as e:
-        logger.exception("Search failed")
-        raise RuntimeError(f"KB search failed: {e}")
+    logger.info("[search] q='%s' k=%d", query, k)
 
-def api_search(query: str, k: int = 4, search_type: str = "all"):
-    return search(query, k=k, search_type=search_type)
+    qe = get_index().as_query_engine(similarity_top_k=k)
+    results = qe.query(query)
+
+    hits: List[dict] = []
+    for n in getattr(results, "source_nodes", []):
+        if score_threshold is not None and n.score < score_threshold:
+            continue
+        hits.append(
+            {
+                "id": n.node.node_id,
+                "snippet": n.node.text,
+                "similarity": n.score,
+                "path": n.node.metadata.get("file_path"),
+                "title": n.node.metadata.get("title", n.node.metadata.get("file_path") or "Untitled"),
+            }
+        )
+    return hits
+
+
+# ─── API wrappers ──────────────────────────────────────────────────────────
+
+def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
+    return search(query=query, k=k, search_type=search_type)
+
 
 def api_reindex():
     embed_all()
-    return {"status": "ok", "message": "Re-index complete"}
+    return {"status": "ok", "message": "Re‑index complete"}
 
-def get_recent_summaries(user_id: str) -> list:
-    """
-    Stub for summary API compatibility.
-    Replace with actual per-user or global summary logic as needed.
-    """
+
+def get_recent_summaries(user_id: str) -> list[str]:
     return ["No summary implemented yet."]
 
+
+# ─── CLI entrypoint ────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import sys
+
     if len(sys.argv) > 1 and sys.argv[1] == "search":
-        for h in search(" ".join(sys.argv[2:]) or "test"):
+        q = " ".join(sys.argv[2:]) or "test"
+        for h in search(q):
             print(f"{h['title']} (score={h['similarity']:.2f}): {h['snippet'][:120]}…")
     else:
         embed_all()
