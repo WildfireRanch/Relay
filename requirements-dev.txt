@@ -1,19 +1,27 @@
 # === CLI & Developer Experience ===
 click>=8.0
-tqdm>=4.60
 colorama>=0.4
 python-json-logger>=3.0
 rich>=13.0
+tqdm>=4.60
 typer>=0.9
 
 # === Data Visualization ===
 matplotlib>=3.8
 seaborn>=0.13
 
+# === Dev/Test Only (Optional) ===
+black>=24.0
+flake8>=6.0
+ipython>=8.0
+isort>=5.10
+pytest>=7.0
+pytest-asyncio>=0.21
+
 # === Optional Utilities ===
-watchdog>=4.0
-jinja2>=3.0
-pyyaml>=6.0
 beautifulsoup4>=4.13
-python-dateutil>=2.9
+jinja2>=3.0
 jsonschema>=4.0
+pyyaml>=6.0
+python-dateutil>=2.9
+watchdog>=4.0
