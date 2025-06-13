@@ -1,71 +1,94 @@
-# main.py
+# File: main.py
 # Directory: project root
-# Purpose: Relay backend FastAPI application (with embeddings debug + admin endpoints)
+# Purpose: Relay backend FastAPI application (runtime‑only indexing, unified KB search, admin endpoints)
+# Notes:
+#   • Loads `.env` **only** when ENV=local (Codespaces/CI secrets stay off‑disk)
+#   • CORS origins configurable via FRONTEND_ORIGIN env (fallback list for prod/staging)
+#   • Removes legacy routes/embeddings import – all search goes through routes.search → services.kb
+#   • Registers /admin/reindex (API‑key protected) for on‑demand KB rebuild
+# Last Updated: 2025‑06‑12
 
-from dotenv import load_dotenv
+from __future__ import annotations
+
+import logging
 import os
 from pathlib import Path
-import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# === Load environment configuration ===
-load_dotenv()  # load .env into os.environ
+# ─── Optional .env loading (local‑only) ─────────────────────────────────────
+if os.getenv("ENV", "local") == "local":
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        logging.info("Loaded .env for local development")
+    except ImportError:
+        logging.warning("python‑dotenv not installed; skipping .env load")
 
-# === Validate essential environment variables ===
-required_env = ["API_KEY", "OPENAI_API_KEY", "GOOGLE_CREDS_JSON"]
-missing = [key for key in required_env if not os.getenv(key)]
+# ─── Validate essential env vars ───────────────────────────────────────────
+required_env = [
+    "API_KEY",
+    "OPENAI_API_KEY",
+    "GOOGLE_CREDS_JSON",
+]
+missing = [k for k in required_env if not os.getenv(k)]
 if missing:
-    logging.error(f"Missing required env vars: {missing}")
+    logging.error("Missing required env vars: %s", missing)
 else:
-    logging.info("✅ All required environment variables are present.")
+    logging.info("✅ Required environment variables present")
 
-# === Ensure docs directories exist ===
+# ─── Ensure docs directories exist ────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 for sub in ["docs/imported", "docs/generated"]:
     path = PROJECT_ROOT / sub
     path.mkdir(parents=True, exist_ok=True)
-    logging.debug(f"Ensured directory: {path}")
+    logging.debug("Ensured directory %s", path)
 
-# === Initialize FastAPI app ===
+# ─── FastAPI application setup ─────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
-    description="Backend for Relay agent: routes for ask, status, control, docs, oauth, debug, and admin"
+    description="Backend for Relay agent: ask, status, control, docs, oauth, KB, admin",
 )
 
-# === Configure CORS ===
-frontend_origins = [
-    "https://relay.wildfireranch.us",
-    "https://status.wildfireranch.us",
-    "https://relay.staging.wildfireranch.us",
-    "https://status.staging.wildfireranch.us",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000"
-]
+# ─── CORS ──────────────────────────────────────────────────────────────────
+frontend_origins = os.getenv("FRONTEND_ORIGIN")
+if frontend_origins:
+    origins = [o.strip() for o in frontend_origins.split(",") if o.strip()]
+else:
+    origins = [
+        "https://relay.wildfireranch.us",
+        "https://status.wildfireranch.us",
+        "https://relay.staging.wildfireranch.us",
+        "https://status.staging.wildfireranch.us",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=frontend_origins,
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-logging.info(f"CORS configured for origins: {frontend_origins}")
+logging.info("CORS configured for origins: %s", origins)
 
-# === Mount route modules ===
+# ─── Router imports ───────────────────────────────────────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
 from routes.docs import router as docs_router
 from routes.oauth import router as oauth_router
 from routes.debug import router as debug_router
-from routes.kb import router as kb_router
-from routes.search import router as search_router
-from routes.embeddings import router as embeddings_router  # <--- NEW
-from routes import admin                                  # <--- NEW
+from routes.kb import router as kb_router               # native KB endpoints
+from routes.search import router as search_router       # proxy to services.kb
+from routes import admin as admin_router                # admin utilities
 
+# Legacy `routes.embeddings` removed – all search unified via routes.search
+
+# ─── Register routers ─────────────────────────────────────────────────────
 app.include_router(ask_router)
 app.include_router(status_router)
 app.include_router(control_router)
@@ -74,35 +97,42 @@ app.include_router(oauth_router)
 app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
-app.include_router(embeddings_router)  # <--- NEW
-app.include_router(admin.router)        # <--- NEW: Register admin endpoints!
+app.include_router(admin_router.router)   # /admin/reindex etc.
 
-logging.info("✅ Registered all route modules (including embeddings debug and admin).")
+logging.info("✅ All route modules registered (legacy embeddings route deprecated)")
 
-# === Health check endpoint ===
+# ─── Health & root endpoints ───────────────────────────────────────────────
 @app.get("/", summary="Health check")
 def root():
-    """Basic sanity check for load balancers and uptime monitoring."""
+    """Liveness endpoint for load balancers/UptimeRobot."""
     return JSONResponse({"message": "Relay Agent is Online"})
 
-# === Production-ready validation endpoint ===
-@app.get("/health", summary="Readiness and liveness probe")
+
+@app.get("/health", summary="Readiness probe")
 def health_check():
-    """Check service readiness: verifies docs dirs and key env vars."""
+    """Verifies essential env vars and docs directories exist."""
     ok = True
-    details = {}
+    details: dict[str, bool] = {}
+
     for key in required_env:
         present = bool(os.getenv(key))
         details[key] = present
         ok = ok and present
+
     for sub in ["docs/imported", "docs/generated"]:
         exists = (PROJECT_ROOT / sub).exists()
         details[sub] = exists
         ok = ok and exists
-    status = 200 if ok else 503
-    return JSONResponse({"status": "ok" if ok else "error", "details": details}, status_code=status)
 
-# === Running locally with uvicorn ===
+    return JSONResponse({"status": "ok" if ok else "error", "details": details}, status_code=(200 if ok else 503))
+
+# ─── Local dev entrypoint ─────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080)),
+        reload=os.getenv("ENV", "local") == "local",
+    )
