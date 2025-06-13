@@ -1,6 +1,6 @@
 # main.py
 # Directory: project root
-# Purpose: Relay backend FastAPI application (with embeddings debug endpoints)
+# Purpose: Relay backend FastAPI application (with embeddings debug + admin endpoints)
 
 from dotenv import load_dotenv
 import os
@@ -33,7 +33,7 @@ for sub in ["docs/imported", "docs/generated"]:
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
-    description="Backend for Relay agent: routes for ask, status, control, docs, oauth, and debug"
+    description="Backend for Relay agent: routes for ask, status, control, docs, oauth, debug, and admin"
 )
 
 # === Configure CORS ===
@@ -64,6 +64,7 @@ from routes.debug import router as debug_router
 from routes.kb import router as kb_router
 from routes.search import router as search_router
 from routes.embeddings import router as embeddings_router  # <--- NEW
+from routes import admin                                  # <--- NEW
 
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -74,8 +75,9 @@ app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
 app.include_router(embeddings_router)  # <--- NEW
+app.include_router(admin.router)        # <--- NEW: Register admin endpoints!
 
-logging.info("✅ Registered all route modules (including embeddings debug).")
+logging.info("✅ Registered all route modules (including embeddings debug and admin).")
 
 # === Health check endpoint ===
 @app.get("/", summary="Health check")
