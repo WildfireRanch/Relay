@@ -1,6 +1,12 @@
 # File: search.py
 # Directory: routes/
 # Purpose: Secure semantic KB search endpoint (GET /kb/search)
+# Notes:
+#   • Accepts canonical `query` param (alias `q` for legacy clients).
+#   • CORS‑safe: OPTIONS pre‑flight bypasses API‑key auth.
+#   • Casts similarity to `float` so FastAPI JSON serialisation never 500s.
+#   • Returns plain list consumed by SearchPanel.
+# Last Updated: 2025‑06‑13
 
 from __future__ import annotations
 
@@ -9,7 +15,6 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
 
 from services import kb
 
@@ -26,10 +31,7 @@ def require_api_key(request: Request) -> None:
     if request.method == "OPTIONS":
         return  # allow browser pre-flight
 
-    api_key_header = request.headers.get("x-api-key")
-    api_key_env = os.getenv("API_KEY")
-
-    if api_key_header != api_key_env:
+    if request.headers.get("x-api-key") != os.getenv("API_KEY"):
         raise HTTPException(status_code=401, detail="Invalid API key")
 
 
@@ -41,45 +43,31 @@ def require_api_key(request: Request) -> None:
 @router.get(
     "/search",
     dependencies=[Depends(require_api_key)],
-    response_class=JSONResponse,
     summary="Semantic KB search",
 )
 def search(
-    query: Optional[str] = Query(
-        None,
-        alias="query",
-        description="Search query string (preferred param name)",
-    ),
-    q: Optional[str] = Query(
-        None,
-        description="Legacy alias for query param",
-    ),
-    k: int = Query(5, ge=1, le=20, description="Top-K results"),
+    query: Optional[str] = Query(None, alias="query", description="Search string"),
+    q: Optional[str] = Query(None, description="Legacy alias for query"),
+    k: int = Query(5, ge=1, le=20, description="Top‑K results"),
 ) -> List[dict]:
-    """
-    Proxy to `services.kb.api_search`.
-
-    Returns plain list of objects:
-    ```json
-    [
-      {
-        "path": "...",
-        "title": "...",
-        "snippet": "...",
-        "updated": "...",
-        "similarity": 0.97
-      },
-      ...
-    ]
-    ```
-    """
+    """Proxy to `services.kb.api_search`. Returns a JSON‑serialisable list."""
     term = (query or q or "").strip()
     if not term:
         raise HTTPException(status_code=400, detail="Missing query parameter")
 
     try:
-        results = kb.api_search(term, k=k)
-        return results  # FastAPI serialises the list directly
+        raw = kb.api_search(term, k=k)
+        safe = [
+            {
+                "path": r["path"],
+                "title": r["title"],
+                "snippet": r["snippet"],
+                "updated": r["updated"],
+                "similarity": float(r["similarity"]),
+            }
+            for r in raw
+        ]
+        return safe
     except Exception as exc:
         logger.exception("KB search failed for %r", term)
         raise HTTPException(status_code=500, detail="KB backend error") from exc
