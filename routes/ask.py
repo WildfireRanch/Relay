@@ -3,16 +3,16 @@
 # Purpose: API routes for user chat/ask endpoint with per-user memory, context pipeline, streaming, and audit logging.
 
 import os
+import logging
+import datetime
 from fastapi import APIRouter, Query, Request, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from typing import Optional, AsyncGenerator
 from services.context_engine import ContextEngine
 from services.agent import answer  # Should accept (user_id, question, context=None, stream=False)
 from openai import OpenAIError
-import logging
-import datetime
 
-router = APIRouter()
+router = APIRouter(prefix="/ask", tags=["ask"])
 
 def log_interaction(user_id, question, context, response):
     """Log user interaction for audit and future training."""
@@ -22,7 +22,7 @@ def log_interaction(user_id, question, context, response):
     # Optionally: append to file, DB, or Elastic
 
 # === GET-based /ask endpoint ===
-@router.get("/ask")
+@router.get("")
 async def ask_get(
     request: Request,
     question: str = Query(..., description="User query"),
@@ -51,7 +51,7 @@ async def ask_get(
         raise HTTPException(status_code=500, detail=str(e))
 
 # === POST-based /ask endpoint ===
-@router.post("/ask")
+@router.post("")
 async def ask_post(
     request: Request,
     payload: dict,
@@ -82,7 +82,7 @@ async def ask_post(
         raise HTTPException(status_code=500, detail=str(e))
 
 # === Streaming /ask endpoint (Optional, for LLM streaming agents) ===
-@router.post("/ask/stream")
+@router.post("/stream")
 async def ask_stream(
     request: Request,
     payload: dict,

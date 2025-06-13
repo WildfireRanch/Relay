@@ -1,18 +1,23 @@
-# File: routes/status.py
+# routes/status.py
+# Directory: routes/
+# Purpose: Health, environment, and version endpoints for Relay status and debugging.
+# Security: Public (no auth; consider adding for prod if needed).
 
 from fastapi import APIRouter
 from pathlib import Path
 import os
 from subprocess import check_output, CalledProcessError
 
-router = APIRouter()
+router = APIRouter(prefix="/status", tags=["status"])
 
-@router.get("/status/paths")
+@router.get("/paths")
 def get_status_paths():
+    """
+    Returns existence of major source code/data directories for debugging.
+    """
     env_root = os.getenv("RELAY_PROJECT_ROOT")
     base = Path(env_root).resolve() if env_root else Path.cwd()
 
-    # These are the paths being checked by read_source_files()
     roots = [
         "services",
         "frontend/src/app",
@@ -31,8 +36,11 @@ def get_status_paths():
         "resolved_paths": visible
     }
 
-@router.get("/status/env")
+@router.get("/env")
 def get_env_status():
+    """
+    Returns selected environment variable statuses (partially masked for safety).
+    """
     keys = ["OPENAI_API_KEY", "API_KEY", "RELAY_PROJECT_ROOT", "RAILWAY_URL"]
     values = {
         k: os.getenv(k)[:5] + "..." if os.getenv(k) else None
@@ -40,18 +48,25 @@ def get_env_status():
     }
     return values
 
-@router.get("/status/version")
+@router.get("/version")
 def get_version():
+    """
+    Returns current Git commit short hash.
+    """
     try:
         commit = check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
     except (CalledProcessError, FileNotFoundError):
         commit = "unknown"
     return {"git_commit": commit}
 
-@router.get("/status/summary")
+@router.get("/summary")
 def get_summary():
+    """
+    Returns a bundle of status: paths, env, and version.
+    """
     return {
         "paths": get_status_paths(),
         "env": get_env_status(),
         "version": get_version()
     }
+
