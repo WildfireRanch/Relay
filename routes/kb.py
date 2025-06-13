@@ -1,12 +1,20 @@
 # routes/kb.py
 # Directory: routes/
-# Purpose: API routes for knowledge base (KB) semantic search and summary endpoints.
+# Purpose: API routes for knowledge base (KB) semantic search, summary, and admin endpoints.
+# Security: All admin/debug endpoints require X-API-Key header, which must match API_KEY in environment.
 # Stack: FastAPI, LlamaIndex/OpenAI (via services.kb), User-aware
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Depends, Query
 from pydantic import BaseModel
 from typing import Optional
 from services import kb
+import os
+
+# === Security Dependency: Require X-API-Key header for all admin ops ===
+def require_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
+    api_key = os.environ.get("API_KEY")
+    if not api_key or x_api_key != api_key:
+        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
 
 router = APIRouter(prefix="/kb", tags=["knowledge-base"])
 
@@ -21,10 +29,9 @@ async def search_kb(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
     """
-    Search the knowledge base (semantic vector index) for relevant snippets matching the query.
+    Search the knowledge base (semantic vector index) for relevant snippets.
     Optional X-User-Id header for user-aware results.
-    `search_type` allows targeting 'code', 'doc', or 'all'.
-    Returns a list of matching documents/snippets.
+    `search_type`: 'code', 'doc', or 'all'.
     """
     user_id = x_user_id or "anonymous"
     try:
@@ -63,7 +70,7 @@ async def get_summary(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
     """
-    Fetch the recent context summary for a given user, or fallback to generic summary.
+    Fetch recent context summary for a given user, or fallback to generic summary.
     """
     user_id = x_user_id or "anonymous"
     try:
@@ -73,9 +80,12 @@ async def get_summary(
         raise HTTPException(status_code=500, detail=f"KB summary fetch failed: {e}")
 
 @router.post("/reindex")
-async def reindex_kb():
+async def reindex_kb(
+    api_key: str = Depends(require_api_key)
+):
     """
     Trigger a rebuild of the KB index (admin/debug only).
+    Requires X-API-Key header.
     """
     try:
         resp = kb.api_reindex()

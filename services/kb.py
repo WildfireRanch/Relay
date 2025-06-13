@@ -49,6 +49,9 @@ INGEST_PIPELINE = IngestionPipeline(
 )
 
 def embed_all(user_id: Optional[str] = None) -> None:
+    """
+    Rebuilds the semantic KB index from all code/docs in configured dirs.
+    """
     logger.info("=== [EMBED_ALL] Rebuilding semantic KB index ===")
     # 1. Load documents
     docs = []
@@ -103,6 +106,9 @@ def search(
     search_type: str = "all",
     score_threshold: Optional[float] = None,
 ) -> List[dict]:
+    """
+    Semantic search of the KB index for relevant code/docs.
+    """
     logger.info("[search] Called with query='%s', k=%d, user_id=%s", query, k, user_id)
     try:
         idx = get_index()
@@ -112,7 +118,6 @@ def search(
         results = query_engine.query(query)
         logger.info("[search] Query completed, got results type: %s", type(results))
         hits = []
-        # Defensive: Ensure results.source_nodes exists and is not empty
         if not getattr(results, "source_nodes", []):
             logger.warning("[search] No results returned from index for query='%s'", query)
         for node_with_score in getattr(results, "source_nodes", []):
@@ -121,7 +126,6 @@ def search(
             logger.info("[search] Hit: score=%.3f, text[0:30]='%s...'", score, node.text[:30].replace("\n", " "))
             if score_threshold and score < score_threshold:
                 continue
-            # ==== KEY: Frontend-compatible output ====
             hits.append({
                 "snippet": node.text,
                 "similarity": score,
@@ -135,7 +139,6 @@ def search(
         return hits
     except Exception as e:
         logger.exception("Search failed")
-        # Bubble up clear error for API layer
         raise RuntimeError(f"KB search failed: {e}")
 
 def api_search(query: str, k: int = 4, search_type: str = "all"):
@@ -148,7 +151,7 @@ def api_reindex():
 def get_recent_summaries(user_id: str) -> list:
     """
     Stub for summary API compatibility.
-    Replace this with actual per-user or global summary logic as needed.
+    Replace with actual per-user or global summary logic as needed.
     """
     return ["No summary implemented yet."]
 
