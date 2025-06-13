@@ -33,7 +33,7 @@ export default function SearchPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef<number | null>(null);
 
   // Core fetch logic (idempotent)
   const fetchResults = async (q: string) => {
@@ -72,10 +72,10 @@ export default function SearchPanel() {
 
       const data: KBResult[] = await res.json();
       setResults(data);
-    } catch (err: any) {
-      if (err.name === "AbortError") return; // stale request
+    } catch (err: unknown) {
+      if ((err as { name?: string }).name === "AbortError") return; // stale request
       console.error("KB search error", err);
-      setError(err.message ?? "Search failed");
+      setError((err as Error).message ?? "Search failed");
     } finally {
       setLoading(false);
     }
@@ -88,8 +88,8 @@ export default function SearchPanel() {
       setError(null);
       return;
     }
-    debounceRef.current && clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => fetchResults(query.trim()), DEBOUNCE_MS);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = window.setTimeout(() => fetchResults(query.trim()), DEBOUNCE_MS);
     return () => debounceRef.current && clearTimeout(debounceRef.current);
   }, [query]);
 
@@ -116,7 +116,7 @@ export default function SearchPanel() {
         </Button>
       </form>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error ? <p className="text-sm text-red-500">{error}</p> : null}
 
       {results.length > 0 && (
         <div className="space-y-2">
