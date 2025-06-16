@@ -3,10 +3,10 @@
 # Directory: services/
 # Purpose : Semantic KB helpers (build, load, search, auto-heal)
 #           • Model-scoped index + dimension guard
-#           • LLM-free TitleExtractor (avoids nested-async issues)
-#           • search() now accepts user_id for callers that pass it
-# NOTE     : INDEX_ROOT must point only at the env folder (…/index/dev or …/index/prod)
-#            — **not** at the model sub-dir. The code appends MODEL_NAME itself.
+#           • LLM-free TitleExtractor (no nested-async)
+#           • search() accepts user_id for legacy callers
+# NOTE     : Set INDEX_ROOT to /app/index/dev  or  /app/index/prod
+#             — do NOT include the model folder; code appends MODEL_NAME.
 # Last Updated: 2025-06-16
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -46,20 +46,19 @@ MODEL_NAME = (
 )
 EMBED_MODEL = OpenAIEmbedding(model_name=MODEL_NAME)
 
-# INDEX_ROOT should be /app/index/dev  or  /app/index/prod
 INDEX_ROOT = Path(os.getenv("INDEX_ROOT", "data/index/dev")).expanduser()
-INDEX_DIR  = INDEX_ROOT / MODEL_NAME           # final dir = …/<env>/<model>
+INDEX_DIR  = INDEX_ROOT / MODEL_NAME                     # …/<env>/<model>
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 ROOT      = Path(__file__).resolve().parent
 CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
 DOCS_DIR  = ROOT.parent / "docs"
 
-# ─── Ingest pipeline (LLM-free titles) ─────────────────────────────────────
+# ─── Ingest pipeline (LLM-free) ────────────────────────────────────────────
 CHUNK_SIZE, CHUNK_OVERLAP = 1024, 200
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        TitleExtractor(llm=None),
+        TitleExtractor(llm=None),                        # no async LLM
         SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
         EMBED_MODEL,
     ]
@@ -110,13 +109,13 @@ def get_index() -> VectorStoreIndex:
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
     return load_index_from_storage(ctx)
 
-# ─── API helpers used by routes ────────────────────────────────────────────
+# ─── Core search used by routes ────────────────────────────────────────────
 def search(
     query: str,
     k: int = 4,
     search_type: str = "all",
     score_threshold: Optional[float] = None,
-    user_id: Optional[str] = None,          # keeps callers like context_engine happy
+    user_id: Optional[str] = None,         # accepted, currently unused
 ) -> List[dict]:
     qe  = get_index().as_query_engine(similarity_top_k=k)
     raw = qe.query(query)
@@ -127,11 +126,11 @@ def search(
             continue
         hits.append(
             {
-                "id":        n.node.node_id,
-                "snippet":   n.node.text,
+                "id":         n.node.node_id,
+                "snippet":    n.node.text,
                 "similarity": n.score,
-                "path":      n.node.metadata.get("file_path"),
-                "title":     n.node.metadata.get(
+                "path":       n.node.metadata.get("file_path"),
+                "title":      n.node.metadata.get(
                     "title", n.node.metadata.get("file_path") or "Untitled"
                 ),
             }
