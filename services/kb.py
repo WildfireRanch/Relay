@@ -1,8 +1,11 @@
 # ────────────────────────────────────────────────────────────────────────────
 # File: services/kb.py
 # Directory: services/
-# Purpose : Semantic KB helpers (build, load, search, dimension-guard, auto-heal)
-# Authors : Bret Westwood & Echo (merged 2025-06-15)
+# Purpose : Semantic KB helpers (build, load, search, auto-heal) with
+#           • Model-scoped index dirs + dimension guard
+#           • Optional LLM-powered TitleExtractor (auto-disabled if no key)
+#           • nest_asyncio so ingest can run inside FastAPI startup loop
+# Last Updated: 2025-06-16
 # ────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -13,7 +16,9 @@ import os
 from pathlib import Path
 from typing import List, Optional
 
-import numpy as np
+import nest_asyncio           # ← allows asyncio.run inside FastAPI loop
+nest_asyncio.apply()
+
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -42,20 +47,27 @@ MODEL_NAME = (
 )
 EMBED_MODEL = OpenAIEmbedding(model_name=MODEL_NAME)
 
-# /app/data/index/prod/text-embedding-3-large  (Railway prod example)
 INDEX_ROOT = Path(os.getenv("INDEX_ROOT", "data/index/dev")).expanduser()
 INDEX_DIR = INDEX_ROOT / MODEL_NAME
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-# directories to ingest
 ROOT = Path(__file__).resolve().parent
 CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
 DOCS_DIR = ROOT.parent / "docs"
 
+# ─── Ingest pipeline ───────────────────────────────────────────────────────
 CHUNK_SIZE, CHUNK_OVERLAP = 1024, 200
+
+# If OPENAI_API_KEY is missing, fall back to an LLM-free title extractor
+title_extractor = (
+    TitleExtractor()
+    if os.getenv("OPENAI_API_KEY")
+    else TitleExtractor(llm=None)
+)
+
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        TitleExtractor(),
+        title_extractor,
         SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
         EMBED_MODEL,
     ]
@@ -63,7 +75,7 @@ INGEST_PIPELINE = IngestionPipeline(
 
 # ─── Dimension helpers ─────────────────────────────────────────────────────
 def _vector_dim_current() -> int:
-    """Embedding dimension for the active model (single dummy call)."""
+    """Embedding dimension for the active model."""
     return len(EMBED_MODEL.get_text_embedding("dim_check"))
 
 def _vector_dim_stored() -> int:
@@ -79,26 +91,23 @@ def _vector_dim_stored() -> int:
 
 EXPECTED_DIM = _vector_dim_current()
 
-# ─── Public helpers (called by routes & startup hook) ──────────────────────
+# ─── Public helpers (used by startup hook & routes) ────────────────────────
 def index_is_valid() -> bool:
-    """True if index exists AND stored vectors match current model dimension."""
+    """True if index exists *and* stored vectors match current model dimension."""
     stored = _vector_dim_stored()
     valid = stored == EXPECTED_DIM and stored > 0
-    logger.info(
-        "[index_is_valid] stored=%s current=%d  →  %s",
-        stored, EXPECTED_DIM, valid
-    )
+    logger.info("[index_is_valid] stored=%s current=%d → %s", stored, EXPECTED_DIM, valid)
     return valid
 
 def embed_all() -> None:
     """(Re)build the full semantic index."""
     logger.info("📚 Re-indexing KB with model %s", MODEL_NAME)
 
-    docs = []
+    docs: List = []
     for path in CODE_DIRS + [DOCS_DIR]:
         if path.exists():
             docs.extend(SimpleDirectoryReader(path).load_data())
-    logger.info("Loaded %d documents for ingestion", len(docs))
+    logger.info("Loaded %d documents", len(docs))
 
     nodes = INGEST_PIPELINE.run(documents=docs)
     logger.info("Generated %d vector nodes", len(nodes))
@@ -108,7 +117,7 @@ def embed_all() -> None:
     logger.info("✅ Index persisted → %s", INDEX_DIR)
 
 def get_index() -> VectorStoreIndex:
-    """Return a loaded index, auto-building if missing (dev convenience)."""
+    """Load existing index or auto-build if missing/invalid."""
     if not index_is_valid():
         embed_all()
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
@@ -118,7 +127,7 @@ def get_index() -> VectorStoreIndex:
 def search(
     query: str,
     k: int = 4,
-    search_type: str = "all",          # placeholder for future filters
+    search_type: str = "all",
     score_threshold: Optional[float] = None,
 ) -> List[dict]:
     qe = get_index().as_query_engine(similarity_top_k=k)
@@ -154,7 +163,6 @@ def api_reindex() -> dict:
     }
 
 def get_recent_summaries(user_id: str) -> list[str]:
-    # placeholder stub
     return ["No summary implemented yet."]
 
 # ─── CLI convenience ───────────────────────────────────────────────────────
