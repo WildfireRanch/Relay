@@ -3,7 +3,10 @@
 # Directory: services/
 # Purpose : Semantic KB helpers (build, load, search, auto-heal)
 #           • Model-scoped index + dimension guard
-#           • LLM-free TitleExtractor (avoids nested async)
+#           • LLM-free TitleExtractor (avoids nested-async issues)
+#           • search() now accepts user_id for callers that pass it
+# NOTE     : INDEX_ROOT must point only at the env folder (…/index/dev or …/index/prod)
+#            — **not** at the model sub-dir. The code appends MODEL_NAME itself.
 # Last Updated: 2025-06-16
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -43,19 +46,20 @@ MODEL_NAME = (
 )
 EMBED_MODEL = OpenAIEmbedding(model_name=MODEL_NAME)
 
+# INDEX_ROOT should be /app/index/dev  or  /app/index/prod
 INDEX_ROOT = Path(os.getenv("INDEX_ROOT", "data/index/dev")).expanduser()
-INDEX_DIR = INDEX_ROOT / MODEL_NAME
+INDEX_DIR  = INDEX_ROOT / MODEL_NAME           # final dir = …/<env>/<model>
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-ROOT = Path(__file__).resolve().parent
+ROOT      = Path(__file__).resolve().parent
 CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
-DOCS_DIR = ROOT.parent / "docs"
+DOCS_DIR  = ROOT.parent / "docs"
 
 # ─── Ingest pipeline (LLM-free titles) ─────────────────────────────────────
 CHUNK_SIZE, CHUNK_OVERLAP = 1024, 200
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        TitleExtractor(llm=None),     # no async LLM call → no nest_asyncio needed
+        TitleExtractor(llm=None),
         SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
         EMBED_MODEL,
     ]
@@ -80,7 +84,7 @@ EXPECTED_DIM = _vector_dim_current()
 # ─── Public helpers ────────────────────────────────────────────────────────
 def index_is_valid() -> bool:
     stored = _vector_dim_stored()
-    valid = stored == EXPECTED_DIM and stored > 0
+    valid  = stored == EXPECTED_DIM and stored > 0
     logger.info("[index_is_valid] stored=%s current=%d → %s", stored, EXPECTED_DIM, valid)
     return valid
 
@@ -112,8 +116,9 @@ def search(
     k: int = 4,
     search_type: str = "all",
     score_threshold: Optional[float] = None,
+    user_id: Optional[str] = None,          # keeps callers like context_engine happy
 ) -> List[dict]:
-    qe = get_index().as_query_engine(similarity_top_k=k)
+    qe  = get_index().as_query_engine(similarity_top_k=k)
     raw = qe.query(query)
 
     hits: List[dict] = []
@@ -122,11 +127,11 @@ def search(
             continue
         hits.append(
             {
-                "id": n.node.node_id,
-                "snippet": n.node.text,
+                "id":        n.node.node_id,
+                "snippet":   n.node.text,
                 "similarity": n.score,
-                "path": n.node.metadata.get("file_path"),
-                "title": n.node.metadata.get(
+                "path":      n.node.metadata.get("file_path"),
+                "title":     n.node.metadata.get(
                     "title", n.node.metadata.get("file_path") or "Untitled"
                 ),
             }
