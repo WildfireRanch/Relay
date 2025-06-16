@@ -1,10 +1,9 @@
 # ────────────────────────────────────────────────────────────────────────────
 # File: services/kb.py
 # Directory: services/
-# Purpose : Semantic KB helpers (build, load, search, auto-heal) with
-#           • Model-scoped index dirs + dimension guard
-#           • Optional LLM-powered TitleExtractor (auto-disabled if no key)
-#           • nest_asyncio so ingest can run inside FastAPI startup loop
+# Purpose : Semantic KB helpers (build, load, search, auto-heal)
+#           • Model-scoped index + dimension guard
+#           • LLM-free TitleExtractor (avoids nested async)
 # Last Updated: 2025-06-16
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -15,9 +14,6 @@ import logging
 import os
 from pathlib import Path
 from typing import List, Optional
-
-import nest_asyncio           # ← allows asyncio.run inside FastAPI loop
-nest_asyncio.apply()
 
 from llama_index.core import (
     SimpleDirectoryReader,
@@ -55,19 +51,11 @@ ROOT = Path(__file__).resolve().parent
 CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
 DOCS_DIR = ROOT.parent / "docs"
 
-# ─── Ingest pipeline ───────────────────────────────────────────────────────
+# ─── Ingest pipeline (LLM-free titles) ─────────────────────────────────────
 CHUNK_SIZE, CHUNK_OVERLAP = 1024, 200
-
-# If OPENAI_API_KEY is missing, fall back to an LLM-free title extractor
-title_extractor = (
-    TitleExtractor()
-    if os.getenv("OPENAI_API_KEY")
-    else TitleExtractor(llm=None)
-)
-
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        title_extractor,
+        TitleExtractor(llm=None),     # no async LLM call → no nest_asyncio needed
         SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
         EMBED_MODEL,
     ]
@@ -75,11 +63,9 @@ INGEST_PIPELINE = IngestionPipeline(
 
 # ─── Dimension helpers ─────────────────────────────────────────────────────
 def _vector_dim_current() -> int:
-    """Embedding dimension for the active model."""
     return len(EMBED_MODEL.get_text_embedding("dim_check"))
 
 def _vector_dim_stored() -> int:
-    """Embedding dimension found in persisted index, or −1 if none."""
     vs_file = INDEX_DIR / "vector_store.json"
     if not vs_file.exists():
         return -1
@@ -91,16 +77,14 @@ def _vector_dim_stored() -> int:
 
 EXPECTED_DIM = _vector_dim_current()
 
-# ─── Public helpers (used by startup hook & routes) ────────────────────────
+# ─── Public helpers ────────────────────────────────────────────────────────
 def index_is_valid() -> bool:
-    """True if index exists *and* stored vectors match current model dimension."""
     stored = _vector_dim_stored()
     valid = stored == EXPECTED_DIM and stored > 0
     logger.info("[index_is_valid] stored=%s current=%d → %s", stored, EXPECTED_DIM, valid)
     return valid
 
 def embed_all() -> None:
-    """(Re)build the full semantic index."""
     logger.info("📚 Re-indexing KB with model %s", MODEL_NAME)
 
     docs: List = []
@@ -117,13 +101,12 @@ def embed_all() -> None:
     logger.info("✅ Index persisted → %s", INDEX_DIR)
 
 def get_index() -> VectorStoreIndex:
-    """Load existing index or auto-build if missing/invalid."""
     if not index_is_valid():
         embed_all()
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
     return load_index_from_storage(ctx)
 
-# ─── Core ops used by API routes ───────────────────────────────────────────
+# ─── API helpers used by routes ────────────────────────────────────────────
 def search(
     query: str,
     k: int = 4,
