@@ -44,7 +44,7 @@ MODEL_NAME = (
     or os.getenv("OPENAI_EMBED_MODEL")
     or "text-embedding-3-large"
 )
-EMBED_MODEL = OpenAIEmbedding(model_name=MODEL_NAME)
+EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
 
 INDEX_ROOT = Path(os.getenv("INDEX_ROOT", "data/index/dev")).expanduser()
 INDEX_DIR  = INDEX_ROOT / MODEL_NAME                     # …/<env>/<model>
