@@ -112,7 +112,7 @@ def embed_all() -> None:
     nodes = INGEST_PIPELINE.run(documents=docs)
     logger.info("Generated %d vector nodes", len(nodes))
 
-    index = VectorStoreIndex(nodes=nodes)
+    index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     logger.info("✅ Index persisted → %s", INDEX_DIR)
 
@@ -121,7 +121,7 @@ def get_index() -> VectorStoreIndex:
     if not index_is_valid():
         embed_all()
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
-    return load_index_from_storage(ctx)
+    return load_index_from_storage(ctx, embed_model=EMBED_MODEL)
 
 # ─── Core search used by routes ────────────────────────────────────────────
 def search(
