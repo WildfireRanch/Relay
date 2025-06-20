@@ -1,7 +1,8 @@
 ✅ Relay Project Summary – Updated (As of Today)
 🚀 Frontend (Next.js + React)
 page.tsx
-✅ Mounts AskAgent, SearchPanel, and Docs viewer entry point
+✅ GET /api/docs/list → returns `{ "files": [...] }`
+🔁 /docs/sync\_google is deprecated — replaced by `/docs/sync` (returns `{ "synced_docs": [...] }`)
 AskAgent.tsx
 ✅ Sends GET requests to /ask (CORS-safe, no preflight)
 ✅ Displays GPT-4o output with loading state
