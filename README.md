@@ -1,79 +1,162 @@
-# Relay
+# 🤠 Relay Command Center – Readme
 
-Relay is a FastAPI backend used to sync Google Docs into Markdown files and serve them to the frontend. The project relies on Google OAuth to read documents from a Drive folder.
+> Cloud-native, agent-powered AI control system with semantic doc search, human-in-the-loop patching, and Google Docs sync.
 
 ---
 
-## Google Docs Sync
+## 🚀 Features
 
-The sync service requires a Google OAuth client and (optionally) an existing token. Configuration is handled via environment variables:
+* GPT-4o-powered agent with patch suggestions and approval
+* Semantic search using LlamaIndex + OpenAI embeddings
+* Modular frontend (Next.js) and backend (FastAPI)
+* Google Docs → Markdown sync with OAuth 2.0
+* Secure, secretless deployment via Railway and Vercel
+* CORS-aware, audit-logged API with per-env controls
 
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_CREDS_JSON` | Base64-encoded contents of your Google client-secret JSON |
-| `GOOGLE_TOKEN_JSON` | Base64-encoded OAuth token JSON from a prior login (optional) |
-| `ENV`               | Set to `local` when running interactively so OAuth can open a browser |
+---
+
+## 👭 System Architecture
+
+```
+[ Next.js SPA (Vercel) ]
+        ⇅ SSO + API
+[ FastAPI Backend (Railway) ]
+        ⇅ REST API
+[ Semantic Index (LlamaIndex + OpenAI) ]
+        ⇅
+[ Markdown Docs (/docs/imported) ]
+```
+
+* Frontend: `frontend/`
+* Backend: `main.py`, `routes/`, `services/`
+* Docs: `/docs/imported/`, `/docs/generated/`
+* Index: `data/index/<env>/<model>/`
+* Audit Log: `logs/audit.jsonl`
+
+---
+
+## 🔐 Environment Variables (Quick Reference)
+
+For full details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
+
+| Variable                 | Scope    | Purpose                                                    |
+| ------------------------ | -------- | ---------------------------------------------------------- |
+| `ENV`                    | Backend  | `local`, `develop`, `main` for env-specific logic          |
+| `API_KEY`                | Backend  | Master API key for protected endpoints                     |
+| `ENABLE_ADMIN_TOOLS`     | Backend  | Enables `/admin/*` endpoints                               |
+| `FRONTEND_ORIGIN`        | Backend  | CORS allowlist override                                    |
+| `OPENAI_API_KEY`         | Backend  | LlamaIndex embedding model (e.g. `text-embedding-3-large`) |
+| `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)               |
+| `GOOGLE_TOKEN_JSON`      | Backend  | Optional OAuth token (Base64-encoded)                      |
+| `GOOGLE_CLIENT_ID`       | Both     | Google OAuth client ID                                     |
+| `GOOGLE_CLIENT_SECRET`   | Backend  | Google OAuth client secret                                 |
+| `OAUTH_REDIRECT_URI`     | Both     | Redirect URI after login                                   |
+| `POST_AUTH_REDIRECT_URI` | Backend  | Redirect URI post-auth                                     |
+| `INDEX_ROOT`             | Backend  | Filesystem path for semantic index                         |
+| `KB_EMBED_MODEL`         | Backend  | Embedding model for KB                                     |
+| `RELAY_PROJECT_ROOT`     | Backend  | Local path base                                            |
+| `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to the browser                             |
+| `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                             |
+| `NEXT_PUBLIC_RELAY_KEY`  | Frontend | Optional: UI config or dev-only usage                      |
+
+---
+
+## 🧪 Google Docs Sync
+
+Relay syncs Google Docs → Markdown into `/docs/imported`.
+
+### Required Variables
+
+| Variable            | Purpose                                          |
+| ------------------- | ------------------------------------------------ |
+| `GOOGLE_CREDS_JSON` | Base64-encoded client-secret JSON                |
+| `GOOGLE_TOKEN_JSON` | (Optional) Base64-encoded OAuth token JSON       |
+| `ENV`               | Must be `local` for OAuth to launch browser flow |
 
 ### OAuth Flow
 
-1. Start authentication by visiting `/google/auth` in your running instance.  
-2. After granting access, Google redirects to `/google/callback`, which stores `frontend/sync/token.json` for future requests.
+1. Visit: `http://localhost:8000/google/auth`
+2. Login → redirect to `/google/callback`
+3. Token saved to `frontend/sync/token.json`
 
-### Manual Authorization
+Or run manually:
 
 ```bash
 python scripts/authorize_google.py
 ```
 
-The script prints a URL, prompts for the returned code, and then writes the token to `frontend/sync/token.json`.
-
 ---
 
-## Example `.env`
+## 🌐 CORS & Frontend Access
 
-```dotenv
-# ── Google OAuth ──────────────────────────
-GOOGLE_CREDS_JSON=
-GOOGLE_TOKEN_JSON=
+Relay uses FastAPI’s `CORSMiddleware`. Environments behave as follows:
 
-# ── OpenAI / Relay core ───────────────────
-OPENAI_API_KEY=
-API_KEY=relay-dev         # single key for all protected routes
+| ENV                  | Allowed Origins                       | Notes                         |
+| -------------------- | ------------------------------------- | ----------------------------- |
+| `local`              | `localhost`, `relay.wildfireranch.us` | Uses `FRONTEND_ORIGIN` if set |
+| `preview`, `staging` | `*` (wildcard)                        | For dev/testing only          |
+| `main`               | `FRONTEND_ORIGIN` enforced            | Lock down for prod            |
 
-# ── CORS override (optional) ──────────────
-# FRONTEND_ORIGIN=https://my.custom.frontend
+✅ Custom headers `X-API-Key` and `X-User-Id` are explicitly allowed.
+⚠️ Ensure `OPTIONS` is allowed by your hosting provider (e.g., Railway Edge Rules).
 
-# ── Runtime ───────────────────────────────
-ENV=local
-```
-
----
-
-## 🚦 CORS / Front-End Access
-
-FastAPI’s `CORSMiddleware` is pre-configured; just set the correct env and **make sure your edge proxy forwards the `OPTIONS` verb**.
-
-| ENV (`ENV` var)  | Allowed Origins (default)                                | Credentials |
-|------------------|----------------------------------------------------------|-------------|
-| `local`, `prod`  | https://relay.wildfireranch.us, https://status.wildfireranch.us, http://localhost:3000 <br>*(override by setting `FRONTEND_ORIGIN` to a comma-separated list)* | ✅ |
-| `staging`, `preview` | `*` (wildcard) | ❌ |
-
-**Custom headers**  
-`X-API-Key` and `X-User-Id` are explicitly whitelisted, so browser calls to protected routes won’t fail the CORS pre-flight.
-
-**Edge rule (one-time setup)**  
-Add `OPTIONS` to the allowed HTTP methods in Railway “Edge Rules” (or Cloudflare, if used). Once set, no further action is required.
-
-### Quick smoke test
+### Smoke Test
 
 ```bash
 curl -X OPTIONS https://relay.wildfireranch.us/kb/search \
   -H "Origin: http://localhost:3000" \
-  -H "Access-Control-Request-Method: POST" \
-  -I
-# Expect: HTTP/2 200 + Access-Control-Allow-* headers
+  -H "Access-Control-Request-Method: GET" \
+  -H "Access-Control-Request-Headers: X-API-Key" -I
+```
+
+Expect:
+
+```
+HTTP/2 200
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Headers: X-API-Key, Content-Type
+Access-Control-Allow-Methods: GET, POST, OPTIONS
 ```
 
 ---
 
-*Last updated: 2025-06-16*
+## 🔎 Key Endpoints
+
+| Path                      | Description                      | Auth Required            |
+| ------------------------- | -------------------------------- | ------------------------ |
+| `/ask`                    | GPT Q\&A with context            | ✅                        |
+| `/kb/search`              | Semantic search                  | ✅                        |
+| `/docs/sync`              | Google Docs → Markdown sync      | ✅                        |
+| `/control/queue_action`   | Queue agent suggestion           | ✅                        |
+| `/control/approve_action` | Approve queued action            | ✅                        |
+| `/admin/reindex`          | Manual rebuild of semantic index | ✅ (`ENABLE_ADMIN_TOOLS`) |
+
+---
+
+## 🧰 Local Dev
+
+### Backend
+
+```bash
+uvicorn main:app --reload
+```
+
+### Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## 🗂 Related Docs
+
+* [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
+* [`/docs/RELAY_CODE_UPDATE.md`](./docs/RELAY_CODE_UPDATE.md)
+* [`.env.example`](./.env.example)
+
+---
+
+*Last updated: 2025-06-19*

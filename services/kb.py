@@ -1,12 +1,13 @@
 # ────────────────────────────────────────────────────────────────────────────
 # File: services/kb.py
 # Directory: services/
-# Purpose : Semantic KB helpers (build, load, search, auto-heal)
-#           • Model-scoped index + dimension guard
-#           • LLM-free TitleExtractor (no nested-async)
-#           • search() accepts user_id for legacy callers
-# NOTE     : Set INDEX_ROOT to /app/index/dev  or  /app/index/prod
-#             — do NOT include the model folder; code appends MODEL_NAME.
+# Purpose  : Semantic KB helpers (build, load, search, auto-heal)
+#            • Model-scoped index + dimension guard
+#            • LLM-free TitleExtractor (no nested-async)
+#            • search() accepts user_id for legacy callers
+# Paths    : Index is always written to **/app/index/<env>/<model>**
+#            so both the runtime container (root) and `railway run` shells
+#            see the same files.  Any stale folders are scrubbed at startup.
 # Last Updated: 2025-06-16
 # ────────────────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 from pathlib import Path
 from typing import List, Optional
 
@@ -38,7 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("🔥 services.kb loaded")
 
-# ─── Env-driven configuration ──────────────────────────────────────────────
+# ─── Model configuration ───────────────────────────────────────────────────
 MODEL_NAME = (
     os.getenv("KB_EMBED_MODEL")
     or os.getenv("OPENAI_EMBED_MODEL")
@@ -46,19 +48,28 @@ MODEL_NAME = (
 )
 EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
 
-INDEX_ROOT = Path(os.getenv("INDEX_ROOT", "data/index/dev")).expanduser()
-INDEX_DIR  = INDEX_ROOT / MODEL_NAME                     # …/<env>/<model>
+# ─── Index paths (hard-wired) ──────────────────────────────────────────────
+PROJECT_ROOT = Path("/app")                                    # Railway image root
+ENV_NAME     = os.getenv("ENV", "dev")                         # dev / prod / staging
+INDEX_ROOT   = PROJECT_ROOT / "index" / ENV_NAME               # /app/index/<env>
+INDEX_DIR    = INDEX_ROOT / MODEL_NAME                         # /app/index/<env>/<model>
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
-ROOT      = Path(__file__).resolve().parent
-CODE_DIRS = [ROOT.parent / p for p in ("src", "backend", "frontend")]
-DOCS_DIR  = ROOT.parent / "docs"
+# Scrub any stale model folders (e.g., old Ada or double-nested dirs)
+for path in INDEX_ROOT.iterdir():
+    if path.is_dir() and path.name != MODEL_NAME:
+        logger.warning("Removing stale index folder %s", path)
+        shutil.rmtree(path, ignore_errors=True)
 
-# ─── Ingest pipeline (LLM-free) ────────────────────────────────────────────
+# ─── Ingestion pipeline ────────────────────────────────────────────────────
+ROOT       = Path(__file__).resolve().parent
+CODE_DIRS  = [ROOT.parent / p for p in ("src", "backend", "frontend")]
+DOCS_DIR   = ROOT.parent / "docs"
 CHUNK_SIZE, CHUNK_OVERLAP = 1024, 200
+
 INGEST_PIPELINE = IngestionPipeline(
     transformations=[
-        TitleExtractor(llm=None),                        # no async LLM
+        TitleExtractor(llm=None),                           # no async LLM
         SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
         EMBED_MODEL,
     ]
@@ -88,6 +99,7 @@ def index_is_valid() -> bool:
     return valid
 
 def embed_all() -> None:
+    """Rebuild the full semantic index."""
     logger.info("📚 Re-indexing KB with model %s", MODEL_NAME)
 
     docs: List = []
@@ -104,6 +116,7 @@ def embed_all() -> None:
     logger.info("✅ Index persisted → %s", INDEX_DIR)
 
 def get_index() -> VectorStoreIndex:
+    """Return a loaded index, rebuilding if missing or mismatched."""
     if not index_is_valid():
         embed_all()
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
@@ -115,7 +128,7 @@ def search(
     k: int = 4,
     search_type: str = "all",
     score_threshold: Optional[float] = None,
-    user_id: Optional[str] = None,         # accepted, currently unused
+    user_id: Optional[str] = None,   # accepted, currently unused
 ) -> List[dict]:
     qe  = get_index().as_query_engine(similarity_top_k=k)
     raw = qe.query(query)
@@ -126,13 +139,11 @@ def search(
             continue
         hits.append(
             {
-                "id":         n.node.node_id,
-                "snippet":    n.node.text,
+                "id": n.node.node_id,
+                "snippet": n.node.text,
                 "similarity": n.score,
-                "path":       n.node.metadata.get("file_path"),
-                "title":      n.node.metadata.get(
-                    "title", n.node.metadata.get("file_path") or "Untitled"
-                ),
+                "path": n.node.metadata.get("file_path"),
+                "title": n.node.metadata.get("title", n.node.metadata.get("file_path") or "Untitled"),
             }
         )
     return hits
