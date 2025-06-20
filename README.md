@@ -127,7 +127,8 @@ Access-Control-Allow-Methods: GET, POST, OPTIONS
 | ------------------------- | -------------------------------- | ------------------------ |
 | `/ask`                    | GPT Q\&A with context            | ✅                        |
 | `/kb/search`              | Semantic search                  | ✅                        |
-| `/docs/sync`              | Google Docs → Markdown sync      | ✅                        |
+| `/docs/list`              | List synced docs (`{files:[]}`)  | ✅            |
+| `/docs/sync`              | Google Docs → Markdown sync (`{synced_docs:[]}`) | ✅ |
 | `/control/queue_action`   | Queue agent suggestion           | ✅                        |
 | `/control/approve_action` | Approve queued action            | ✅                        |
 | `/admin/reindex`          | Manual rebuild of semantic index | ✅ (`ENABLE_ADMIN_TOOLS`) |
