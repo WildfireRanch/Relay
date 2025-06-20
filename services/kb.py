@@ -46,7 +46,10 @@ MODEL_NAME = (
     or os.getenv("OPENAI_EMBED_MODEL")
     or "text-embedding-3-large"
 )
-EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME, dimensions=3072)
+if MODEL_NAME == "text-embedding-3-large":
+    EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME, dimensions=3072)
+else:
+    EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
 
 # ─── Index paths (hard-wired) ──────────────────────────────────────────────
 PROJECT_ROOT = Path("/app")                                    # Railway image root
