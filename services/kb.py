@@ -20,6 +20,8 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
+from services.config import INDEX_DIR, INDEX_ROOT
+
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -51,12 +53,8 @@ if MODEL_NAME == "text-embedding-3-large":
 else:
     EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
 
-# ─── Index paths (hard-wired) ──────────────────────────────────────────────
-PROJECT_ROOT = Path("/app")                                    # Railway image root
-ENV_NAME     = os.getenv("ENV", "dev")                         # dev / prod / staging
-INDEX_ROOT   = PROJECT_ROOT / "index" / ENV_NAME               # /app/index/<env>
-INDEX_DIR    = INDEX_ROOT / MODEL_NAME                         # /app/index/<env>/<model>
-INDEX_DIR.mkdir(parents=True, exist_ok=True)
+# ─── Index paths (from config) ─────────────────────────────────────────────
+# INDEX_ROOT / INDEX_DIR provided by services.config
 
 # Scrub any stale model folders (e.g., old Ada or double-nested dirs)
 for path in INDEX_ROOT.iterdir():
