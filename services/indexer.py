@@ -1,5 +1,5 @@
 
-services/indexer.py
+#services/indexer.py
 
 # File: services/indexer.py
 # Purpose: Recursively index code and docs, create semantic embeddings for search
