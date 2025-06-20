@@ -6,7 +6,7 @@ import os
 import re
 import json
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from openai import AsyncOpenAI
 import services.kb as kb
 import httpx
@@ -74,7 +74,28 @@ async def reflect_and_plan(user_id: str, query: str) -> Dict[str, Any]:
         return {"plan": []}
 
 # === Main answer function supporting multi-turn, tools, and reflection ===
-async def answer(user_id: str, query: str) -> str:
+async def answer(
+    user_id: str,
+    query: str,
+    context: Optional[str] = None,
+    stream: bool = False,
+) -> Any:
+    """Main agent entry point.
+
+    Parameters
+    ----------
+    user_id: str
+        Unique user identifier used for history and KB.
+    query: str
+        Raw user question.
+    context: Optional[str]
+        Pre-built context window. If not supplied the ContextEngine will
+        generate one from the user's query.
+    stream: bool
+        If ``True`` yield tokens as they are produced by OpenAI.  Otherwise
+        return the complete assistant message as a string.
+    """
+
     print(f"[agent] Incoming query from {user_id}: {query}")
 
     # --- Check for doc generation ---
@@ -82,9 +103,10 @@ async def answer(user_id: str, query: str) -> str:
     if target_path:
         return await generate_doc_for_path(target_path)
 
-    # --- Build context ---
-    engine = ContextEngine(user_id=user_id)
-    context = engine.build_context(query)
+    # --- Build context if not provided ---
+    if context is None:
+        engine = ContextEngine(user_id=user_id)
+        context = engine.build_context(query)
     print(f"[agent] Built context length: {len(context)} chars")
 
     # --- Reflection & planning ---
@@ -106,7 +128,7 @@ async def answer(user_id: str, query: str) -> str:
         response = await client.chat.completions.create(
             model="gpt-4o",
             messages=messages,
-            stream=False,
+            stream=stream,
             temperature=0.3,
             functions=[
                 {
@@ -122,24 +144,32 @@ async def answer(user_id: str, query: str) -> str:
             ],
             function_call="auto"
         )
-        message = response.choices[0].message
+        if stream:
+            async def gen() -> AsyncGenerator[str, None]:
+                collected: List[str] = []
+                async for chunk in response:
+                    delta = chunk.choices[0].delta
+                    if delta and delta.content:
+                        collected.append(delta.content)
+                        yield delta.content
+                history.append({"role": "assistant", "content": "".join(collected)})
 
-        # --- Handle any function calls ---
-        # (Fix: use hasattr/attribute access, not dict get)
-        if hasattr(message, "function_call") and message.function_call:
-            fname = message.function_call.name
-            fargs = json.loads(message.function_call.arguments)
-            if fname == "search_docs":
-                result = await search_docs(**fargs)
-            elif fname == "run_code_review":
-                result = await run_code_review(**fargs)
-            else:
-                result = {"error": f"Unknown function: {fname}"}
-            return json.dumps(result)
+            return gen()
         else:
-            # Append assistant response to history
-            history.append({"role": "assistant", "content": message.content})
-            return message.content
+            message = response.choices[0].message
+            if hasattr(message, "function_call") and message.function_call:
+                fname = message.function_call.name
+                fargs = json.loads(message.function_call.arguments)
+                if fname == "search_docs":
+                    result = await search_docs(**fargs)
+                elif fname == "run_code_review":
+                    result = await run_code_review(**fargs)
+                else:
+                    result = {"error": f"Unknown function: {fname}"}
+                return json.dumps(result)
+            else:
+                history.append({"role": "assistant", "content": message.content})
+                return message.content
 
     except Exception as e:
         print("❌ OpenAI call failed:", str(e))
