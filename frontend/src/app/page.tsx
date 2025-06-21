@@ -2,7 +2,7 @@
 // Purpose: WildfireRanch Command Center homepage with Echo (top-right) and Relay (Ask Agent header)
 
 import { API_ROOT } from "@/lib/api";
-import AskAgent from "@/components/AskAgent";
+import AskAgent from "@/components/AskAgent/AskAgent";
 import SearchPanel from "@/components/SearchPanel";
 import StatusPanel from "@/components/StatusPanel";
 
@@ -29,7 +29,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Header */}
+      {/* Page Header */}
       <h1 className="text-3xl font-bold">WildfireRanch Command Center</h1>
       <p className="text-muted-foreground">Relay is ready for action.</p>
 
