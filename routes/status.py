@@ -1,12 +1,13 @@
-# routes/status.py
+# File: routes/status.py
 # Directory: routes/
-# Purpose: Health, environment, and version endpoints for Relay status and debugging.
-# Security: Public (no auth; consider adding for prod if needed).
+# Purpose: Health, environment, version, and context awareness endpoints for Relay service.
+# Security: Public (no auth; consider protecting `/env` or `/summary` in production).
 
 from fastapi import APIRouter
 from pathlib import Path
 import os
 from subprocess import check_output, CalledProcessError
+from datetime import datetime
 
 router = APIRouter(prefix="/status", tags=["status"])
 
@@ -70,3 +71,24 @@ def get_summary():
         "version": get_version()
     }
 
+@router.get("/context")
+def get_context_status():
+    """
+    Returns details about global context awareness:
+    - Which context files exist
+    - Which global_context (manual or auto) is active
+    - Last updated timestamps
+    """
+    context_dir = Path("./context")
+    global_manual = Path("./docs/generated/global_context.md")
+    global_auto = Path("./docs/generated/global_context.auto.md")
+
+    def fmt_time(path):
+        return datetime.utcfromtimestamp(path.stat().st_mtime).isoformat() + "Z" if path.exists() else "missing"
+
+    return {
+        "context_files": sorted([p.name for p in context_dir.glob("*.md")]),
+        "global_context_used": "manual" if global_manual.exists() else "auto" if global_auto.exists() else "none",
+        "global_context_manual_last_updated": fmt_time(global_manual),
+        "global_context_auto_last_updated": fmt_time(global_auto)
+    }

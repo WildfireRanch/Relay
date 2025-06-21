@@ -1,6 +1,6 @@
 // File: components/StatusPanel.tsx
 // Directory: frontend/src/components
-// Purpose: Display Relay service status and embed a UI panel for Google Docs sync and KB refresh
+// Purpose: Display Relay service status and embed a UI panel for Google Docs sync and KB/context awareness
 
 "use client";
 
@@ -17,8 +17,16 @@ interface StatusSummary {
   };
 }
 
+interface ContextStatus {
+  context_files: string[];
+  global_context_used: string;
+  global_context_manual_last_updated: string;
+  global_context_auto_last_updated: string;
+}
+
 export default function StatusPanel() {
   const [status, setStatus] = useState<StatusSummary | null>(null);
+  const [context, setContext] = useState<ContextStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -30,10 +38,16 @@ export default function StatusPanel() {
         return;
       }
       try {
-        const res = await fetch(`${API_ROOT}/status/summary`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: StatusSummary = await res.json();
-        setStatus(data);
+        const [statusRes, contextRes] = await Promise.all([
+          fetch(`${API_ROOT}/status/summary`),
+          fetch(`${API_ROOT}/status/context`),
+        ]);
+        if (!statusRes.ok || !contextRes.ok)
+          throw new Error("Failed to fetch one or more endpoints");
+        const statusData: StatusSummary = await statusRes.json();
+        const contextData: ContextStatus = await contextRes.json();
+        setStatus(statusData);
+        setContext(contextData);
       } catch (err) {
         console.error("Status fetch error:", err);
         setError("Failed to load status.");
@@ -69,6 +83,25 @@ export default function StatusPanel() {
           </div>
         </CardContent>
       </Card>
+
+      {context && (
+        <Card className="mt-6">
+          <CardContent className="p-4 space-y-3">
+            <h2 className="text-xl font-bold">🧠 Context Awareness</h2>
+            <div><strong>Context Strategy:</strong> {context.global_context_used === "manual" ? "📝 Manual" : context.global_context_used === "auto" ? "🤖 Auto-generated" : "None"}</div>
+            <div><strong>Last Manual Update:</strong> {context.global_context_manual_last_updated}</div>
+            <div><strong>Last Auto Update:</strong> {context.global_context_auto_last_updated}</div>
+            <div>
+              <strong>Active Context Files:</strong>
+              <ul className="list-disc ml-6">
+                {context.context_files.map((file) => (
+                  <li key={file} className="text-sm">{file}</li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Embed DocsSyncPanel below status */}
       <div className="mt-6">
