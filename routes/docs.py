@@ -16,6 +16,7 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
+from services.google_docs_sync import sync_google_docs
 
 # ─── Router Setup ──────────────────────────────────────────────────────────
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -58,7 +59,7 @@ async def list_docs(
             results.append(str(f.relative_to(BASE_DIR)))
             if len(results) >= limit:
                 break
-    return {"docs": results}
+    return {"files": results}
 
 
 @router.get("/view", dependencies=[Depends(require_api_key)])
@@ -81,7 +82,9 @@ async def view_doc(path: str):
 
 @router.post("/sync", dependencies=[Depends(require_api_key)])
 async def sync_docs():
-    """Trigger an asynchronous Google Docs → local sync job (stub)."""
-    # from services.google_docs_sync import sync_google_docs
-    # background_tasks.add_task(sync_google_docs)
-    return JSONResponse({"status": "queued"}, status_code=202)
+    """Synchronize Google Docs and return saved filenames."""
+    try:
+        saved_files = sync_google_docs()
+        return {"synced_docs": saved_files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

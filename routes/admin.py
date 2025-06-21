@@ -16,12 +16,13 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from datetime import datetime
 
+from services.config import INDEX_DIR
+
 # ------------------------------------------------------------------------
 # ENV/CONFIG SETUP
 # ------------------------------------------------------------------------
 router = APIRouter(prefix="/admin", tags=["admin-ops"])
 
-INDEX_DIR = Path(os.environ.get("INDEX_DIR", "/app/data/index"))  # Safe for Railway/Codespaces
 DATA_DIR = INDEX_DIR.parent
 ADMIN_LOG = DATA_DIR / "admin_events.log"
 

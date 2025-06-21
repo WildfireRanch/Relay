@@ -20,6 +20,8 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
+from services.config import INDEX_DIR, INDEX_ROOT
+
 from llama_index.core import (
     SimpleDirectoryReader,
     StorageContext,
@@ -46,14 +48,13 @@ MODEL_NAME = (
     or os.getenv("OPENAI_EMBED_MODEL")
     or "text-embedding-3-large"
 )
-EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME, dimensions=3072)
+if MODEL_NAME == "text-embedding-3-large":
+    EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME, dimensions=3072)
+else:
+    EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
 
-# ─── Index paths (hard-wired) ──────────────────────────────────────────────
-PROJECT_ROOT = Path("/app")                                    # Railway image root
-ENV_NAME     = os.getenv("ENV", "dev")                         # dev / prod / staging
-INDEX_ROOT   = PROJECT_ROOT / "index" / ENV_NAME               # /app/index/<env>
-INDEX_DIR    = INDEX_ROOT / MODEL_NAME                         # /app/index/<env>/<model>
-INDEX_DIR.mkdir(parents=True, exist_ok=True)
+# ─── Index paths (from config) ─────────────────────────────────────────────
+# INDEX_ROOT / INDEX_DIR provided by services.config
 
 # Scrub any stale model folders (e.g., old Ada or double-nested dirs)
 for path in INDEX_ROOT.iterdir():
@@ -111,7 +112,7 @@ def embed_all() -> None:
     nodes = INGEST_PIPELINE.run(documents=docs)
     logger.info("Generated %d vector nodes", len(nodes))
 
-    index = VectorStoreIndex(nodes=nodes)
+    index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     logger.info("✅ Index persisted → %s", INDEX_DIR)
 
@@ -120,7 +121,7 @@ def get_index() -> VectorStoreIndex:
     if not index_is_valid():
         embed_all()
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
-    return load_index_from_storage(ctx)
+    return load_index_from_storage(ctx, embed_model=EMBED_MODEL)
 
 # ─── Core search used by routes ────────────────────────────────────────────
 def search(

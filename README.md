@@ -61,6 +61,25 @@ For full details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `NEXT_PUBLIC_API_KEY`  | Frontend | API key exposed to the browser                             |
 | `NEXT_PUBLIC_API_URL`  | Frontend | Backend root for all API calls                             |
 | `NEXT_PUBLIC_RELAY_KEY`| Frontend | Optional: UI config or dev-only usage                      |
+| ------------------------ | -------- | ---------------------------------------------------------- |
+| `ENV`                    | Backend  | `local`, `develop`, `main` for env-specific logic          |
+| `API_KEY`                | Backend  | Master API key for protected endpoints                     |
+| `ENABLE_ADMIN_TOOLS`     | Backend  | Enables `/admin/*` endpoints                               |
+| `FRONTEND_ORIGIN`        | Backend  | CORS allowlist override                                    |
+| `OPENAI_API_KEY`         | Backend  | OpenAI API key used for embeddings and chat |
+| `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)               |
+| `GOOGLE_TOKEN_JSON`      | Backend  | Optional OAuth token (Base64-encoded)                      |
+| `GOOGLE_CLIENT_ID`       | Both     | Google OAuth client ID                                     |
+| `GOOGLE_CLIENT_SECRET`   | Backend  | Google OAuth client secret                                 |
+| `OAUTH_REDIRECT_URI`     | Both     | Redirect URI after login                                   |
+| `POST_AUTH_REDIRECT_URI` | Backend  | Redirect URI post-auth                                     |
+| `INDEX_ROOT`             | Backend  | Filesystem path for semantic index                         |
+| `KB_EMBED_MODEL`         | Backend  | Embedding model for KB                                     |
+| `RELAY_PROJECT_ROOT`     | Backend  | Local path base                                            |
+| `RAILWAY_URL`           | Backend  | Default endpoint for queued actions |
+| `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to the browser                             |
+| `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                             |
+| `NEXT_PUBLIC_RELAY_KEY`  | Frontend | Optional: UI config or dev-only usage                      |
 
 ---
 
@@ -123,6 +142,15 @@ Echo auto-injects:
 | `/docs/generated/global_context.md`       | Manually curated global context               |
 | `/docs/generated/global_context.auto.md`  | Auto-generated from `/context/*.md`           |
 | `/docs/generated/relay_code_map.md`       | Live file + function snapshot from source     |
+| Path                      | Description                      | Auth Required            |
+| ------------------------- | -------------------------------- | ------------------------ |
+| `/ask`                    | GPT Q\&A with context            | ✅                        |
+| `/kb/search`              | Semantic search                  | ✅                        |
+| `/docs/list`              | List synced docs (`{files:[]}`)  | ✅            |
+| `/docs/sync`              | Google Docs → Markdown sync (`{synced_docs:[]}`) | ✅ |
+| `/control/queue_action`   | Queue agent suggestion           | ✅                        |
+| `/control/approve_action` | Approve queued action            | ✅                        |
+| `/admin/reindex`          | Manual rebuild of semantic index | ✅ (`ENABLE_ADMIN_TOOLS`) |
 
 ---
 

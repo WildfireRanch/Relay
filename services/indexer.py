@@ -1,6 +1,5 @@
 
 #services/indexer.py
-
 # File: services/indexer.py
 # Purpose: Recursively index code and docs, create semantic embeddings for search
 # Stack: LlamaIndex, OpenAI, Python 3.12+
@@ -10,14 +9,18 @@ import os
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
-from services.kb import INDEX_DIR
+from services.config import INDEX_DIR
 
 # ---- Config ----
 ROOT_DIRS = ["./src", "./backend", "./frontend", "./docs"]  # Edit as needed
 
 # ---- Embedding Model ----
 embed_model = OpenAIEmbedding(model="text-embedding-3-large")
-model_name = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-large")
+model_name = (
+    os.getenv("KB_EMBED_MODEL")
+    or os.getenv("OPENAI_EMBED_MODEL")
+    or "text-embedding-3-large"
+)
 if model_name == "text-embedding-3-large":
     embed_model = OpenAIEmbedding(model=model_name, dimensions=3072)
 else:
