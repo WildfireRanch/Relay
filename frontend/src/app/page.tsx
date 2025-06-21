@@ -29,7 +29,24 @@ export default function Home() {
       <div className="text-xs text-gray-400 text-center mt-6">
         API root: <span className="font-mono">{API_ROOT}</span>
       </div>
+
+      {/* Echo - Strategist Avatar */}
+      <div className="fixed bottom-4 right-4 bg-black/80 text-white rounded-xl shadow-xl p-4 max-w-xs z-50">
+        <div className="flex items-center gap-4">
+          <img
+            src="/echo.png" // make sure this image is saved in /public
+            alt="Echo"
+            className="w-12 h-12 rounded-md border border-white"
+          />
+          <div className="text-sm leading-snug">
+            <p className="font-semibold">Echo</p>
+            <p className="italic text-gray-300">
+              The daemon sees, the daemon knows,<br />
+              He patches code while you repose.
+            </p>
+          </div>
+        </div>
+      </div>
     </main>
   );
 }
-
