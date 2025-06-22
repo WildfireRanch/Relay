@@ -11,7 +11,7 @@ type Message = {
   user: string;
   agent: string;
   context?: string;
-  // Optionally: action?: { type: string; payload: any };
+  action?: { type: string; payload: any };
 };
 
 export default function AskAgent() {
@@ -19,10 +19,11 @@ export default function AskAgent() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [showContext, setShowContext] = useState<{ [idx: number]: boolean }>({});
+  const [files, setFiles] = useState("");
+  const [topics, setTopics] = useState("");
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
-  // Send a question to the /ask endpoint and capture response (with context)
   async function sendQuery() {
     if (!query.trim()) return;
     setLoading(true);
@@ -33,16 +34,20 @@ export default function AskAgent() {
           "Content-Type": "application/json",
           "X-User-Id": USER_ID,
         },
-        body: JSON.stringify({ question: query }),
+        body: JSON.stringify({
+          question: query,
+          files: files ? files.split(",").map(f => f.trim()) : undefined,
+          topics: topics ? topics.split(",").map(t => t.trim()) : undefined
+        })
       });
       const data = await res.json();
-      setMessages(prev => [
+      setMessages((prev: Message[]) => [
         ...prev,
         {
           user: query,
           agent: data?.response ?? data?.answer ?? "[no answer]",
           context: data?.context ?? undefined,
-          // action: data?.action ?? undefined // Future: agent actions to review
+          action: data?.action ?? undefined
         }
       ]);
       setTimeout(() => {
@@ -50,11 +55,11 @@ export default function AskAgent() {
       }, 100);
       setQuery("");
     } catch {
-      setMessages(prev => [
+      setMessages((prev: Message[]) => [
         ...prev,
         {
           user: query,
-          agent: "Error contacting Relay.",
+          agent: "Error contacting Relay."
         }
       ]);
     }
@@ -64,10 +69,28 @@ export default function AskAgent() {
   return (
     <div className="max-w-2xl mx-auto py-8">
       <h2 className="font-bold text-lg mb-4">🤖 Ask the Agent</h2>
+
+      <div className="mb-4 grid grid-cols-1 gap-2">
+        <input
+          type="text"
+          className="border rounded px-2 py-1 text-sm"
+          placeholder="Optional: file paths (comma-separated)"
+          value={files}
+          onChange={e => setFiles(e.target.value)}
+        />
+        <input
+          type="text"
+          className="border rounded px-2 py-1 text-sm"
+          placeholder="Optional: topics (e.g. mining, solarshack)"
+          value={topics}
+          onChange={e => setTopics(e.target.value)}
+        />
+      </div>
+
       <div className="border rounded-md p-4 mb-4 h-[320px] overflow-auto bg-gray-50">
         {messages.length === 0 && (
           <div className="text-gray-400 italic text-center pt-10">
-            Type a question and hit Enter or click &quot;Ask Relay&quot;!
+            Type a question and hit Enter or click "Ask Relay"!
           </div>
         )}
         {messages.map((msg, i) => (
@@ -76,6 +99,16 @@ export default function AskAgent() {
             <div className="mb-1 whitespace-pre-wrap">{msg.user}</div>
             <div className="font-semibold text-green-700">Agent:</div>
             <div className="mb-1 whitespace-pre-wrap">{msg.agent}</div>
+
+            {msg.action && (
+              <div className="mt-2 p-2 bg-yellow-100 border rounded text-sm">
+                <strong>Agent Suggestion:</strong>
+                <pre className="mt-1 whitespace-pre-wrap text-xs">
+                  {JSON.stringify(msg.action, null, 2)}
+                </pre>
+              </div>
+            )}
+
             {msg.context && (
               <div>
                 <Button
@@ -98,12 +131,12 @@ export default function AskAgent() {
                 )}
               </div>
             )}
-            {/* Future: Action review UI, context diff, etc */}
             <hr className="my-2" />
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
+
       <form
         className="flex gap-2"
         onSubmit={e => {
@@ -129,8 +162,9 @@ export default function AskAgent() {
           {loading ? "Thinking..." : "Ask Relay"}
         </Button>
       </form>
+
       <div className="text-xs text-gray-400 mt-2">
-        Tip: Click &quot;Show Context&quot; to reveal what code/docs/logs the agent used for each answer.
+        Tip: Use optional file/topic fields for scoped context. Click "Show Context" to reveal what code/docs the agent used.
       </div>
     </div>
   );
