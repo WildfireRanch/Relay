@@ -82,7 +82,7 @@ Relay supports hybrid context/memory awareness across docs, code, and operationa
 **To trigger context/doc sync:**
 
 ```bash
-curl -X POST $RELAY_URL/admin/sync_context_docs
+curl -X POST $RELAY_URL/context/sync_docs
 ```
 
 ---
@@ -119,7 +119,7 @@ Echo will auto-inject:
 | `/docs/sync`                   | Google Docs → Markdown/context sync            | ✅             |
 | `/admin/reindex`               | Manual rebuild of semantic index               | ✅             |
 | `/admin/generate_auto_context` | Regenerate auto global context from `/context` | ✅             |
-| `/admin/sync_context_docs`     | Pull all `context-*` docs from Google          | ✅             |
+| `/context/sync_docs`           | Pull all `context-*` docs from Google          | ✅             |
 | `/control/queue_action`        | Queue agent patch/action                       | ✅             |
 | `/control/approve_action`      | Approve queued action                          | ✅             |
 | `/status/context`              | Current context state (public)                 | ❌             |
