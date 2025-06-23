@@ -88,6 +88,11 @@ async def sync_docs():
     """Synchronize Google Docs and return saved filenames."""
     try:
         saved_files = sync_google_docs()
+        try:
+            kb.api_reindex()
+        except Exception as reindex_error:
+            # Log but don't fail the sync if reindexing hits issues
+            print(f"KB reindex failed: {reindex_error}")
         return {"synced_docs": saved_files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
