@@ -41,7 +41,7 @@ export default function AuditPanel() {
   // === Fetch audit logs from backend ===
   async function fetchLog() {
     const res = await fetch("/control/list_log", {
-      headers: { "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || "" }
+      headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
     });
     const data = await res.json();
     setLogs(data.log || []);
@@ -50,7 +50,7 @@ export default function AuditPanel() {
   // === Fetch related queue action by id ===
   async function fetchRelated(id: string) {
     const res = await fetch("/control/list_queue", {
-      headers: { "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || "" }
+      headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
     });
     const data = await res.json();
     // Find the matching action by ID, typed correctly

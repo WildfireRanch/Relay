@@ -26,7 +26,7 @@ export default function LogsPanel() {
   async function fetchLog() {
     const res = await fetch("https://relay.wildfireranch.us/control/list_log", {
       headers: {
-        "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
+        "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
       }
     });
     const data = await res.json();

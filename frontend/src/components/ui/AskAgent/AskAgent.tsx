@@ -16,7 +16,7 @@ export default function AskAgent() {
 
     const res = await fetch("https://relay.wildfireranch.us/ask?q=" + encodeURIComponent(query), {
       headers: {
-        "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
+        "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
       }
     })
 

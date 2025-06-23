@@ -22,7 +22,7 @@ export default function GmailOpsPanel() {
   async function send() {
     const res = await fetch("/control/send_email", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || "" },
+      headers: { "Content-Type": "application/json", "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
       body: JSON.stringify({ to_email: to, subject, body })
     });
     const data = await res.json();
@@ -31,7 +31,7 @@ export default function GmailOpsPanel() {
 
   async function list() {
     const res = await fetch("/control/list_email", {
-      headers: { "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || "" }
+      headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
     });
     const data = await res.json();
     setEmails((data.emails as Email[]) || []);
