@@ -31,9 +31,16 @@ sys.modules.setdefault("googleapiclient", googleapiclient)
 sys.modules.setdefault("googleapiclient.discovery", googleapiclient.discovery)
 sys.modules.setdefault("markdownify", markdownify)
 
+# Stub services.kb to avoid heavy deps
+kb_stub = types.ModuleType("services.kb")
+kb_stub.api_reindex = lambda: {"status": "ok"}
+sys.modules.setdefault("services.kb", kb_stub)
+
 from routes import docs as docs_routes
 list_docs = docs_routes.list_docs
 sync_docs = docs_routes.sync_docs
+refresh_kb = docs_routes.refresh_kb
+full_sync = docs_routes.full_sync
 
 
 def test_docs_list():
@@ -46,3 +53,16 @@ def test_docs_sync(monkeypatch):
     monkeypatch.setattr(docs_routes, "sync_google_docs", lambda: ["foo.md"])
     data = asyncio.run(sync_docs())
     assert data == {"synced_docs": ["foo.md"]}
+
+
+def test_refresh_kb(monkeypatch):
+    monkeypatch.setattr(docs_routes.kb, "api_reindex", lambda: {"status": "ok"})
+    data = asyncio.run(refresh_kb())
+    assert data == {"status": "ok"}
+
+
+def test_full_sync(monkeypatch):
+    monkeypatch.setattr(docs_routes, "sync_google_docs", lambda: ["bar.md"])
+    monkeypatch.setattr(docs_routes.kb, "api_reindex", lambda: {"status": "ok"})
+    data = asyncio.run(full_sync())
+    assert data == {"synced_docs": ["bar.md"], "kb": {"status": "ok"}}
