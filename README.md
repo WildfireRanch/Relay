@@ -64,7 +64,6 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `RELAY_PROJECT_ROOT`     | Backend  | Root path for doc/code/context scans              |
 | `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to browser                        |
 | `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                    |
-| `NEXT_PUBLIC_RELAY_KEY`  | Frontend | UI config/dev-only usage                          |
 
 ---
 
