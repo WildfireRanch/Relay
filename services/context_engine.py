@@ -70,10 +70,12 @@ class ContextEngine:
     def read_docs(
         self,
         root: str = "docs",
-        exts: Optional[List[str]] = None
+        exts: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None
     ) -> str:
         """
         Load and concatenate documentation files under the docs directory.
+        Optionally skip files matching any string in ``exclude``.
         """
         if exts is None:
             exts = [".md", ".txt"]
@@ -82,6 +84,8 @@ class ContextEngine:
             return ""
         snippets: List[str] = []
         for f in path.rglob("*"):
+            if exclude and any(str(f).endswith(x) for x in exclude):
+                continue
             if f.suffix in exts and f.is_file():
                 try:
                     rel = f.relative_to(self.base)
@@ -115,6 +119,7 @@ class ContextEngine:
         Appends per-user summaries from KB as well.
         """
         logs = self.read_logs_summary()[:1000]
+
         # If code context needed, load code, docs, logs, and KB summary
         if self.needs_code_context(query):
             code = self.read_source_files(
@@ -127,7 +132,25 @@ class ContextEngine:
                 ],
                 exts=[".py", ".ts", ".tsx", ".json", ".env"],
             )[:5000]
-            docs = self.read_docs("docs")[:3000]
+
+            manual = self.base / "docs/generated/global_context.md"
+            auto = self.base / "docs/generated/global_context.auto.md"
+            global_context = ""
+            try:
+                if manual.exists():
+                    global_context = f"# Doc: {manual.relative_to(self.base)}\n{manual.read_text()}"
+                elif auto.exists():
+                    global_context = f"# Doc: {auto.relative_to(self.base)}\n{auto.read_text()}"
+            except Exception as e:
+                print(f"[ContextEngine] Error reading global context: {e}")
+
+            docs_body = self.read_docs(
+                "docs",
+                exclude=["global_context.md", "global_context.auto.md"]
+            )[:3000]
+
+            docs = f"{global_context}\n\n{docs_body}" if global_context else docs_body
+
             kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
             context = f"{code}\n\n{docs}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
         else:
