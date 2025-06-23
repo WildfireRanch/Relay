@@ -1,10 +1,11 @@
 // File: frontend/src/app/layout.tsx
-//NO "use client" here!
+// Purpose: Global layout wrapper with Sidebar and shared styles
+// NO "use client" here — this is a server component
 
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import Sidebar from "@/components/Sidebar/Sidebar";
+import { Sidebar } from "@/components";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,10 +29,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}>
         <div className="flex min-h-screen">
           <Sidebar />
-          <main className="flex-1 min-h-screen bg-gray-50">{children}</main>
+          <main className="flex-1 p-6 overflow-auto">{children}</main>
         </div>
       </body>
     </html>
