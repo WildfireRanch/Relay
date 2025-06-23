@@ -120,6 +120,17 @@ class ContextEngine:
         """
         logs = self.read_logs_summary()[:1000]
 
+        manual = self.base / "docs/generated/global_context.md"
+        auto = self.base / "docs/generated/global_context.auto.md"
+        global_context = ""
+        try:
+            if manual.exists():
+                global_context = f"# Doc: {manual.relative_to(self.base)}\n{manual.read_text()}"
+            elif auto.exists():
+                global_context = f"# Doc: {auto.relative_to(self.base)}\n{auto.read_text()}"
+        except Exception as e:
+            print(f"[ContextEngine] Error reading global context: {e}")
+
         # If code context needed, load code, docs, logs, and KB summary
         if self.needs_code_context(query):
             code = self.read_source_files(
@@ -132,17 +143,6 @@ class ContextEngine:
                 ],
                 exts=[".py", ".ts", ".tsx", ".json", ".env"],
             )[:5000]
-
-            manual = self.base / "docs/generated/global_context.md"
-            auto = self.base / "docs/generated/global_context.auto.md"
-            global_context = ""
-            try:
-                if manual.exists():
-                    global_context = f"# Doc: {manual.relative_to(self.base)}\n{manual.read_text()}"
-                elif auto.exists():
-                    global_context = f"# Doc: {auto.relative_to(self.base)}\n{auto.read_text()}"
-            except Exception as e:
-                print(f"[ContextEngine] Error reading global context: {e}")
 
             docs_body = self.read_docs(
                 "docs",
@@ -165,5 +165,8 @@ class ContextEngine:
                 snippets.append(f"[{i+1}] {h['path']}\n{h['snippet']}")
             kb_context = "\n\n".join(snippets) or "No internal docs matched."
             kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
-            context = f"{kb_context}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
+            if global_context:
+                context = f"{kb_context}\n\n{global_context}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
+            else:
+                context = f"{kb_context}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
         return context
