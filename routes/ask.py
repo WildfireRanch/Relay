@@ -1,97 +1,109 @@
-# routes/ask.py
+# File: routes/ask.py
 # Directory: routes/
-# Purpose: API routes for user chat/ask endpoint with per-user memory, context pipeline, streaming, and audit logging.
+# Purpose: API routes for user agent interactions (GET, POST, stream) with context generation,
+# memory logging, action queuing, and OpenAI test endpoint.
 
-import os
-import logging
-import datetime
+import os, json, uuid, logging, datetime, traceback
 from fastapi import APIRouter, Query, Request, Header, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from typing import Optional, AsyncGenerator
 from services.context_engine import ContextEngine
-from services.agent import answer  # Should accept (user_id, question, context=None, stream=False)
+from services.agent import answer
+from services.memory import summarize_memory_entry, save_memory_entry
 from openai import OpenAIError
 
 router = APIRouter(prefix="/ask", tags=["ask"])
+QUEUE_PATH = "./logs/queue.jsonl"
 
+# === Helper: Action Queue Writer ===
+def queue_action(action: dict, context: str, user: str) -> str:
+    id = str(uuid.uuid4())
+    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    entry = {
+        "id": id,
+        "timestamp": timestamp,
+        "status": "pending",
+        "action": { **action, "context": context },
+        "history": [ { "timestamp": timestamp, "status": "queued", "user": user } ]
+    }
+    with open(QUEUE_PATH, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    return id
+
+# === Helper: Log Preview for Debugging ===
 def log_interaction(user_id, question, context, response):
-    """Log user interaction for audit and future training."""
     ts = datetime.datetime.utcnow().isoformat()
-    logline = f"{ts}\t{user_id}\tQ: {question}\tCTX: {len(context)} chars\tA: {str(response)[:80]}"
-    logging.info(logline)
-    # Optionally: append to file, DB, or Elastic
+    preview = str(response)[:80].replace("\n", " ")
+    logging.info(f"{ts}\t{user_id}\tQ: {question}\tCTX: {len(context)} chars\tA: {preview}")
 
-# === GET-based /ask endpoint ===
+# === GET /ask ===
 @router.get("")
 async def ask_get(
     request: Request,
-    question: str = Query(..., description="User query"),
+    question: str = Query(...),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    debug: Optional[bool] = Query(False, description="Include context for debug")
+    debug: Optional[bool] = Query(False)
 ):
-    """
-    Handle GET requests to /ask.
-    Uses ContextEngine for max-relevant context.
-    Optional debug param returns the context window.
-    """
     user_id = x_user_id or "anonymous"
     try:
-        print(f"[ask.py] Received GET question from {user_id}: {question}")
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
-        response = await answer(user_id, question, context=context)
+        result = await answer(user_id, question, context=context)
+        response = result.get("response", "")
+        action = result.get("action")
+        id = queue_action(action, context, user_id) if action else None
+
+        summary = summarize_memory_entry(question, response, context, [action] if action else [], user_id)
+        save_memory_entry(user_id, summary)
         log_interaction(user_id, question, context, response)
-        out = {"response": response}
-        if debug:
-            out["context"] = context
+
+        out = { "response": response, "id": id }
+        if action: out["action"] = action
+        if debug: out["context"] = context
         return out
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# === POST-based /ask endpoint ===
+# === POST /ask ===
 @router.post("")
 async def ask_post(
     request: Request,
     payload: dict,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    debug: Optional[bool] = Query(False, description="Include context for debug")
+    debug: Optional[bool] = Query(False)
 ):
-    """
-    Handle POST requests to /ask.
-    Uses ContextEngine for context.
-    """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
     if not question:
         raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
     try:
-        print(f"[ask.py] Received POST question from {user_id}: {question}")
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
-        response = await answer(user_id, question, context=context)
+        result = await answer(user_id, question, context=context)
+        response = result.get("response", "")
+        action = result.get("action")
+        id = queue_action(action, context, user_id) if action else None
+
+        summary = summarize_memory_entry(question, response, context, [action] if action else [], user_id)
+        save_memory_entry(user_id, summary)
         log_interaction(user_id, question, context, response)
-        out = {"response": response}
-        if debug:
-            out["context"] = context
+
+        out = { "response": response, "id": id }
+        if action: out["action"] = action
+        if debug: out["context"] = context
         return out
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# === Streaming /ask endpoint (Optional, for LLM streaming agents) ===
+# === POST /ask/stream ===
 @router.post("/stream")
 async def ask_stream(
     request: Request,
     payload: dict,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
-    """
-    POST /ask/stream - Streams agent responses as they're generated.
-    Requires agent.answer() to yield text chunks.
-    """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
     if not question:
@@ -99,25 +111,54 @@ async def ask_stream(
     try:
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
+        full_response = []
+        captured_action = None
 
         async def streamer() -> AsyncGenerator[str, None]:
+            nonlocal captured_action
             async for chunk in answer(user_id, question, context=context, stream=True):
+                full_response.append(chunk)
                 yield chunk
 
-        # Optionally log start/end
-        return StreamingResponse(streamer(), media_type="text/plain")
+            # Try to parse final output as structured JSON (optional)
+            try:
+                joined = "".join(full_response)
+                maybe_json = json.loads(joined)
+                if isinstance(maybe_json, dict) and "response" in maybe_json:
+                    full_response[:] = [maybe_json["response"]]
+                    captured_action = maybe_json.get("action")
+            except Exception:
+                pass
+
+        response = StreamingResponse(streamer(), media_type="text/plain")
+
+        async def finalize_log():
+            await response.body_iterator.aclose()
+            response_text = "".join(full_response)
+            summary = summarize_memory_entry(
+                prompt=question,
+                response=response_text,
+                context=context,
+                actions=[captured_action] if captured_action else [],
+                user_id=user_id
+            )
+            save_memory_entry(user_id, summary)
+            log_interaction(user_id, question, context, response_text)
+            if captured_action:
+                queue_action(captured_action, context, user_id)
+
+        response.background = finalize_log()
+        return response
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-# === /test_openai route ===
+# === GET /ask/test_openai ===
 @router.get("/test_openai")
 async def test_openai():
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
-        print("[test_openai] Sending test request to OpenAI...")
         response = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -125,11 +166,9 @@ async def test_openai():
                 {"role": "user", "content": "Ping test"}
             ]
         )
-        return {"response": response.choices[0].message.content}
+        return { "response": response.choices[0].message.content }
     except OpenAIError as e:
-        print("❌ OpenAIError:", e)
         raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

@@ -1,3 +1,7 @@
+// File: AskAgent.tsx
+// Directory: frontend/src/components
+// Purpose: Agent query panel with inline patch review, context toggles, and live control queue integration
+
 "use client";
 
 import { useState, useRef } from "react";
@@ -7,12 +11,14 @@ import { API_ROOT } from "@/lib/api";
 
 const USER_ID = "bret-demo"; // TODO: Replace with real session/user
 
-type Message = {
+interface Message {
   user: string;
   agent: string;
   context?: string;
   action?: { type: string; payload: any };
-};
+  id?: string;
+  status?: "pending" | "approved" | "denied";
+}
 
 export default function AskAgent() {
   const [query, setQuery] = useState("");
@@ -45,15 +51,17 @@ export default function AskAgent() {
         ...prev,
         {
           user: query,
-          agent: data?.response ?? data?.answer ?? "[no answer]",
-          context: data?.context ?? undefined,
-          action: data?.action ?? undefined
+          agent: data?.response ?? "[no answer]",
+          context: data?.context,
+          action: data?.action,
+          id: data?.id,
+          status: "pending"
         }
       ]);
+      setQuery("");
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 100);
-      setQuery("");
     } catch {
       setMessages((prev: Message[]) => [
         ...prev,
@@ -64,6 +72,26 @@ export default function AskAgent() {
       ]);
     }
     setLoading(false);
+  }
+
+  async function updateActionStatus(id: string, action: "approve" | "deny", idx: number) {
+    try {
+      await fetch(`${API_ROOT}/control/${action}_action`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": USER_ID
+        },
+        body: JSON.stringify({ id, comment: "inline approval" })
+      });
+      setMessages(prev => {
+        const updated = [...prev];
+        updated[idx] = { ...updated[idx], status: action === "approve" ? "approved" : "denied" };
+        return updated;
+      });
+    } catch (err) {
+      alert("Error approving/denying action.");
+    }
   }
 
   return (
@@ -106,6 +134,22 @@ export default function AskAgent() {
                 <pre className="mt-1 whitespace-pre-wrap text-xs">
                   {JSON.stringify(msg.action, null, 2)}
                 </pre>
+                {msg.id && msg.status === "pending" && (
+                  <div className="flex gap-2 mt-2">
+                    <Button size="sm" onClick={() => updateActionStatus(msg.id!, "approve", i)}>
+                      ✅ Approve
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => updateActionStatus(msg.id!, "deny", i)}>
+                      ❌ Deny
+                    </Button>
+                  </div>
+                )}
+                {msg.status === "approved" && (
+                  <div className="text-green-700 text-xs mt-1">✅ Action approved</div>
+                )}
+                {msg.status === "denied" && (
+                  <div className="text-red-700 text-xs mt-1">❌ Action denied</div>
+                )}
               </div>
             )}
 
