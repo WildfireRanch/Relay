@@ -2,10 +2,10 @@
 # File: main.py
 # Directory: project root
 # Purpose : FastAPI entrypoint for Relay backend
-#           • ENV-aware CORS (incl. X-API-Key & OPTIONS)
+#           • TEMP: CORS wide open for debug
 #           • KB auto-heal on cold start
 #           • Single-key security (API_KEY)
-# Last Updated: 2025-06-16  (Echo – CORS hardening merge)
+# Last Updated: 2025-06-23 (Echo – CORS debug + /test-cors)
 # ────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -46,37 +46,20 @@ app = FastAPI(
     description="Backend for Relay agent: ask, status, control, docs, KB, admin",
 )
 
-# ─── CORS (ENV-aware, allows X-API-Key, forwards OPTIONS) ──────────────────
-if ENV_NAME in {"staging", "preview"}:
-    cors_origins = ["*"]               # open for Vercel/Netlify previews
-    allow_creds = False                # '*' forces credentials → False
-else:
-    cors_origins = (
-        [o.strip() for o in os.getenv("FRONTEND_ORIGIN", "").split(",") if o.strip()]
-        or [
-            "https://relay.wildfireranch.us",
-            "https://status.wildfireranch.us",
-            "http://localhost:3000",
-        ]
-    )
-    allow_creds = True
+# ─── CORS (TEMP: Debug mode, allow all) ─────────────────────────────────────
+cors_origins = ["*"]         # ← TEMP: allow all origins for CORS debugging
+allow_creds = False          # '*' requires credentials to be disabled
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=allow_creds,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=[
-        "X-API-Key",
-        "X-User-Id",
-        "Content-Type",
-        "Authorization",
-        "Accept",
-        "Origin",
-    ],
+    allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
-logging.info("CORS → origins=%s  creds=%s", cors_origins, allow_creds)
+
+logging.warning("🔓 CORS DEBUG MODE ENABLED: allow_origins = '*', allow_credentials = False")
 
 # ─── Router imports ────────────────────────────────────────────────────────
 from routes.ask import router as ask_router
@@ -137,6 +120,11 @@ def health_check():
         {"status": "ok" if ok else "error", "details": details},
         status_code=200 if ok else 503,
     )
+
+# ─── CORS Echo Route (for live validation) ─────────────────────────────────
+@app.options("/test-cors")
+def test_cors():
+    return JSONResponse({"message": "CORS preflight success"})
 
 # ─── Local dev entrypoint ──────────────────────────────────────────────────
 if __name__ == "__main__":
