@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +44,7 @@ export default function ActionQueuePanel() {
   const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
   const USER_ID = "bret";
 
-  async function fetchQueue() {
+  const fetchQueue = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -62,9 +62,9 @@ export default function ActionQueuePanel() {
       setError("Failed to fetch action queue.");
     }
     setLoading(false);
-  }
+  }, [API_KEY, USER_ID]);
 
-  async function updateStatus(id: string, action: "approve" | "deny") {
+  const updateStatus = async (id: string, action: "approve" | "deny") => {
     setProcessing(id + action);
     try {
       const res = await fetch(`/control/${action}_action`, {
@@ -84,14 +84,14 @@ export default function ActionQueuePanel() {
       setError(`Failed to ${action} action.`);
     }
     setProcessing(null);
-  }
+  };
 
   useEffect(() => {
     fetchQueue();
     if (!autoRefresh) return;
     const interval = setInterval(fetchQueue, 15000);
     return () => clearInterval(interval);
-  }, [autoRefresh]);
+  }, [fetchQueue, autoRefresh]);
 
   const getActionById = (id: string) => actions.find(a => a.id === id);
 
@@ -210,6 +210,8 @@ export default function ActionQueuePanel() {
             {a.status === "pending" && (
               <form className="flex flex-col gap-2 mt-2">
                 <Textarea
+                  id={`comment-${a.id}`}
+                  name={`comment-${a.id}`}
                   placeholder="Optional comment (why approve/deny?)"
                   value={comment[a.id] || ""}
                   onChange={e =>
