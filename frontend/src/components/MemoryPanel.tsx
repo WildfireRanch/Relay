@@ -1,6 +1,6 @@
 // File: MemoryPanel.tsx
 // Directory: frontend/src/components
-// Purpose: Displays per-user session memory from /logs/sessions with filtering and JSON export
+// Purpose: Displays per-user session memory from /logs/sessions with filtering, deep context audit, and JSON export
 
 "use client";
 
@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
+// === Memory log entry interface (expanded for deep context diagnostics) ===
 interface MemoryEntry {
   timestamp: string;
   user: string;
@@ -25,12 +26,17 @@ interface MemoryEntry {
 }
 
 export default function MemoryPanel() {
+  // === UI state ===
   const [memory, setMemory] = useState<MemoryEntry[]>([]);
   const [search, setSearch] = useState("");
   const [filterUser, setFilterUser] = useState("");
   const [filterGlobal, setFilterGlobal] = useState<"any" | "with" | "without">("any");
-  const [fetchInfo, setFetchInfo] = useState<{ status: string; time: number; error?: string }>({ status: "idle", time: 0 });
+  const [fetchInfo, setFetchInfo] = useState<{ status: string; time: number; error?: string }>({
+    status: "idle",
+    time: 0
+  });
 
+  // === Fetch and log all session memory entries ===
   async function fetchMemory() {
     const start = Date.now();
     setFetchInfo({ status: "loading", time: 0 });
@@ -58,7 +64,7 @@ export default function MemoryPanel() {
 
   useEffect(() => { fetchMemory(); }, []);
 
-  // Advanced filtering
+  // === Filtering and context-aware insights ===
   const users = Array.from(new Set(memory.map(m => m.user))).sort();
   const filtered = memory.filter(entry => {
     const matchUser = !filterUser || entry.user === filterUser;
@@ -72,7 +78,7 @@ export default function MemoryPanel() {
     return matchUser && matchSearch && matchGlobal;
   });
 
-  // Insights
+  // === Insight summary ===
   const summary = {
     total: memory.length,
     filtered: filtered.length,
@@ -82,6 +88,7 @@ export default function MemoryPanel() {
     fallback: filtered.filter(m => m.fallback).length
   };
 
+  // === Download current view as JSON ===
   function downloadMemory() {
     const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -92,13 +99,14 @@ export default function MemoryPanel() {
     URL.revokeObjectURL(url);
   }
 
+  // === Open the original query in /ask for quick replay ===
   function replayQuery(query: string) {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank");
   }
 
   return (
     <div className="space-y-4">
-      {/* Debug/Insights bar */}
+      {/* Insights bar: fetch status, counts, averages */}
       <div className="flex flex-wrap gap-4 text-xs text-gray-500 mb-2 items-center">
         <span>Fetch: <b>{fetchInfo.status}</b>{fetchInfo.time ? ` (${fetchInfo.time}ms)` : ""}</span>
         <span>Total: <b>{summary.total}</b></span>
@@ -109,6 +117,7 @@ export default function MemoryPanel() {
         <span>Fallbacks: <b>{summary.fallback}</b></span>
         {fetchInfo.error && <span className="text-red-600">Error: {fetchInfo.error}</span>}
       </div>
+      {/* Filter/search controls */}
       <div className="flex gap-2 items-center mb-4">
         <select className="border rounded px-2 py-1 text-sm" value={filterUser} onChange={e => setFilterUser(e.target.value)}>
           <option value="">All Users</option>
@@ -130,6 +139,7 @@ export default function MemoryPanel() {
         />
         <Button onClick={downloadMemory} variant="outline">Download JSON</Button>
       </div>
+      {/* Filtered/total counts */}
       <div className="text-xs text-gray-400 mb-2">
         Showing {filtered.length} of {memory.length} entries
         {search && <> | Search: <code>{search}</code></>}
@@ -140,6 +150,7 @@ export default function MemoryPanel() {
         <div className="text-sm text-muted-foreground p-4">No memory entries found for current filter.</div>
       )}
 
+      {/* Per-entry context-aware card */}
       {filtered.map((m, i) => (
         <Card key={i}>
           <CardContent className="p-4 space-y-2">
@@ -149,13 +160,13 @@ export default function MemoryPanel() {
             <div className="text-sm">
               <strong>Query:</strong> {m.query}
             </div>
-            {m.topics?.length > 0 && (
+            {Array.isArray(m.topics) && m.topics.length > 0 && (
               <div className="text-xs">Topics: {m.topics.join(", ")}</div>
             )}
-            {m.files?.length > 0 && (
+            {Array.isArray(m.files) && m.files.length > 0 && (
               <div className="text-xs">Files: {m.files.join(", ")}</div>
             )}
-            {m.context_files?.length && (
+            {Array.isArray(m.context_files) && m.context_files.length > 0 && (
               <div className="text-xs text-blue-800">
                 <strong>Context Files:</strong> {m.context_files.join(", ")}
               </div>
