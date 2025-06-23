@@ -46,9 +46,18 @@ app = FastAPI(
     description="Backend for Relay agent: ask, status, control, docs, KB, admin",
 )
 
-# ─── CORS (TEMP: Debug mode, allow all) ─────────────────────────────────────
-cors_origins = ["*"]         # ← TEMP: allow all origins for CORS debugging
-allow_creds = False          # '*' requires credentials to be disabled
+# ─── CORS (env-controlled) ─────────────────────────────────────────────────
+cors_origins = ["*"]
+allow_creds = False  # '*' requires credentials disabled
+override_origin = os.getenv("FRONTEND_ORIGIN")
+if override_origin:
+    cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
+    allow_creds = True
+    logging.info("CORS restricted to: %s", cors_origins)
+else:
+    logging.warning(
+        "🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False"
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,8 +67,6 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
-
-logging.warning("🔓 CORS DEBUG MODE ENABLED: allow_origins = '*', allow_credentials = False")
 
 # ─── Router imports ────────────────────────────────────────────────────────
 from routes.ask import router as ask_router
@@ -81,7 +88,12 @@ app.include_router(oauth_router)
 app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
-app.include_router(admin_router.router)
+
+# Admin tools are optional, gated by ENABLE_ADMIN_TOOLS
+if os.getenv("ENABLE_ADMIN_TOOLS", "false").lower() in ("1", "true", "yes"):
+    app.include_router(admin_router.router)
+else:
+    logging.info("Admin endpoints disabled (set ENABLE_ADMIN_TOOLS=1 to enable)")
 
 # ─── KB auto-heal on startup ───────────────────────────────────────────────
 from services import kb  # late import avoids circular deps
