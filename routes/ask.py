@@ -15,7 +15,6 @@ from openai import OpenAIError
 router = APIRouter(prefix="/ask", tags=["ask"])
 QUEUE_PATH = "./logs/queue.jsonl"
 
-# === Helper: Action Queue Writer ===
 def queue_action(action: dict, context: str, user: str) -> str:
     id = str(uuid.uuid4())
     timestamp = datetime.datetime.utcnow().isoformat() + "Z"
@@ -30,7 +29,6 @@ def queue_action(action: dict, context: str, user: str) -> str:
         f.write(json.dumps(entry) + "\n")
     return id
 
-# === Helper: Log Preview for Debugging ===
 def log_interaction(user_id, question, context, response):
     ts = datetime.datetime.utcnow().isoformat()
     preview = str(response)[:80].replace("\n", " ")
@@ -49,10 +47,16 @@ async def ask_get(
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
         result = await answer(user_id, question, context=context)
-        response = result.get("response", "")
-        action = result.get("action")
-        id = queue_action(action, context, user_id) if action else None
 
+        # Handle raw string or dict
+        if isinstance(result, str):
+            response = result
+            action = None
+        else:
+            response = result.get("response", "")
+            action = result.get("action")
+
+        id = queue_action(action, context, user_id) if action else None
         summary = summarize_memory_entry(question, response, context, [action] if action else [], user_id)
         save_memory_entry(user_id, summary)
         log_interaction(user_id, question, context, response)
@@ -81,10 +85,15 @@ async def ask_post(
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
         result = await answer(user_id, question, context=context)
-        response = result.get("response", "")
-        action = result.get("action")
-        id = queue_action(action, context, user_id) if action else None
 
+        if isinstance(result, str):
+            response = result
+            action = None
+        else:
+            response = result.get("response", "")
+            action = result.get("action")
+
+        id = queue_action(action, context, user_id) if action else None
         summary = summarize_memory_entry(question, response, context, [action] if action else [], user_id)
         save_memory_entry(user_id, summary)
         log_interaction(user_id, question, context, response)
@@ -120,12 +129,14 @@ async def ask_stream(
                 full_response.append(chunk)
                 yield chunk
 
-            # Try to parse final output as structured JSON (optional)
+            # Try to parse as final JSON payload
             try:
                 joined = "".join(full_response)
                 maybe_json = json.loads(joined)
-                if isinstance(maybe_json, dict) and "response" in maybe_json:
-                    full_response[:] = [maybe_json["response"]]
+                if isinstance(maybe_json, str):
+                    full_response[:] = [maybe_json]
+                elif isinstance(maybe_json, dict):
+                    full_response[:] = [maybe_json.get("response", "")]
                     captured_action = maybe_json.get("action")
             except Exception:
                 pass
