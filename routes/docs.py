@@ -57,9 +57,11 @@ async def list_docs(
     results: List[str] = []
     for sub in cats:
         for f in (BASE_DIR / sub).rglob("*.md"):
-            results.append(str(f.relative_to(BASE_DIR)))
             if len(results) >= limit:
                 break
+            results.append(str(f.relative_to(BASE_DIR)))
+        if len(results) >= limit:
+            break
     return {"files": results}
 
 

@@ -49,6 +49,12 @@ def test_docs_list():
     assert isinstance(data["files"], list)
 
 
+def test_docs_list_limit_enforced():
+    limit = 3
+    data = asyncio.run(list_docs(category="all", limit=limit))
+    assert len(data["files"]) <= limit
+
+
 def test_docs_sync(monkeypatch):
     monkeypatch.setattr(docs_routes, "sync_google_docs", lambda: ["foo.md"])
     data = asyncio.run(sync_docs())
