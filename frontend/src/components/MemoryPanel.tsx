@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
-// === Memory log entry interface (expanded for deep context diagnostics) ===
+// Memory log entry interface (expanded for deep context diagnostics)
 interface MemoryEntry {
   timestamp: string;
   user: string;
@@ -26,7 +26,7 @@ interface MemoryEntry {
 }
 
 export default function MemoryPanel() {
-  // === UI state ===
+  // UI state
   const [memory, setMemory] = useState<MemoryEntry[]>([]);
   const [search, setSearch] = useState("");
   const [filterUser, setFilterUser] = useState("");
@@ -36,7 +36,7 @@ export default function MemoryPanel() {
     time: 0
   });
 
-  // === Fetch and log all session memory entries ===
+  // Fetch and log all session memory entries
   async function fetchMemory() {
     const start = Date.now();
     setFetchInfo({ status: "loading", time: 0 });
@@ -55,8 +55,9 @@ export default function MemoryPanel() {
         count: data.entries?.length,
         sample: data.entries?.[0]
       });
-    } catch (e: any) {
-      setFetchInfo({ status: "error", time: Date.now() - start, error: e?.message });
+    } catch (e: unknown) {
+      const errorMsg = e instanceof Error ? e.message : String(e);
+      setFetchInfo({ status: "error", time: Date.now() - start, error: errorMsg });
       setMemory([]);
       console.error("[MemoryPanel] Fetch failed:", e);
     }
@@ -64,7 +65,7 @@ export default function MemoryPanel() {
 
   useEffect(() => { fetchMemory(); }, []);
 
-  // === Filtering and context-aware insights ===
+  // Filtering and context-aware insights
   const users = Array.from(new Set(memory.map(m => m.user))).sort();
   const filtered = memory.filter(entry => {
     const matchUser = !filterUser || entry.user === filterUser;
@@ -78,7 +79,7 @@ export default function MemoryPanel() {
     return matchUser && matchSearch && matchGlobal;
   });
 
-  // === Insight summary ===
+  // Insight summary
   const summary = {
     total: memory.length,
     filtered: filtered.length,
@@ -88,7 +89,7 @@ export default function MemoryPanel() {
     fallback: filtered.filter(m => m.fallback).length
   };
 
-  // === Download current view as JSON ===
+  // Download current view as JSON
   function downloadMemory() {
     const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -99,7 +100,7 @@ export default function MemoryPanel() {
     URL.revokeObjectURL(url);
   }
 
-  // === Open the original query in /ask for quick replay ===
+  // Open the original query in /ask for quick replay
   function replayQuery(query: string) {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank");
   }
