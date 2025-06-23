@@ -79,6 +79,8 @@ Relay supports hybrid context/memory awareness across docs, code, and operationa
 * `/status/code` returns tracked source files, last-modified timestamps, and mapped functions
 * Deep logging of every `/ask` event: tracks context files used, prompt/response size, global context, fallback flag
 
+**Note:** Place Markdown files in `/context/` or create `docs/generated/global_context.md` so `/status/context` has something to show.
+
 **To trigger context/doc sync:**
 
 ```bash
