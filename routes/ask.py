@@ -1,7 +1,7 @@
 # File: routes/ask.py
 # Directory: routes/
 # Purpose: API routes for user agent interactions (GET, POST, stream) with context generation,
-# memory logging, action queuing, and OpenAI test endpoint.
+#          deep memory logging, action queuing, and OpenAI test endpoint.
 
 import os, json, uuid, logging, datetime, traceback
 from fastapi import APIRouter, Query, Request, Header, HTTPException
@@ -15,6 +15,7 @@ from openai import OpenAIError
 router = APIRouter(prefix="/ask", tags=["ask"])
 QUEUE_PATH = "./logs/queue.jsonl"
 
+# === Patch Queue Helper ===
 def queue_action(action: dict, context: str, user: str) -> str:
     id = str(uuid.uuid4())
     timestamp = datetime.datetime.utcnow().isoformat() + "Z"
@@ -34,6 +35,18 @@ def log_interaction(user_id, question, context, response):
     preview = str(response)[:80].replace("\n", " ")
     logging.info(f"{ts}\t{user_id}\tQ: {question}\tCTX: {len(context)} chars\tA: {preview}")
 
+# === Utility: Extract context diagnostics (files, global context, etc.) ===
+def extract_context_meta(context: str):
+    # Look for file references in context (simple heuristic—adapt for your style!)
+    context_files = []
+    used_global_context = False
+    for line in context.splitlines():
+        if line.startswith("# Doc:") or line.startswith("# File:"):
+            context_files.append(line.split(":", 1)[1].strip())
+        if "global_context.md" in line or "Global Project Context" in line:
+            used_global_context = True
+    return context_files, used_global_context
+
 # === GET /ask ===
 @router.get("")
 async def ask_get(
@@ -46,19 +59,30 @@ async def ask_get(
     try:
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
+        context_files, used_global_context = extract_context_meta(context)
         result = await answer(user_id, question, context=context)
-
-        # Handle raw string or dict
         if isinstance(result, str):
             response = result
             action = None
         else:
             response = result.get("response", "")
             action = result.get("action")
-
         id = queue_action(action, context, user_id) if action else None
-        summary = summarize_memory_entry(question, response, context, [action] if action else [], user_id)
-        save_memory_entry(user_id, summary)
+
+        # Deep memory log entry
+        entry = summarize_memory_entry(
+            prompt=question,
+            response=response,
+            context=context,
+            actions=[action] if action else [],
+            user_id=user_id,
+            context_files=context_files,
+            used_global_context=used_global_context,
+            fallback=False,  # TODO: set to True if using fallback/generic logic
+            prompt_length=len(question + context),
+            response_length=len(response)
+        )
+        save_memory_entry(user_id, entry)
         log_interaction(user_id, question, context, response)
 
         out = { "response": response, "id": id }
@@ -84,18 +108,32 @@ async def ask_post(
     try:
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
+        context_files, used_global_context = extract_context_meta(context)
         result = await answer(user_id, question, context=context)
-
         if isinstance(result, str):
             response = result
             action = None
         else:
             response = result.get("response", "")
             action = result.get("action")
-
         id = queue_action(action, context, user_id) if action else None
-        summary = summarize_memory_entry(question, response, context, [action] if action else [], user_id)
-        save_memory_entry(user_id, summary)
+
+        # Deep memory log entry
+        entry = summarize_memory_entry(
+            prompt=question,
+            response=response,
+            context=context,
+            actions=[action] if action else [],
+            user_id=user_id,
+            topics=payload.get("topics"),
+            files=payload.get("files"),
+            context_files=context_files,
+            used_global_context=used_global_context,
+            fallback=False,  # TODO: set True if fallback detected
+            prompt_length=len(question + context),
+            response_length=len(response)
+        )
+        save_memory_entry(user_id, entry)
         log_interaction(user_id, question, context, response)
 
         out = { "response": response, "id": id }
@@ -120,6 +158,7 @@ async def ask_stream(
     try:
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
+        context_files, used_global_context = extract_context_meta(context)
         full_response = []
         captured_action = None
 
@@ -146,14 +185,19 @@ async def ask_stream(
         async def finalize_log():
             await response.body_iterator.aclose()
             response_text = "".join(full_response)
-            summary = summarize_memory_entry(
+            entry = summarize_memory_entry(
                 prompt=question,
                 response=response_text,
                 context=context,
                 actions=[captured_action] if captured_action else [],
-                user_id=user_id
+                user_id=user_id,
+                context_files=context_files,
+                used_global_context=used_global_context,
+                fallback=False,  # TODO: flag as True if you detect fallback/generic response
+                prompt_length=len(question + context),
+                response_length=len(response_text)
             )
-            save_memory_entry(user_id, summary)
+            save_memory_entry(user_id, entry)
             log_interaction(user_id, question, context, response_text)
             if captured_action:
                 queue_action(captured_action, context, user_id)
