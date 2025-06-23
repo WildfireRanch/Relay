@@ -7,6 +7,8 @@ import { usePathname } from "next/navigation";
 
 const coreLinks = [
   { href: "/", label: "Home", icon: "🏠" },
+  { href: "/dashboard", label: "Dashboard", icon: "🧭" },
+  { href: "/ask", label: "Ask Echo", icon: "💬" },
   { href: "/docs", label: "Docs", icon: "📚" },
   { href: "/status", label: "Status", icon: "📊" },
 ];
@@ -14,6 +16,7 @@ const coreLinks = [
 const opsLinks = [
   { href: "/action-queue", label: "Action Queue", icon: "📋" },
   { href: "/audit", label: "Audit Log", icon: "🛡️" },
+  { href: "/control", label: "Control Center", icon: "🧠" },
 ];
 
 const adminLinks = [
