@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { API_ROOT } from "@/lib/api";
 
 interface LogEntry {
   id: string;
@@ -24,7 +25,7 @@ export default function LogsPanel() {
   const [searchText, setSearchText] = useState<string>("");
 
   async function fetchLog() {
-    const res = await fetch("https://relay.wildfireranch.us/control/list_log", {
+    const res = await fetch(`${API_ROOT}/control/list_log`, {
       headers: {
         "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
       }
