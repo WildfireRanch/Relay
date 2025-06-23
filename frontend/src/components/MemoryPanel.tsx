@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
-// Memory log entry interface (expanded for deep context diagnostics)
+// Memory log entry interface
 interface MemoryEntry {
   timestamp: string;
   user: string;
@@ -26,7 +26,6 @@ interface MemoryEntry {
 }
 
 export default function MemoryPanel() {
-  // UI state
   const [memory, setMemory] = useState<MemoryEntry[]>([]);
   const [search, setSearch] = useState("");
   const [filterUser, setFilterUser] = useState("");
@@ -36,7 +35,6 @@ export default function MemoryPanel() {
     time: 0
   });
 
-  // Fetch and log all session memory entries
   async function fetchMemory() {
     const start = Date.now();
     setFetchInfo({ status: "loading", time: 0 });
@@ -89,7 +87,6 @@ export default function MemoryPanel() {
     fallback: filtered.filter(m => m.fallback).length
   };
 
-  // Download current view as JSON
   function downloadMemory() {
     const blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -100,7 +97,6 @@ export default function MemoryPanel() {
     URL.revokeObjectURL(url);
   }
 
-  // Open the original query in /ask for quick replay
   function replayQuery(query: string) {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank");
   }
@@ -120,13 +116,21 @@ export default function MemoryPanel() {
       </div>
       {/* Filter/search controls */}
       <div className="flex gap-2 items-center mb-4">
-        <select className="border rounded px-2 py-1 text-sm" value={filterUser} onChange={e => setFilterUser(e.target.value)}>
+        <select
+          className="border rounded px-2 py-1 text-sm"
+          value={filterUser}
+          onChange={e => setFilterUser(e.target.value)}
+        >
           <option value="">All Users</option>
           {users.map(u => (
             <option key={u} value={u}>{u}</option>
           ))}
         </select>
-        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as any)}>
+        <select
+          className="border rounded px-2 py-1 text-sm"
+          value={filterGlobal}
+          onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")}
+        >
           <option value="any">All Context</option>
           <option value="with">With Global Context</option>
           <option value="without">Without Global Context</option>
@@ -151,7 +155,6 @@ export default function MemoryPanel() {
         <div className="text-sm text-muted-foreground p-4">No memory entries found for current filter.</div>
       )}
 
-      {/* Per-entry context-aware card */}
       {filtered.map((m, i) => (
         <Card key={i}>
           <CardContent className="p-4 space-y-2">
