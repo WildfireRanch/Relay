@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { API_ROOT } from "@/lib/api";
 
 // Memory log entry interface
 interface MemoryEntry {
@@ -39,7 +40,7 @@ export default function MemoryPanel() {
     const start = Date.now();
     setFetchInfo({ status: "loading", time: 0 });
     try {
-      const res = await fetch("https://relay.wildfireranch.us/logs/sessions/all", {
+      const res = await fetch(`${API_ROOT}/logs/sessions/all`, {
         headers: {
           "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
         }
