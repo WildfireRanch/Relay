@@ -41,3 +41,23 @@ nodered-data/*
 .DS_Store
 *.swp
 *.swo
+
+# === Storybook demo and starter files (ignore these) ===
+frontend/src/stories/
+frontend/src/stories/**
+frontend/vitest.config.ts
+frontend/vitest.shims.d.ts
+
+# Ignore all .storybook/ config except main/preview (optional)
+# If you want to keep .storybook/main.ts and .storybook/preview.ts, do this:
+frontend/.storybook/
+!frontend/.storybook/main.ts
+!frontend/.storybook/preview.ts
+
+# (already covered) Build output, cache, and node_modules
+node_modules/
+.next/
+out/
+.storybook/coverage/
+storybook-static/
+.turbo/

@@ -1,7 +1,7 @@
 # File: routes/oauth.py
 # Directory: /routes
 # Purpose: Provide Google OAuth endpoints for both development (Codespaces) and production.
-#          Supports dynamic and environment-overridden redirect URIs, robust logging, and token persistence.
+# Supports dynamic and environment-overridden redirect URIs, robust logging, and token persistence.
 
 import os
 import base64

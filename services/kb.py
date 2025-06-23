@@ -1,75 +1,175 @@
-# services/kb.py
-import pathlib, sqlite3, json
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from services.settings import assert_env
-import numpy as np
-import hashlib
-from datetime import datetime
+# ────────────────────────────────────────────────────────────────────────────
+# File: services/kb.py
+# Directory: services/
+# Purpose  : Semantic KB helpers (build, load, search, auto-heal)
+#            • Model-scoped index + dimension guard
+#            • LLM-free TitleExtractor (no nested-async)
+#            • search() accepts user_id for legacy callers
+# Paths    : Index is always written to **/app/index/<env>/<model>**
+#            so both the runtime container (root) and `railway run` shells
+#            see the same files.  Any stale folders are scrubbed at startup.
+# Last Updated: 2025-06-16
+# ────────────────────────────────────────────────────────────────────────────
 
-# === Paths ===
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-DOCS_DIR = ROOT / "docs"
-DB_PATH  = ROOT / "kb.sqlite3"
+from __future__ import annotations
 
-# === Initialize Embedding + Splitter ===
-OPENAI_API_KEY = assert_env("OPENAI_API_KEY", "Used for LangChain embedding")
-_EMBED  = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_API_KEY)
-_SPLIT  = RecursiveCharacterTextSplitter(chunk_size=1024, chunk_overlap=128)
+import json
+import logging
+import os
+import shutil
+from pathlib import Path
+from typing import List, Optional
 
-# === DB Setup ===
-def _connect():
-    con = sqlite3.connect(DB_PATH)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS docs(
-            id TEXT PRIMARY KEY,
-            path TEXT,
-            chunk TEXT,
-            embedding BLOB,
-            title TEXT,
-            updated TEXT
-        )
-    """)
-    return con
+from services.config import INDEX_DIR, INDEX_ROOT
 
-# === Embed all Markdown docs into the KB ===
-def embed_docs():
-    con = _connect()
-    for md in DOCS_DIR.rglob("*.md"):
-        text = md.read_text("utf-8")
-        chunks = _SPLIT.split_text(text)
-        embeddings = _EMBED.embed_documents(chunks)
-        title = md.stem.replace("_", " ").title()
-        updated = datetime.fromtimestamp(md.stat().st_mtime).isoformat()
-        for chunk, emb in zip(chunks, embeddings):
-            uid = hashlib.sha256((str(md) + chunk).encode()).hexdigest()
-            con.execute(
-                "INSERT OR REPLACE INTO docs VALUES (?,?,?,?,?,?)",
-                (uid, str(md), chunk, json.dumps(emb), title, updated)
-            )
-    con.commit()
-    con.close()
+from llama_index.core import (
+    SimpleDirectoryReader,
+    StorageContext,
+    VectorStoreIndex,
+    load_index_from_storage,
+)
+from llama_index.core.extractors import TitleExtractor
+from llama_index.core.ingestion import IngestionPipeline
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.embeddings.openai import OpenAIEmbedding
 
-# === Vector similarity search ===
-def cosine_similarity(v1, v2):
-    v1, v2 = np.array(v1), np.array(v2)
-    return float(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2)))
+# ─── Logging ───────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+logger.info("🔥 services.kb loaded")
 
-def search(query, k=4):
-    con = _connect()
-    q_emb = _EMBED.embed_query(query)
-    rows = con.execute("SELECT path, chunk, embedding, title, updated FROM docs").fetchall()
-    results = []
-    for path, chunk, emb_json, title, updated in rows:
-        sim = cosine_similarity(q_emb, json.loads(emb_json))
-        results.append((sim, path, chunk, title, updated))
-    con.close()
-    top = sorted(results, key=lambda r: r[0], reverse=True)[:k]
-    return [
-        {"path": path, "title": title, "snippet": chunk, "updated": updated, "similarity": sim}
-        for sim, path, chunk, title, updated in top
+# ─── Model configuration ───────────────────────────────────────────────────
+MODEL_NAME = (
+    os.getenv("KB_EMBED_MODEL")
+    or os.getenv("OPENAI_EMBED_MODEL")
+    or "text-embedding-3-large"
+)
+if MODEL_NAME == "text-embedding-3-large":
+    EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME, dimensions=3072)
+else:
+    EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
+
+# ─── Index paths (from config) ─────────────────────────────────────────────
+# INDEX_ROOT / INDEX_DIR provided by services.config
+
+# Scrub any stale model folders (e.g., old Ada or double-nested dirs)
+for path in INDEX_ROOT.iterdir():
+    if path.is_dir() and path.name != MODEL_NAME:
+        logger.warning("Removing stale index folder %s", path)
+        shutil.rmtree(path, ignore_errors=True)
+
+# ─── Ingestion pipeline ────────────────────────────────────────────────────
+ROOT       = Path(__file__).resolve().parent
+CODE_DIRS  = [ROOT.parent / p for p in ("src", "backend", "frontend")]
+DOCS_DIR   = ROOT.parent / "docs"
+CHUNK_SIZE, CHUNK_OVERLAP = 1024, 200
+
+INGEST_PIPELINE = IngestionPipeline(
+    transformations=[
+        TitleExtractor(llm=None),                           # no async LLM
+        SentenceSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP),
+        EMBED_MODEL,
     ]
+)
 
-# === Run embedding when invoked directly ===
+# ─── Dimension helpers ─────────────────────────────────────────────────────
+def _vector_dim_current() -> int:
+    return len(EMBED_MODEL.get_text_embedding("dim_check"))
+
+def _vector_dim_stored() -> int:
+    vs_file = INDEX_DIR / "vector_store.json"
+    if not vs_file.exists():
+        return -1
+    store = json.loads(vs_file.read_text())
+    for rec in store.values():
+        if isinstance(rec, dict) and isinstance(rec.get("embedding"), list):
+            return len(rec["embedding"])
+    return -1
+
+EXPECTED_DIM = _vector_dim_current()
+
+# ─── Public helpers ────────────────────────────────────────────────────────
+def index_is_valid() -> bool:
+    stored = _vector_dim_stored()
+    valid  = stored == EXPECTED_DIM and stored > 0
+    logger.info("[index_is_valid] stored=%s current=%d → %s", stored, EXPECTED_DIM, valid)
+    return valid
+
+def embed_all() -> None:
+    """Rebuild the full semantic index."""
+    logger.info("📚 Re-indexing KB with model %s", MODEL_NAME)
+
+    docs: List = []
+    for path in CODE_DIRS + [DOCS_DIR]:
+        if path.exists():
+            docs.extend(SimpleDirectoryReader(path).load_data())
+    logger.info("Loaded %d documents", len(docs))
+
+    nodes = INGEST_PIPELINE.run(documents=docs)
+    logger.info("Generated %d vector nodes", len(nodes))
+
+    index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
+    index.storage_context.persist(persist_dir=str(INDEX_DIR))
+    logger.info("✅ Index persisted → %s", INDEX_DIR)
+
+def get_index() -> VectorStoreIndex:
+    """Return a loaded index, rebuilding if missing or mismatched."""
+    if not index_is_valid():
+        embed_all()
+    ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
+    return load_index_from_storage(ctx, embed_model=EMBED_MODEL)
+
+# ─── Core search used by routes ────────────────────────────────────────────
+def search(
+    query: str,
+    k: int = 4,
+    search_type: str = "all",
+    score_threshold: Optional[float] = None,
+    user_id: Optional[str] = None,   # accepted, currently unused
+) -> List[dict]:
+    qe  = get_index().as_query_engine(similarity_top_k=k)
+    raw = qe.query(query)
+
+    hits: List[dict] = []
+    for n in getattr(raw, "source_nodes", []):
+        if score_threshold is not None and n.score < score_threshold:
+            continue
+        hits.append(
+            {
+                "id": n.node.node_id,
+                "snippet": n.node.text,
+                "similarity": n.score,
+                "path": n.node.metadata.get("file_path"),
+                "title": n.node.metadata.get("title", n.node.metadata.get("file_path") or "Untitled"),
+            }
+        )
+    return hits
+
+def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
+    return search(query=query, k=k, search_type=search_type)
+
+def api_reindex() -> dict:
+    embed_all()
+    return {
+        "status": "ok",
+        "message": "Re-index complete",
+        "index_dir": str(INDEX_DIR),
+        "model": MODEL_NAME,
+    }
+
+def get_recent_summaries(user_id: str) -> list[str]:
+    return ["No summary implemented yet."]
+
+# ─── CLI convenience ───────────────────────────────────────────────────────
 if __name__ == "__main__":
-    embed_docs()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "search":
+        q = " ".join(sys.argv[2:]) or "test"
+        for h in search(q):
+            print(f"{h['title']} (score={h['similarity']:.2f}): {h['snippet'][:120]}…")
+    else:
+        embed_all()

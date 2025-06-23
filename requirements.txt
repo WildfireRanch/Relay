@@ -14,16 +14,52 @@ markdownify>=1.1.0
 python-dotenv>=1.0.0
 
 # === HTTP Clients ===
-httpx>=0.28
-requests>=2.31
 aiohttp>=3.8
 aiohappyeyeballs>=2.6
+httpx>=0.28
+requests>=2.31
 requests-oauthlib>=2.0.0
 
 # === AI & LLM Integration ===
-openai>=1.0
 langchain>=0.2
-langchain-core>=0.2
 langchain-community>=0.2
+langchain-core>=0.2
 langchain-openai>=0.1
+openai>=1.0
 transformers>=4.30
+
+# === Semantic Search & Embeddings ===
+llama-index-core
+llama-index-llms-openai
+llama-index-embeddings-openai
+llama-index-readers-file
+
+# === Markdown & Text Processing ===
+markdown>=3.4.1
+python-frontmatter>=1.1.0
+
+# === File I/O & Utilities ===
+aiofiles>=23.1.0
+
+# === Monitoring & Diagnostics ===
+psutil>=5.9
+
+# === Authentication (optional, for JWT backend validation) ===
+itsdangerous>=2.1
+pyjwt[crypto]>=2.8
+
+# === Structured Data ===
+pydantic>=1.10
+
+# === Async Utilities ===
+anyio>=3.7
+
+# === Databases (optional, for SQLAlchemy/SQLite) ===
+sqlalchemy>=2.0
+
+# === Testing ===
+pytest>=7.0
+pytest-asyncio>=0.21
+
+# === Linting/Formatting ===
+black>=24.0

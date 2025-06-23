@@ -1,46 +1,219 @@
-from fastapi import APIRouter, Query
-from fastapi.responses import JSONResponse
-from services.agent import answer, client
+# File: routes/ask.py
+# Directory: routes/
+# Purpose: API routes for user agent interactions (GET, POST, stream) with context generation,
+#          deep memory logging, action queuing, and OpenAI test endpoint.
+
+import os, json, uuid, logging, datetime, traceback
+from fastapi import APIRouter, Query, Request, Header, HTTPException
+from fastapi.responses import StreamingResponse
+from typing import Optional, AsyncGenerator
+from services.context_engine import ContextEngine
+from services.agent import answer
+from services.memory import summarize_memory_entry, save_memory_entry
 from openai import OpenAIError
 
-# Create the FastAPI router
-router = APIRouter()
+router = APIRouter(prefix="/ask", tags=["ask"])
+QUEUE_PATH = "./logs/queue.jsonl"
 
-# === GET-based /ask endpoint ===
-# Usage: /ask?question=your+query
-@router.get("/ask")
-async def ask_get(question: str = Query(..., description="User query")):
+# === Patch Queue Helper ===
+def queue_action(action: dict, context: str, user: str) -> str:
+    id = str(uuid.uuid4())
+    timestamp = datetime.datetime.utcnow().isoformat() + "Z"
+    entry = {
+        "id": id,
+        "timestamp": timestamp,
+        "status": "pending",
+        "action": { **action, "context": context },
+        "history": [ { "timestamp": timestamp, "status": "queued", "user": user } ]
+    }
+    with open(QUEUE_PATH, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+    return id
+
+def log_interaction(user_id, question, context, response):
+    ts = datetime.datetime.utcnow().isoformat()
+    preview = str(response)[:80].replace("\n", " ")
+    logging.info(f"{ts}\t{user_id}\tQ: {question}\tCTX: {len(context)} chars\tA: {preview}")
+
+# === Utility: Extract context diagnostics (files, global context, etc.) ===
+def extract_context_meta(context: str):
+    # Look for file references in context (simple heuristic—adapt for your style!)
+    context_files = []
+    used_global_context = False
+    for line in context.splitlines():
+        if line.startswith("# Doc:") or line.startswith("# File:"):
+            context_files.append(line.split(":", 1)[1].strip())
+        if "global_context.md" in line or "Global Project Context" in line:
+            used_global_context = True
+    return context_files, used_global_context
+
+# === GET /ask ===
+@router.get("")
+async def ask_get(
+    request: Request,
+    question: str = Query(...),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    debug: Optional[bool] = Query(False)
+):
+    user_id = x_user_id or "anonymous"
     try:
-        print(f"[ask.py] Received GET question: {question}")
-        response = await answer(question)
-        return {"response": response}
-    except Exception as e:
-        # Print traceback to Railway logs for debugging
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
+        ce = ContextEngine(user_id=user_id)
+        context = ce.build_context(question)
+        context_files, used_global_context = extract_context_meta(context)
+        result = await answer(user_id, question, context=context)
+        if isinstance(result, str):
+            response = result
+            action = None
+        else:
+            response = result.get("response", "")
+            action = result.get("action")
+        id = queue_action(action, context, user_id) if action else None
 
-# === POST-based /ask endpoint ===
-# Usage: POST /ask with JSON payload: { "question": "your query" }
-@router.post("/ask")
-async def ask_post(payload: dict):
+        # Deep memory log entry
+        entry = summarize_memory_entry(
+            prompt=question,
+            response=response,
+            context=context,
+            actions=[action] if action else [],
+            user_id=user_id,
+            context_files=context_files,
+            used_global_context=used_global_context,
+            fallback=False,  # TODO: set to True if using fallback/generic logic
+            prompt_length=len(question + context),
+            response_length=len(response)
+        )
+        save_memory_entry(user_id, entry)
+        log_interaction(user_id, question, context, response)
+
+        out = { "response": response, "id": id }
+        if action: out["action"] = action
+        if debug: out["context"] = context
+        return out
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === POST /ask ===
+@router.post("")
+async def ask_post(
+    request: Request,
+    payload: dict,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    debug: Optional[bool] = Query(False)
+):
+    user_id = x_user_id or "anonymous"
+    question = payload.get("question", "")
+    if not question:
+        raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
     try:
-        question = payload.get("question", "")
-        print(f"[ask.py] Received POST question: {question}")
-        response = await answer(question)
-        return {"response": response}
-    except Exception as e:
-        # Full traceback for better error visibility
-        import traceback
-        traceback.print_exc()
-        return {"error": str(e)}
+        ce = ContextEngine(user_id=user_id)
+        context = ce.build_context(question)
+        context_files, used_global_context = extract_context_meta(context)
+        result = await answer(user_id, question, context=context)
+        if isinstance(result, str):
+            response = result
+            action = None
+        else:
+            response = result.get("response", "")
+            action = result.get("action")
+        id = queue_action(action, context, user_id) if action else None
 
-# === /test_openai route ===
-# Purpose: Isolate and verify that OpenAI API is working from Railway
+        # Deep memory log entry
+        entry = summarize_memory_entry(
+            prompt=question,
+            response=response,
+            context=context,
+            actions=[action] if action else [],
+            user_id=user_id,
+            topics=payload.get("topics"),
+            files=payload.get("files"),
+            context_files=context_files,
+            used_global_context=used_global_context,
+            fallback=False,  # TODO: set True if fallback detected
+            prompt_length=len(question + context),
+            response_length=len(response)
+        )
+        save_memory_entry(user_id, entry)
+        log_interaction(user_id, question, context, response)
+
+        out = { "response": response, "id": id }
+        if action: out["action"] = action
+        if debug: out["context"] = context
+        return out
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === POST /ask/stream ===
+@router.post("/stream")
+async def ask_stream(
+    request: Request,
+    payload: dict,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
+    user_id = x_user_id or "anonymous"
+    question = payload.get("question", "")
+    if not question:
+        raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
+    try:
+        ce = ContextEngine(user_id=user_id)
+        context = ce.build_context(question)
+        context_files, used_global_context = extract_context_meta(context)
+        full_response = []
+        captured_action = None
+
+        async def streamer() -> AsyncGenerator[str, None]:
+            nonlocal captured_action
+            async for chunk in answer(user_id, question, context=context, stream=True):
+                full_response.append(chunk)
+                yield chunk
+
+            # Try to parse as final JSON payload
+            try:
+                joined = "".join(full_response)
+                maybe_json = json.loads(joined)
+                if isinstance(maybe_json, str):
+                    full_response[:] = [maybe_json]
+                elif isinstance(maybe_json, dict):
+                    full_response[:] = [maybe_json.get("response", "")]
+                    captured_action = maybe_json.get("action")
+            except Exception:
+                pass
+
+        response = StreamingResponse(streamer(), media_type="text/plain")
+
+        async def finalize_log():
+            await response.body_iterator.aclose()
+            response_text = "".join(full_response)
+            entry = summarize_memory_entry(
+                prompt=question,
+                response=response_text,
+                context=context,
+                actions=[captured_action] if captured_action else [],
+                user_id=user_id,
+                context_files=context_files,
+                used_global_context=used_global_context,
+                fallback=False,  # TODO: flag as True if you detect fallback/generic response
+                prompt_length=len(question + context),
+                response_length=len(response_text)
+            )
+            save_memory_entry(user_id, entry)
+            log_interaction(user_id, question, context, response_text)
+            if captured_action:
+                queue_action(captured_action, context, user_id)
+
+        response.background = finalize_log()
+        return response
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+# === GET /ask/test_openai ===
 @router.get("/test_openai")
 async def test_openai():
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     try:
-        print("[test_openai] Sending test request to OpenAI...")
         response = await client.chat.completions.create(
             model="gpt-4o",
             messages=[
@@ -48,16 +221,9 @@ async def test_openai():
                 {"role": "user", "content": "Ping test"}
             ]
         )
-        return {"response": response.choices[0].message.content}
+        return { "response": response.choices[0].message.content }
     except OpenAIError as e:
-        print("❌ OpenAIError:", e)
-        return {"error": str(e)}
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception as e:
-        import traceback
         traceback.print_exc()
-        return {"error": f"Unexpected error: {str(e)}"}
-
-# === OPTIONS wildcard route to handle CORS preflight ===
-@router.options("/{path:path}")
-async def options_handler(path: str):
-    return JSONResponse(status_code=200)
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

@@ -1,96 +1,155 @@
-// File: components/SearchPanel.tsx
+// File: SearchPanel.tsx
 // Directory: frontend/src/components
-// Purpose: UI panel for semantic knowledge base search against the backend API
+// Purpose: Robust, debounced UI panel for semantic KB search (GET /kb/search).
+// Notes:
+//   • Uses `query` param (canonical) to avoid 422 mismatch.
+//   • Debounces keystrokes (400 ms) & cancels stale fetches via AbortController.
+//   • Pulls API root/key from @/lib/api; shows config error prominently.
+//   • Accessible: form with <label>, aria‑busy, keyboard submit.
+//   • Staging/prod ready: handles 401/403 specifically.
+// Last Updated: 2025‑06‑13
 
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
+import { useEffect, useRef, useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { API_ROOT, API_KEY } from "@/lib/api";
 
-// Base API URL from environment
-const apiUrl = process.env.NEXT_PUBLIC_API_URL || ""
-if (process.env.NODE_ENV === 'development' && !apiUrl) {
-  console.error("NEXT_PUBLIC_API_URL is not defined")
-}
-
-// Type definition for KB search result
 export type KBResult = {
-  path: string
-  title: string
-  snippet: string
-  updated: string
-  similarity: number
-}
+  path: string;
+  title: string;
+  snippet: string;
+  updated: string;
+  similarity: number;
+};
+
+const DEBOUNCE_MS = 400;
+const TOP_K = 5;
 
 export default function SearchPanel() {
-  // Component state
-  const [query, setQuery] = useState<string>("")
-  const [results, setResults] = useState<KBResult[]>([])
-  const [loading, setLoading] = useState<boolean>(false)
-  const [error, setError] = useState<string | null>(null)
+  const [query, setQuery] = useState<string>("");
+  const [results, setResults] = useState<KBResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  /**
-   * Trigger a semantic search against the KB endpoint.
-   */
-  const search = async () => {
-    const q = query.trim()
-    if (!q) return
-    if (!apiUrl) {
-      setError("API URL not configured.")
-      return
+  const controllerRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearDebounce = () => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
     }
-    setError(null)
-    setLoading(true)
+  };
+
+  // Core fetch logic
+  const fetchResults = async (q: string) => {
+    if (!API_ROOT) {
+      setError("API URL not configured");
+      return;
+    }
+    if (!API_KEY) {
+      setError("API key missing");
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
+
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+
     try {
-      const res = await fetch(`${apiUrl}/kb/search`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: q, k: 5 }),
-      })
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const data = await res.json()
-      setResults(data.results || [])
+      const url = new URL("/kb/search", API_ROOT);
+      url.searchParams.set("query", q);
+      url.searchParams.set("k", String(TOP_K));
+
+      const res = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          "x-api-key": API_KEY,
+          Accept: "application/json",
+        },
+        signal: controller.signal,
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        throw new Error("Unauthorized – check API key / login");
+      }
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const data: KBResult[] = await res.json();
+      setResults(data);
     } catch (err) {
-      console.error("Search error:", err)
-      setError("Search failed. Check console for details.")
+      if (err instanceof DOMException && err.name === "AbortError") {
+        return; // request was cancelled
+      }
+      console.error("KB search error", err);
+      setError((err as Error).message ?? "Search failed");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
+
+  // Debounce typing
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([]);
+      setError(null);
+      return;
+    }
+
+    clearDebounce();
+    debounceRef.current = setTimeout(() => fetchResults(query.trim()), DEBOUNCE_MS);
+
+    return () => {
+      clearDebounce();
+    };
+  }, [query]);
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    clearDebounce();
+    fetchResults(query.trim());
+  };
 
   return (
-    <div className="space-y-4">
-      {/* Search input and button */}
-      <div className="flex gap-2">
+    <div className="space-y-4" aria-busy={loading}>
+      <form onSubmit={onSubmit} className="flex gap-2">
+        <label htmlFor="kb-query" className="sr-only">
+          Search knowledge base
+        </label>
         <Input
-          placeholder="Ask a question..."
+          id="kb-query"
+          placeholder="Ask a question…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && search()}
         />
-        <Button onClick={search} disabled={loading}>
-          {loading ? "⏳ Searching..." : "Search"}
+        <Button type="submit" disabled={loading}>
+          {loading ? "⏳" : "Search"}
         </Button>
-      </div>
+      </form>
 
-      {/* Error message */}
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error ? <p className="text-sm text-red-500">{error}</p> : null}
 
-      {/* Render results */}
       {results.length > 0 && (
         <div className="space-y-2">
-          {results.map((r, idx) => (
-            <div key={idx} className="border rounded p-4 text-sm space-y-1">
-              <div className="text-muted-foreground">
+          {results.map((r, i) => (
+            <article key={i} className="border rounded p-4 text-sm space-y-1">
+              <header className="text-muted-foreground">
                 <strong>{r.title}</strong> ({r.similarity.toFixed(2)})
-              </div>
-              <div className="whitespace-pre-wrap">{r.snippet}</div>
-              <div className="text-xs text-muted-foreground">Updated: {r.updated}</div>
-            </div>
+              </header>
+              <pre className="whitespace-pre-wrap">{r.snippet}</pre>
+              <footer className="text-xs text-muted-foreground">
+                Updated: {r.updated || "—"}
+              </footer>
+            </article>
           ))}
         </div>
       )}
     </div>
-  )
+  );
 }

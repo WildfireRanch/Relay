@@ -1,58 +1,66 @@
 // File: components/StatusPanel.tsx
 // Directory: frontend/src/components
-// Purpose: Display Relay service status and embed a UI panel for Google Docs sync and KB refresh
+// Purpose: Display Relay service status and embed a UI panel for Google Docs sync and KB/context awareness
 
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { Card, CardContent } from "@/components/ui/card"
-import DocsSyncPanel from "@/components/DocsSyncPanel"  // Corrected import path
+import { useEffect, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import DocsSyncPanel from "@/components/DocsSyncPanel";
+import { API_ROOT } from "@/lib/api";
 
-// Base API URL from environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || ""
-if (process.env.NODE_ENV === 'development' && !API_URL) {
-  console.error("NEXT_PUBLIC_API_URL is not defined")
+interface StatusSummary {
+  version?: { git_commit?: string };
+  paths?: {
+    base_path?: string;
+    resolved_paths?: Record<string, boolean>;
+  };
 }
 
-// Type definitions for status summary response
-interface StatusSummary {
-  version?: { git_commit?: string }
-  paths?: {
-    base_path?: string
-    resolved_paths?: Record<string, boolean>
-  }
+interface ContextStatus {
+  context_files: string[];
+  global_context_used: string;
+  global_context_manual_last_updated: string;
+  global_context_auto_last_updated: string;
 }
 
 export default function StatusPanel() {
-  const [status, setStatus] = useState<StatusSummary | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState<boolean>(true)
+  const [status, setStatus] = useState<StatusSummary | null>(null);
+  const [context, setContext] = useState<ContextStatus | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     async function fetchStatus() {
-      if (!API_URL) {
-        setError("API URL not configured.")
-        setLoading(false)
-        return
+      if (!API_ROOT) {
+        setError("API URL not configured.");
+        setLoading(false);
+        return;
       }
       try {
-        const res = await fetch(`${API_URL}/status/summary`)
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        const data: StatusSummary = await res.json()
-        setStatus(data)
+        const [statusRes, contextRes] = await Promise.all([
+          fetch(`${API_ROOT}/status/summary`),
+          fetch(`${API_ROOT}/status/context`),
+        ]);
+        if (!statusRes.ok || !contextRes.ok)
+          throw new Error("Failed to fetch one or more endpoints");
+        const statusData: StatusSummary = await statusRes.json();
+        const contextData: ContextStatus = await contextRes.json();
+        setStatus(statusData);
+        setContext(contextData);
       } catch (err) {
-        console.error("Status fetch error:", err)
-        setError("Failed to load status.")
+        console.error("Status fetch error:", err);
+        setError("Failed to load status.");
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    fetchStatus()
-  }, [])
+    fetchStatus();
+  }, []);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading service status…</p>
-  if (error) return <p className="text-sm text-red-500">{error}</p>
-  if (!status) return <p className="text-sm">No status data available.</p>
+  if (loading) return <p className="text-sm text-muted-foreground">Loading service status…</p>;
+  if (error) return <p className="text-sm text-red-500">{error}</p>;
+  if (!status) return <p className="text-sm">No status data available.</p>;
 
   return (
     <>
@@ -76,10 +84,29 @@ export default function StatusPanel() {
         </CardContent>
       </Card>
 
+      {context && (
+        <Card className="mt-6">
+          <CardContent className="p-4 space-y-3">
+            <h2 className="text-xl font-bold">🧠 Context Awareness</h2>
+            <div><strong>Context Strategy:</strong> {context.global_context_used === "manual" ? "📝 Manual" : context.global_context_used === "auto" ? "🤖 Auto-generated" : "None"}</div>
+            <div><strong>Last Manual Update:</strong> {context.global_context_manual_last_updated}</div>
+            <div><strong>Last Auto Update:</strong> {context.global_context_auto_last_updated}</div>
+            <div>
+              <strong>Active Context Files:</strong>
+              <ul className="list-disc ml-6">
+                {context.context_files.map((file) => (
+                  <li key={file} className="text-sm">{file}</li>
+                ))}
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Embed DocsSyncPanel below status */}
       <div className="mt-6">
         <DocsSyncPanel />
       </div>
     </>
-  )
+  );
 }

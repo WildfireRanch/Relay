@@ -1,36 +1,178 @@
-# Relay
+# 🤠 Relay Command Center – Readme
 
-Relay is a FastAPI backend used to sync Google Docs into Markdown files and serve them to the frontend. The project relies on Google OAuth to read documents from a Drive folder.
+> Cloud-native, agent-powered AI control system with semantic doc/code search, human-in-the-loop patching, deep contextual code awareness, and Google Docs sync.
 
-## Google Docs Sync
+---
 
-The sync service requires a Google OAuth client and (optionally) an existing token. Configuration is handled via environment variables:
+## 🚀 Features
 
-- **`GOOGLE_CREDS_JSON`** – base64 encoded contents of your Google client secret JSON.
-- **`GOOGLE_TOKEN_JSON`** – base64 encoded OAuth token JSON from a prior login (optional).
-- **`ENV`** – set to `local` when running interactively so OAuth can open a browser.
+* GPT-4o-powered agent with patch suggestions and human-in-the-loop approval
+* Hybrid semantic search (LlamaIndex + OpenAI embeddings) over code/docs/context
+* Modular Next.js frontend & FastAPI backend
+* Google Docs → Markdown sync (OAuth 2.0, `/docs/imported` or `/context/`)
+* Secure, secretless deployment (Railway, Vercel)
+* CORS-aware, audit-logged API with per-env controls
+* Context-aware prompt injection with topic overlays, code + docs + project context
+* `/status/context` for live context file inventory + freshness
+* `/status/code` for tracked source code, timestamp, and function mapping
+* Deep session memory logs and robust action queue for patch suggestions
 
-### OAuth Flow
+---
 
-1. Start authentication by visiting `/google/auth` in your running instance.
-2. After granting access Google redirects to `/google/callback` which stores `frontend/sync/token.json` for future requests.
+## 👭 System Architecture
 
-### Manual Authorization
+```
+[ Next.js SPA (Vercel) ]
+        ⇅ Auth + API
+[ FastAPI Backend (Railway) ]
+        ⇅ REST API
+[ Semantic Index (LlamaIndex + OpenAI) ]
+        ⇅
+[ Markdown Docs (/docs/imported, /context/, /docs/generated) ]
+        ⇅
+[ Action Queue, Session Memory, Audit Log ]
+```
 
-If the web flow is unavailable, run:
+* **Frontend:** `frontend/`
+* **Backend:** `main.py`, `routes/`, `services/`
+* **Docs/Context:** `/docs/imported/`, `/docs/generated/`, `/context/`
+* **Index:** `data/index/<env>/<model>/`
+* **Session Memory:** `/logs/sessions/<user>.jsonl`
+* **Audit Log:** `/logs/audit.jsonl`
+
+---
+
+## 🔐 Environment Variables (Quick Reference)
+
+For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
+
+| Variable                 | Scope    | Purpose                                           |
+| ------------------------ | -------- | ------------------------------------------------- |
+| `ENV`                    | Backend  | `local`, `develop`, `main` for env-specific logic |
+| `API_KEY`                | Backend  | Master API key for protected endpoints            |
+| `ENABLE_ADMIN_TOOLS`     | Backend  | Enables `/admin/*` endpoints                      |
+| `FRONTEND_ORIGIN`        | Backend  | CORS allowlist override                           |
+| `OPENAI_API_KEY`         | Backend  | For embeddings and agent chat/completions         |
+| `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)      |
+| `GOOGLE_TOKEN_JSON`      | Backend  | Optional OAuth token (Base64-encoded)             |
+| `GOOGLE_CLIENT_ID`       | Both     | Google OAuth client ID                            |
+| `GOOGLE_CLIENT_SECRET`   | Backend  | Google OAuth client secret                        |
+| `OAUTH_REDIRECT_URI`     | Both     | Redirect URI after login                          |
+| `POST_AUTH_REDIRECT_URI` | Backend  | Redirect URI post-auth                            |
+| `INDEX_ROOT`             | Backend  | Filesystem path for semantic index                |
+| `KB_EMBED_MODEL`         | Backend  | Embedding model for KB                            |
+| `RELAY_PROJECT_ROOT`     | Backend  | Root path for doc/code/context scans              |
+| `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to browser                        |
+| `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                    |
+
+---
+
+## 🧠 Context & Memory Intelligence
+
+Relay supports hybrid context/memory awareness across docs, code, and operational files:
+
+* Loads `/docs/generated/global_context.md` or `.auto.md`
+* Pulls `context-*` Google Docs into `/context/*.md` and/or `/docs/imported`
+* Injects code, semantic search results, project summaries, and per-topic docs into agent prompts
+* Rebuilds `global_context.auto.md` daily from `/context/*.md`
+* `/status/context` returns freshness and full file inventory (used in StatusPanel)
+* `/status/code` returns tracked source files, last-modified timestamps, and mapped functions
+* Deep logging of every `/ask` event: tracks context files used, prompt/response size, global context, fallback flag
+
+**To trigger context/doc sync:**
 
 ```bash
-python scripts/authorize_google.py
+curl -X POST $RELAY_URL/context/sync_docs
 ```
 
-The script prints a URL, prompts for the returned code and then writes the token to `frontend/sync/token.json`.
+---
 
-## Example Environment File
+## 🔁 Using Echo (Agent)
 
-Create a `.env` file (or export these variables directly) following the pattern below:
+### Agent Q\&A Example:
 
-```dotenv
-GOOGLE_CREDS_JSON=
-GOOGLE_TOKEN_JSON=
-ENV=local
+```bash
+POST /ask
+{
+  "question": "How is the miner throttled when solar is low?",
+  "files": ["services/miner_control.py"],
+  "topics": ["mining", "solarshack"]
+}
 ```
+
+Echo will auto-inject:
+
+* Project summary
+* Semantic recall (via KB)
+* Domain/project context (e.g. from `/context/context-solarshack.md`)
+* Function names from specified files
+* Global project context if present
+
+---
+
+## 🔎 Key Endpoints
+
+| Path                           | Description                                    | Auth Required |
+| ------------------------------ | ---------------------------------------------- | ------------- |
+| `/ask`                         | GPT Q\&A with code+context                     | ✅             |
+| `/kb/search`                   | Semantic search over code/docs/context         | ✅             |
+| `/docs/sync`                   | Google Docs → Markdown/context sync            | ✅             |
+| `/admin/reindex`               | Manual rebuild of semantic index               | ✅             |
+| `/admin/generate_auto_context` | Regenerate auto global context from `/context` | ✅             |
+| `/context/sync_docs`           | Pull all `context-*` docs from Google          | ✅             |
+| `/control/queue_action`        | Queue agent patch/action                       | ✅             |
+| `/control/approve_action`      | Approve queued action                          | ✅             |
+| `/status/context`              | Current context state (public)                 | ❌             |
+| `/status/code`                 | Source file/freshness status (public)          | ❌             |
+| `/logs/sessions/all`           | All user memory logs (for MemoryPanel)         | ✅             |
+
+---
+
+## 🖥️ Web Dashboards
+
+* **Control dashboard:** `/control` – view pending actions, execution logs, and the Memory Log panel.
+* **Memory log viewer:** part of `/control` or fetch JSON via `/logs/sessions/all`.
+* **Status page:** `/status` – shows context health and code inventory.
+
+---
+
+## 📚 Documentation Outputs
+
+| File                                     | Purpose                                     |
+| ---------------------------------------- | ------------------------------------------- |
+| `/docs/generated/global_context.md`      | Manually curated global context             |
+| `/docs/generated/global_context.auto.md` | Auto-generated from `/context/*.md`         |
+| `/docs/generated/relay_code_map.md`      | Live file/function snapshot from source     |
+| `/logs/sessions/<user>.jsonl`            | Session memory log per user                 |
+| `/logs/audit.jsonl`                      | All patch/approval actions, fully auditable |
+
+---
+
+## 🧰 Local Dev
+
+**Backend**
+
+```bash
+uvicorn main:app --reload
+```
+
+**Frontend**
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## 📝 How to extend
+
+* **Add new context roots:** Update ContextEngine to scan new folders or cloud sources
+* **Add new memory fields:** Edit `services/memory.py` and MemoryPanel.tsx as needed
+* **Improve semantic search:** Tweak LlamaIndex indexing/split/embedding models
+* **Automate sync:** Cron, webhook, or push-to-sync for Google Docs/Notion, etc.
+
+---
+
+*Last updated: 2025-06-23*

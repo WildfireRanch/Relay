@@ -1,114 +1,150 @@
+# ────────────────────────────────────────────────────────────────────────────
 # File: main.py
 # Directory: project root
-# Purpose: Relay backend FastAPI application
-#  - Loads environment variables
-#  - Validates critical configs
-#  - Applies CORS for dev and production origins
-#  - Mounts modular route groups (ask, status, control, docs, oauth, debug)
-#  - Provides health and preflight endpoints
-#  - Ensures required directories exist for docs import/generation
-#  - Supports both local (uvicorn) and Railway deployment
+# Purpose : FastAPI entrypoint for Relay backend
+#           • TEMP: CORS wide open for debug
+#           • KB auto-heal on cold start
+#           • Single-key security (API_KEY)
+# Last Updated: 2025-06-23 (Echo – CORS debug + /test-cors)
+# ────────────────────────────────────────────────────────────────────────────
 
-from dotenv import load_dotenv
+from __future__ import annotations
+
+import logging
 import os
 from pathlib import Path
-import logging
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import JSONResponse
 
-# === Load environment configuration ===
-load_dotenv()  # load .env into os.environ
+# ─── .env for local dev ─────────────────────────────────────────────────────
+if os.getenv("ENV", "local") == "local":
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        logging.info("Loaded .env for local development")
+    except ImportError:
+        logging.warning("python-dotenv not installed; skipping .env load")
 
-# === Validate essential environment variables ===
-required_env = ["API_KEY", "OPENAI_API_KEY", "GOOGLE_CREDS_JSON"]
-missing = [key for key in required_env if not os.getenv(key)]
-if missing:
-    logging.error(f"Missing required env vars: {missing}")
-    # In production, you might want to raise or exit
-    # raise RuntimeError(f"Missing required env vars: {missing}")
-else:
-    logging.info("✅ All required environment variables are present.")
+ENV_NAME = os.getenv("ENV", "local")
 
-# === Ensure docs directories exist ===
+# ─── Basic env validation ──────────────────────────────────────────────────
+for key in ("API_KEY", "OPENAI_API_KEY"):
+    if not os.getenv(key):
+        logging.error("Missing env var: %s", key)
+
+# ─── Ensure docs dirs exist ────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
-for sub in ["docs/imported", "docs/generated"]:
-    path = PROJECT_ROOT / sub
-    path.mkdir(parents=True, exist_ok=True)
-    logging.debug(f"Ensured directory: {path}")
+for sub in ("docs/imported", "docs/generated"):
+    (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# === Initialize FastAPI app ===
+# ─── FastAPI app ───────────────────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
-    description="Backend for Relay agent: routes for ask, status, control, docs, oauth, and debug"
+    description="Backend for Relay agent: ask, status, control, docs, KB, admin",
 )
 
-# === Configure CORS ===
-# In production, configure origins via environment or hardcoded list below
-frontend_origins = [
-    os.getenv("PROD_ORIGIN", "https://relay.wildfireranch.us"),
-    "https://status.wildfireranch.us",   # enable Status UI domain
-    "http://localhost:3000"             # local dev origin
-]
+# ─── CORS (env-controlled) ─────────────────────────────────────────────────
+cors_origins = ["*"]
+allow_creds = False  # '*' requires credentials disabled
+override_origin = os.getenv("FRONTEND_ORIGIN")
+if override_origin:
+    cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
+    allow_creds = True
+    logging.info("CORS restricted to: %s", cors_origins)
+else:
+    logging.warning(
+        "🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False"
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=frontend_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=cors_origins,
+    allow_credentials=allow_creds,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
-logging.info(f"CORS configured for origins: {frontend_origins}")
 
-# === Mount route modules ===
+# ─── Router imports ────────────────────────────────────────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
 from routes.docs import router as docs_router
 from routes.oauth import router as oauth_router
 from routes.debug import router as debug_router
+from routes.kb import router as kb_router
+from routes.search import router as search_router
+from routes import admin as admin_router
 
+# ─── Register routers ──────────────────────────────────────────────────────
 app.include_router(ask_router)
 app.include_router(status_router)
 app.include_router(control_router)
 app.include_router(docs_router)
 app.include_router(oauth_router)
 app.include_router(debug_router)
-logging.info("✅ Registered all route modules.")
+app.include_router(kb_router)
+app.include_router(search_router)
 
-# === Global preflight handler ===
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str):
-    """Return 200 for all OPTIONS requests."""
-    return Response(status_code=200)
+# Admin tools are optional, gated by ENABLE_ADMIN_TOOLS
+if os.getenv("ENABLE_ADMIN_TOOLS", "false").lower() in ("1", "true", "yes"):
+    app.include_router(admin_router.router)
+else:
+    logging.info("Admin endpoints disabled (set ENABLE_ADMIN_TOOLS=1 to enable)")
 
-# === Health check endpoint ===
-@app.get("/", summary="Health check")
+# ─── KB auto-heal on startup ───────────────────────────────────────────────
+from services import kb  # late import avoids circular deps
+
+@app.on_event("startup")
+def ensure_kb_index():
+    """
+    Rebuild KB index if:
+      · directory missing   (first boot on fresh volume)
+      · vector dim mismatch (model changed between deploys)
+    """
+    if not kb.index_is_valid():
+        logging.warning("KB index invalid or missing → rebuilding…")
+        logging.info(kb.api_reindex())
+    else:
+        logging.info("KB index valid – no rebuild needed")
+
+# ─── Root & health endpoints ───────────────────────────────────────────────
+@app.get("/")
 def root():
-    """Basic sanity check for load balancers and uptime monitoring."""
     return JSONResponse({"message": "Relay Agent is Online"})
 
-# === Production-ready validation endpoint ===
-@app.get("/health", summary="Readiness and liveness probe")
+@app.get("/health")
 def health_check():
-    """Check service readiness: verifies docs dirs and key env vars."""
     ok = True
-    details = {}
-    # Env var check
-    for key in required_env:
+    details: dict[str, bool] = {}
+    for key in ("API_KEY", "OPENAI_API_KEY"):
         present = bool(os.getenv(key))
         details[key] = present
-        ok = ok and present
-    # Directory check
-    for sub in ["docs/imported", "docs/generated"]:
+        ok &= present
+    for sub in ("docs/imported", "docs/generated"):
         exists = (PROJECT_ROOT / sub).exists()
         details[sub] = exists
-        ok = ok and exists
-    status = 200 if ok else 503
-    return JSONResponse({"status": "ok" if ok else "error", "details": details}, status_code=status)
+        ok &= exists
+    return JSONResponse(
+        {"status": "ok" if ok else "error", "details": details},
+        status_code=200 if ok else 503,
+    )
 
-# === Running locally with uvicorn ===
+# ─── CORS Echo Route (for live validation) ─────────────────────────────────
+@app.options("/test-cors")
+def test_cors():
+    return JSONResponse({"message": "CORS preflight success"})
+
+# ─── Local dev entrypoint ──────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080)),
+        reload=ENV_NAME == "local",
+    )
