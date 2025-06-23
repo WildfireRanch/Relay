@@ -15,7 +15,7 @@ interface Message {
   user: string;
   agent: string;
   context?: string;
-  action?: { type: string; payload: any };
+  action?: { type: string; payload: unknown };
   id?: string;
   status?: "pending" | "approved" | "denied";
 }
@@ -47,7 +47,7 @@ export default function AskAgent() {
         })
       });
       const data = await res.json();
-      setMessages((prev: Message[]) => [
+      setMessages(prev => [
         ...prev,
         {
           user: query,
@@ -63,7 +63,7 @@ export default function AskAgent() {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 100);
     } catch {
-      setMessages((prev: Message[]) => [
+      setMessages(prev => [
         ...prev,
         {
           user: query,
@@ -89,7 +89,7 @@ export default function AskAgent() {
         updated[idx] = { ...updated[idx], status: action === "approve" ? "approved" : "denied" };
         return updated;
       });
-    } catch (err) {
+    } catch {
       alert("Error approving/denying action.");
     }
   }
@@ -118,7 +118,7 @@ export default function AskAgent() {
       <div className="border rounded-md p-4 mb-4 h-[320px] overflow-auto bg-gray-50">
         {messages.length === 0 && (
           <div className="text-gray-400 italic text-center pt-10">
-            Type a question and hit Enter or click "Ask Relay"!
+            Type a question and hit Enter or click &quot;Ask Relay&quot;!
           </div>
         )}
         {messages.map((msg, i) => (
@@ -160,10 +160,7 @@ export default function AskAgent() {
                   variant="outline"
                   className="my-2"
                   onClick={() =>
-                    setShowContext(prev => ({
-                      ...prev,
-                      [i]: !prev[i]
-                    }))
+                    setShowContext(prev => ({ ...prev, [i]: !prev[i] }))
                   }
                 >
                   {showContext[i] ? "Hide Context" : "Show Context"}
@@ -208,7 +205,7 @@ export default function AskAgent() {
       </form>
 
       <div className="text-xs text-gray-400 mt-2">
-        Tip: Use optional file/topic fields for scoped context. Click "Show Context" to reveal what code/docs the agent used.
+        Tip: Use optional file/topic fields for scoped context. Click &quot;Show Context&quot; to reveal what code/docs the agent used.
       </div>
     </div>
   );
