@@ -128,6 +128,14 @@ Echo will auto-inject:
 
 ---
 
+## 🖥️ Web Dashboards
+
+* **Control dashboard:** `/control` – view pending actions, execution logs, and the Memory Log panel.
+* **Memory log viewer:** part of `/control` or fetch JSON via `/logs/sessions/all`.
+* **Status page:** `/status` – shows context health and code inventory.
+
+---
+
 ## 📚 Documentation Outputs
 
 | File                                     | Purpose                                     |
