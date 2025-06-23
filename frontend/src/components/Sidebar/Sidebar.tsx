@@ -5,23 +5,32 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const coreLinks = [
-  { href: "/", label: "Home", icon: "🏠" },
-  { href: "/dashboard", label: "Dashboard", icon: "🧭" },
-  { href: "/ask", label: "Ask Echo", icon: "💬" },
-  { href: "/docs", label: "Docs", icon: "📚" },
-  { href: "/status", label: "Status", icon: "📊" },
-];
-
-const opsLinks = [
-  { href: "/action-queue", label: "Action Queue", icon: "📋" },
-  { href: "/audit", label: "Audit Log", icon: "🛡️" },
-  { href: "/control", label: "Control Center", icon: "🧠" },
-];
-
-const adminLinks = [
-  { href: "/gmail-ops", label: "Email Ops", icon: "✉️" },
-  { href: "/settings", label: "Settings", icon: "⚙️" },
+const sections = [
+  {
+    title: "Core",
+    links: [
+      { href: "/", label: "Home", icon: "🏠" },
+      { href: "/dashboard", label: "Dashboard", icon: "🧭" },
+      { href: "/ask", label: "Ask Echo", icon: "💬" },
+      { href: "/docs", label: "Docs", icon: "📚" },
+      { href: "/status", label: "Status", icon: "📊" },
+    ],
+  },
+  {
+    title: "Ops",
+    links: [
+      { href: "/action-queue", label: "Action Queue", icon: "📋" },
+      { href: "/audit", label: "Audit Log", icon: "🛡️" },
+      { href: "/control", label: "Control Center", icon: "🧠" },
+    ],
+  },
+  {
+    title: "Admin",
+    links: [
+      { href: "/gmail-ops", label: "Email Ops", icon: "✉️" },
+      { href: "/settings", label: "Settings", icon: "⚙️" },
+    ],
+  },
 ];
 
 export default function Sidebar() {
@@ -45,24 +54,17 @@ export default function Sidebar() {
     <aside className="bg-white border-r w-56 min-h-screen p-4 flex flex-col gap-2">
       <div className="text-2xl font-bold mb-6">Relay Ops</div>
 
-      <div className="text-xs text-gray-500 uppercase mb-2 mt-1">Core</div>
-      <nav className="flex flex-col gap-1 mb-3">
-        {renderLinks(coreLinks)}
-      </nav>
-
-      <hr className="my-2" />
-
-      <div className="text-xs text-gray-500 uppercase mb-2 mt-1">Ops</div>
-      <nav className="flex flex-col gap-1 mb-3">
-        {renderLinks(opsLinks)}
-      </nav>
-
-      <hr className="my-2" />
-
-      <div className="text-xs text-gray-500 uppercase mb-2 mt-1">Admin</div>
-      <nav className="flex flex-col gap-1">
-        {renderLinks(adminLinks)}
-      </nav>
+      {sections.map((section, i) => (
+        <div key={section.title}>
+          <div className="text-xs text-gray-500 uppercase mb-2 mt-1">
+            {section.title}
+          </div>
+          <nav className="flex flex-col gap-1 mb-3">
+            {renderLinks(section.links)}
+          </nav>
+          {i < sections.length - 1 && <hr className="my-2" />}
+        </div>
+      ))}
     </aside>
   );
 }
