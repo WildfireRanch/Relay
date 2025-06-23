@@ -17,6 +17,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from services.google_docs_sync import sync_google_docs
+from services import kb
 
 # ─── Router Setup ──────────────────────────────────────────────────────────
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -86,5 +87,25 @@ async def sync_docs():
     try:
         saved_files = sync_google_docs()
         return {"synced_docs": saved_files}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/refresh_kb", dependencies=[Depends(require_api_key)])
+async def refresh_kb():
+    """Rebuild the semantic KB index."""
+    try:
+        return kb.api_reindex()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/full_sync", dependencies=[Depends(require_api_key)])
+async def full_sync():
+    """Run Google Docs sync then rebuild the KB index."""
+    try:
+        files = sync_google_docs()
+        index_info = kb.api_reindex()
+        return {"synced_docs": files, "kb": index_info}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
