@@ -6,17 +6,19 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 
+type ActionStatus = "pending" | "approved" | "denied";
+
 type HistoryEntry = {
   timestamp: string;
-  status: string; // "pending", "approved", "denied"
-  user?: string;  // Operator who took action
+  status: ActionStatus;
+  user?: string;
   comment?: string;
 };
 
 type Action = {
   id: string;
   timestamp: string;
-  status: string;
+  status: ActionStatus;
   action: {
     type: string;
     path?: string;
@@ -32,50 +34,58 @@ export default function ActionQueuePanel() {
   const [actions, setActions] = useState<Action[]>([]);
   const [processing, setProcessing] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
   const [showContext, setShowContext] = useState<{ [id: string]: boolean }>({});
   const [showHistory, setShowHistory] = useState<{ [id: string]: boolean }>({});
-  // REMOVED: const [showDiff, setShowDiff] = useState<{ [id: string]: boolean }>({});
   const [comment, setComment] = useState<{ [id: string]: string }>({});
   const [compareContextId, setCompareContextId] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  // Fetch all queued actions from the backend
+  const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
+  const USER_ID = "bret";
+
   async function fetchQueue() {
+    setLoading(true);
     setError(null);
     try {
       const res = await fetch("/control/list_queue", {
         headers: {
-          "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
+          "X-API-Key": API_KEY,
+          "X-User-Id": USER_ID
         }
       });
+      if (!res.ok) throw new Error("Bad response");
       const data = await res.json();
       setActions(data.actions || []);
-    } catch {
+    } catch (err) {
+      console.error("Queue fetch failed", err);
       setError("Failed to fetch action queue.");
     }
+    setLoading(false);
   }
 
-  // Approve or deny action by ID, with optional operator comment
   async function updateStatus(id: string, action: "approve" | "deny") {
     setProcessing(id + action);
     try {
-      await fetch(`/control/${action}_action`, {
+      const res = await fetch(`/control/${action}_action`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-API-Key": process.env.NEXT_PUBLIC_RELAY_KEY || ""
+          "X-API-Key": API_KEY,
+          "X-User-Id": USER_ID
         },
         body: JSON.stringify({ id, comment: comment[id] || "" })
       });
+      if (!res.ok) throw new Error(`${action} failed`);
       await fetchQueue();
       setComment((prev) => ({ ...prev, [id]: "" }));
-    } catch {
+    } catch (err) {
+      console.error(`Action ${action} failed`, err);
       setError(`Failed to ${action} action.`);
     }
     setProcessing(null);
   }
 
-  // Live/interval refresh for real-time ops (every 15s)
   useEffect(() => {
     fetchQueue();
     if (!autoRefresh) return;
@@ -83,11 +93,10 @@ export default function ActionQueuePanel() {
     return () => clearInterval(interval);
   }, [autoRefresh]);
 
-  // Helper to get action by id
   const getActionById = (id: string) => actions.find(a => a.id === id);
 
-  // === Empty/error state ===
   if (error) return <p className="text-red-500">{error}</p>;
+  if (loading) return <p className="text-muted-foreground">Loading queue...</p>;
   if (!actions.length) return <p className="text-muted-foreground">No actions in queue.</p>;
 
   return (
@@ -98,6 +107,7 @@ export default function ActionQueuePanel() {
         </Button>
         <span className="text-xs text-gray-400">Queue updates every 15s</span>
       </div>
+
       {actions.map((a) => (
         <Card key={a.id}>
           <CardContent className="p-4 space-y-2">
@@ -110,18 +120,18 @@ export default function ActionQueuePanel() {
                 {a.status}
               </Badge>
             </div>
+
             <div className="text-sm">
               <strong>Type:</strong> {a.action.type}
-              {a.action.path && (
-                <span className="ml-2"><strong>Path:</strong> {a.action.path}</span>
-              )}
+              {a.action.path && <span className="ml-2"><strong>Path:</strong> {a.action.path}</span>}
             </div>
+
             {a.action.rationale && (
               <div className="text-xs text-blue-800 mt-1 italic">
                 <strong>Why?</strong> {a.action.rationale}
               </div>
             )}
-            {/* Diff toggle */}
+
             {a.action.diff ? (
               <details>
                 <summary className="cursor-pointer text-xs text-blue-700">View Diff</summary>
@@ -134,28 +144,24 @@ export default function ActionQueuePanel() {
                 {a.action.content?.slice(0, 500) || "No content"}
               </pre>
             )}
-            {/* Show context used to propose the action */}
+
             {a.action.context && (
               <Button
                 size="sm"
                 variant="outline"
                 className="my-2"
-                onClick={() =>
-                  setShowContext(prev => ({
-                    ...prev,
-                    [a.id]: !prev[a.id]
-                  }))
-                }
+                onClick={() => setShowContext(prev => ({ ...prev, [a.id]: !prev[a.id] }))}
               >
                 {showContext[a.id] ? "Hide Agent Context" : "Show Agent Context"}
               </Button>
             )}
+
             {showContext[a.id] && a.action.context && (
               <pre className="bg-gray-100 p-2 rounded text-xs max-h-32 overflow-auto mt-2">
                 {a.action.context}
               </pre>
             )}
-            {/* Context diff: compare context to another action */}
+
             <div className="mt-2">
               <label className="text-xs mr-2">Compare context to:</label>
               <select
@@ -179,20 +185,16 @@ export default function ActionQueuePanel() {
                 </details>
               )}
             </div>
-            {/* Show action history timeline */}
+
             <Button
               size="sm"
               variant="ghost"
               className="my-2"
-              onClick={() =>
-                setShowHistory(prev => ({
-                  ...prev,
-                  [a.id]: !prev[a.id]
-                }))
-              }
+              onClick={() => setShowHistory(prev => ({ ...prev, [a.id]: !prev[a.id] }))}
             >
               {showHistory[a.id] ? "Hide History" : "Show History"}
             </Button>
+
             {showHistory[a.id] && a.history && (
               <ul className="bg-gray-50 p-2 rounded text-xs mt-1 max-h-32 overflow-auto border">
                 {a.history.map((h, i) => (
@@ -204,22 +206,14 @@ export default function ActionQueuePanel() {
                 ))}
               </ul>
             )}
-            {/* Approve/Deny with comment */}
+
             {a.status === "pending" && (
-              <form
-                className="flex flex-col gap-2 mt-2"
-                onSubmit={() => {
-                  updateStatus(a.id, "approve");
-                }}
-              >
+              <form className="flex flex-col gap-2 mt-2">
                 <Textarea
                   placeholder="Optional comment (why approve/deny?)"
                   value={comment[a.id] || ""}
                   onChange={e =>
-                    setComment(prev => ({
-                      ...prev,
-                      [a.id]: e.target.value
-                    }))
+                    setComment(prev => ({ ...prev, [a.id]: e.target.value }))
                   }
                   className="text-xs"
                   rows={2}
@@ -250,7 +244,6 @@ export default function ActionQueuePanel() {
     </div>
   );
 
-  // Simple context diff (can be replaced with proper library)
   function diffContext(ctx1: string, ctx2: string): string {
     const lines1 = new Set(ctx1.split("\n"));
     const lines2 = new Set(ctx2.split("\n"));
