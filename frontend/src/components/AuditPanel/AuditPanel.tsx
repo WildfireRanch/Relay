@@ -52,6 +52,7 @@ export default function AuditPanel() {
       const data = await res.json();
       setLogs(data.log || []);
     } catch (err) {
+      console.error("[AuditPanel] Failed to fetch logs:", err);
       setLogs([]);
     }
   }
@@ -67,6 +68,7 @@ export default function AuditPanel() {
       const action: ActionDetail | undefined = (data.actions as ActionDetail[] | undefined)?.find(a => a.id === id);
       setRelatedAction(action || null);
     } catch (err) {
+      console.error("[AuditPanel] Failed to fetch related action:", err);
       setRelatedAction(null);
     }
   }

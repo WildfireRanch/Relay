@@ -121,9 +121,6 @@ export default function MemoryPanel() {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank");
   }
 
-  function bytesToKB(bytes: number) {
-    return (bytes / 1024).toFixed(1);
-  }
 
   return (
     <div className="space-y-4">
