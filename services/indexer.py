@@ -129,16 +129,17 @@ def index_directories():
                         documents.append(doc)
 
     # --- 5. Chunking (Code vs Text, with language detection for code) ---
-    text_splitter = SentenceSplitter(chunk_size=1024)  # <-- FIXED for most versions!
-    for doc in documents:
-        file_path = doc.metadata.get('file_path', '')
-        # If this is a recognized code file, pick language; otherwise, treat as text
-        if file_path.endswith(('.py', '.js', '.ts', '.tsx', '.java', '.go', '.cpp')):
-            language = get_language_from_path(file_path)
-            code_splitter = CodeSplitter(language=language, max_chars=1024, chunk_lines=30)
-            doc.chunks = code_splitter.split(doc.text)
-        else:
-            doc.chunks = text_splitter.split(doc.text)
+text_splitter = SentenceSplitter(chunk_size=1024)
+for doc in documents:
+    file_path = doc.metadata.get('file_path', '')
+    if file_path.endswith(('.py', '.js', '.ts', '.tsx', '.java', '.go', '.cpp')):
+        language = get_language_from_path(file_path)
+        code_splitter = CodeSplitter(language=language, max_chars=1024, chunk_lines=30)
+        doc.chunks = code_splitter.split(doc.text)
+    else:
+        # For SentenceSplitter, get nodes and store their text as chunks
+        nodes = text_splitter.get_nodes_from_documents([doc])
+        doc.chunks = [node.text for node in nodes]
 
     # --- 6. Index & Persist ---
     print(f"Total documents indexed: {len(documents)}")
