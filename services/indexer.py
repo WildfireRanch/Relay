@@ -129,7 +129,7 @@ def index_directories():
                         documents.append(doc)
 
     # --- 5. Chunking (Code vs Text, with language detection for code) ---
-    text_splitter = SentenceSplitter(max_chunk_size=1024)
+    text_splitter = SentenceSplitter(chunk_size=1024)  # <-- FIXED for most versions!
     for doc in documents:
         file_path = doc.metadata.get('file_path', '')
         # If this is a recognized code file, pick language; otherwise, treat as text
