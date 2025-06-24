@@ -144,9 +144,9 @@ def index_directories():
 
     # --- 6. Index & Persist ---
     print(f"Total nodes to index: {len(all_chunked_nodes)}")
-    index = VectorStoreIndex.from_documents(
-        all_chunked_nodes, embed_model=embed_model, show_progress=True
-    )
+    index = VectorStoreIndex.from_nodes(
+    all_chunked_nodes, embed_model=embed_model, show_progress=True
+)
     index.storage_context.persist(persist_dir="./data/index")
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     print("Indexing complete! Prioritized tiers saved.")
