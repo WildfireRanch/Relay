@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from services.google_docs_sync import sync_google_docs
 from services import kb
+from services.context_engine import ContextEngine
 
 # ─── Router Setup ──────────────────────────────────────────────────────────
 router = APIRouter(prefix="/docs", tags=["docs"])
@@ -93,6 +94,7 @@ async def sync_docs():
         except Exception as reindex_error:
             # Log but don't fail the sync if reindexing hits issues
             print(f"KB reindex failed: {reindex_error}")
+        ContextEngine.clear_cache()
         return {"synced_docs": saved_files}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -102,7 +104,9 @@ async def sync_docs():
 async def refresh_kb():
     """Rebuild the semantic KB index."""
     try:
-        return kb.api_reindex()
+        result = kb.api_reindex()
+        ContextEngine.clear_cache()
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -113,6 +117,7 @@ async def full_sync():
     try:
         files = sync_google_docs()
         index_info = kb.api_reindex()
+        ContextEngine.clear_cache()
         return {"synced_docs": files, "kb": index_info}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

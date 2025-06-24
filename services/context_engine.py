@@ -4,8 +4,11 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
+from functools import lru_cache
 import services.kb as kb
+
+_CACHED_ENV_ROOT = os.getenv("RELAY_PROJECT_ROOT")
 
 class ContextEngine:
     """
@@ -17,9 +20,13 @@ class ContextEngine:
         """
         Initialize with user-specific ID and project root.
         If RELAY_PROJECT_ROOT is set, use it; otherwise use provided base or cwd.
+        Clears caches if the environment project root has changed.
         """
         self.user_id = user_id
         env_root = os.getenv("RELAY_PROJECT_ROOT")
+        if env_root != _CACHED_ENV_ROOT:
+            self.clear_cache()
+            globals()["_CACHED_ENV_ROOT"] = env_root
         self.base = Path(env_root).resolve() if env_root else Path(base or Path.cwd())
 
     def build_context(self, query: str, k: int = 8) -> str:
@@ -63,12 +70,53 @@ class ContextEngine:
         prompt = "\n\n".join(blocks)
         return prompt
 
-    # --- Old methods (not needed anymore, but kept for reference/expansion) ---
-    def read_source_files(self, roots: Optional[List[str]] = None, exts: Optional[List[str]] = None) -> str:
-        return ""  # Now handled by LlamaIndex tiered search
+    @classmethod
+    def clear_cache(cls) -> None:
+        """Clear cached results for docs and source file reads."""
+        cls._cached_read_source_files.cache_clear()
+        cls._cached_read_docs.cache_clear()
 
-    def read_docs(self, root: str = "docs", exts: Optional[List[str]] = None, exclude: Optional[List[str]] = None) -> str:
-        return ""  # Now handled by LlamaIndex tiered search
+    # --- Old methods (still used in tests; now cached) ---------------------
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def _cached_read_source_files(base: str, roots: Tuple[str, ...], exts: Tuple[str, ...]) -> str:
+        base_path = Path(base)
+        search_roots = [base_path / r for r in roots] if roots else [base_path]
+        exts = exts or (".py",)
+        contents: List[str] = []
+        for root in search_roots:
+            for ext in exts:
+                for f in root.rglob(f"*{ext}"):
+                    try:
+                        contents.append(f.read_text())
+                    except Exception:
+                        continue
+        return "\n".join(contents)
+
+    @staticmethod
+    @lru_cache(maxsize=None)
+    def _cached_read_docs(base: str, root: str, exts: Tuple[str, ...], exclude: Tuple[str, ...]) -> str:
+        base_path = Path(base) / root
+        exts = exts or (".md",)
+        exclude_paths = {base_path / e for e in exclude}
+        contents: List[str] = []
+        for ext in exts:
+            for f in base_path.rglob(f"*{ext}"):
+                if any(str(f).startswith(str(p)) for p in exclude_paths):
+                    continue
+                try:
+                    contents.append(f.read_text())
+                except Exception:
+                    continue
+        return "\n".join(contents)
+
+    def read_source_files(self, roots: Optional[List[str]] = None, exts: Optional[List[str]] = None) -> str:
+        return self._cached_read_source_files(str(self.base), tuple(roots or ()), tuple(exts or ()))
+
+    def read_docs(
+        self, root: str = "docs", exts: Optional[List[str]] = None, exclude: Optional[List[str]] = None
+    ) -> str:
+        return self._cached_read_docs(str(self.base), root, tuple(exts or ()), tuple(exclude or ()))
 
     def read_additional_context_roots(self, roots: Optional[List[str]] = None, exts: Optional[List[str]] = None) -> str:
         return ""  # Now handled by LlamaIndex tiered search
