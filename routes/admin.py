@@ -92,8 +92,10 @@ async def clean_index(
     }
 
 # ------------------------------------------------------------------------
-# ENDPOINT: Trigger Index Rebuild (stub, implement as needed)
+# ENDPOINT: Trigger Index Rebuild (now fully implemented)
 # ------------------------------------------------------------------------
+from services.indexer import index_directories  # <-- add this import at the top if missing
+
 @router.post("/trigger_reindex")
 async def trigger_reindex(
     request: Request,
@@ -101,11 +103,17 @@ async def trigger_reindex(
     api_key: str = Depends(require_api_key)
 ):
     """
-    Triggers a rebuild of the LlamaIndex. Stub for actual backend logic.
-    Requires valid X-API-Key header.
+    Triggers a rebuild of the LlamaIndex (semantic KB).
+    Returns status/result.
     """
-    log_admin_event(f"[REINDEX_TRIGGER] by {user or 'unknown'} from {request.client.host}")
-    return {"status": "ok", "message": "Reindex triggered (implement logic here)."}
+    try:
+        index_directories()  # This will run synchronously (blocking until finished)
+        log_admin_event(f"[REINDEX_TRIGGER] SUCCESS by {user or 'unknown'} from {request.client.host}")
+        return {"status": "ok", "message": "Reindex complete."}
+    except Exception as exc:
+        log_admin_event(f"[REINDEX_TRIGGER] ERROR by {user or 'unknown'} from {request.client.host}: {exc}")
+        raise HTTPException(status_code=500, detail=f"Reindex failed: {exc}")
+
 
 # ------------------------------------------------------------------------
 # ENDPOINT: Health Check (disk, CPU, memory, config summary)

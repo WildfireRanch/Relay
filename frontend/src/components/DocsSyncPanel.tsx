@@ -1,7 +1,4 @@
 // File: components/DocsSyncPanel.tsx
-// Directory: frontend/src/components
-// Purpose: UI panel to trigger Google Docs sync and KB refresh, managing API feedback and file lists
-
 "use client";
 
 import { useState } from "react";
@@ -12,6 +9,10 @@ export default function DocsSyncPanel() {
   const [status, setStatus] = useState<string | null>(null);
   const [files, setFiles] = useState<string[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
+
+  // New state for reindex button
+  const [reindexStatus, setReindexStatus] = useState<string | null>(null);
+  const [reindexLoading, setReindexLoading] = useState<boolean>(false);
 
   /**
    * Trigger a sync operation at the given endpoint and handle results.
@@ -47,6 +48,37 @@ export default function DocsSyncPanel() {
     }
   };
 
+  // --- NEW: Trigger a KB reindex (admin only) ---
+  const triggerReindex = async () => {
+    if (!API_ROOT) {
+      setReindexStatus("❌ API URL not configured");
+      return;
+    }
+    setReindexStatus("⏳ Reindexing...");
+    setReindexLoading(true);
+    try {
+      const res = await fetch(`${API_ROOT}/admin/trigger_reindex`, {
+        method: "POST",
+        headers: {
+          // If you use a static admin API key for local, include it here
+          // For production, secure this!
+          "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "",
+        },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setReindexStatus(`✅ ${data.message || "Reindex complete."}`);
+      } else {
+        setReindexStatus(`❌ ${data.detail || "Reindex failed."}`);
+      }
+    } catch (err) {
+      console.error("Reindex error:", err);
+      setReindexStatus("❌ Failed to reindex. See console for details.");
+    } finally {
+      setReindexLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">🧠 Sync & Refresh Docs</h2>
@@ -71,6 +103,27 @@ export default function DocsSyncPanel() {
           ))}
         </ul>
       )}
+
+      {/* Divider */}
+      <hr className="my-4" />
+
+      {/* Reindex Button */}
+      <div>
+        <h3 className="text-base font-medium mb-2">Admin: Reindex KB</h3>
+        <Button
+          onClick={triggerReindex}
+          disabled={reindexLoading}
+          variant="destructive"
+          className="mb-2"
+        >
+          {reindexLoading ? "⏳ Reindexing..." : "🛠️ Reindex Now"}
+        </Button>
+        {reindexStatus && (
+          <div className={`mt-1 text-sm ${reindexStatus.startsWith("✅") ? "text-green-600" : "text-red-500"}`}>
+            {reindexStatus}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
