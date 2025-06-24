@@ -17,8 +17,14 @@ interface StatusSummary {
   };
 }
 
+interface ContextFile {
+  path: string;
+  size_bytes: number;
+  last_modified: string;
+}
+
 interface ContextStatus {
-  context_files: string[];
+  context_files: ContextFile[];
   global_context_used: string;
   global_context_manual_last_updated: string;
   global_context_auto_last_updated: string;
@@ -95,7 +101,14 @@ export default function StatusPanel() {
               <strong>Active Context Files:</strong>
               <ul className="list-disc ml-6">
                 {context.context_files.map((file) => (
-                  <li key={file} className="text-sm">{file}</li>
+                  <li key={file.path} className="text-sm">
+                    {file.path}{" "}
+                    <span className="text-xs text-gray-500">
+                      ({Math.round(file.size_bytes / 1024)} KB,
+                      {" "}
+                      {new Date(file.last_modified).toLocaleString()})
+                    </span>
+                  </li>
                 ))}
               </ul>
             </div>
