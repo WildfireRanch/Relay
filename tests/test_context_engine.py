@@ -6,7 +6,14 @@ import pytest
 
 # Stub services.kb before importing context_engine
 kb_stub = types.ModuleType("services.kb")
-kb_stub.search = lambda query, user_id=None, k=4: [{"path": "doc.md", "snippet": "snippet"}]
+kb_stub.search = lambda query, user_id=None, k=4: [
+    {
+        "path": "doc.md",
+        "snippet": "snippet",
+        "tier": "global",
+        "title": "doc.md",
+    }
+]
 kb_stub.get_recent_summaries = lambda user_id: "summary"
 kb_stub.api_reindex = lambda: {"status": "ok"}
 sys.modules.setdefault("services.kb", kb_stub)
@@ -26,6 +33,6 @@ def ctx(tmp_path, monkeypatch):
     return ce_module.ContextEngine(user_id="u", base=tmp_path)
 
 
-def test_global_context_appended_without_code(ctx):
+def test_context_build_includes_search_snippet(ctx):
     result = ctx.build_context("tell me something")
-    assert "GLOBAL CONTEXT" in result
+    assert "snippet" in result
