@@ -126,28 +126,68 @@ def get_index() -> VectorStoreIndex:
 # ─── Core search used by routes ────────────────────────────────────────────
 def search(
     query: str,
-    k: int = 4,
+    k: int = 8,
     search_type: str = "all",
     score_threshold: Optional[float] = None,
-    user_id: Optional[str] = None,   # accepted, currently unused
+    user_id: Optional[str] = None,
 ) -> List[dict]:
-    qe  = get_index().as_query_engine(similarity_top_k=k)
+    """
+    Tier-priority semantic search: returns top results ordered by tier.
+    - Always tries to surface global/context/project summary results first.
+    - Still returns code/project_docs if more space is available.
+    """
+    # Priority order: highest value to lowest
+    PRIORITY_TIERS = [
+        "global",         # /docs/generated/global_context.md, etc.
+        "context",        # /context/context-*.md
+        "project_summary",# /docs/PROJECT_SUMMARY.md, etc.
+        "project_docs",   # /docs/imported/, /docs/kb/
+        "code",           # /services/, /routes/, etc.
+    ]
+
+    qe = get_index().as_query_engine(similarity_top_k=k*2)
     raw = qe.query(query)
 
-    hits: List[dict] = []
+    # Group results by tier (preserve order for UI/audit)
+    tiered = {tier: [] for tier in PRIORITY_TIERS}
+    unknown = []
     for n in getattr(raw, "source_nodes", []):
         if score_threshold is not None and n.score < score_threshold:
             continue
-        hits.append(
-            {
-                "id": n.node.node_id,
-                "snippet": n.node.text,
-                "similarity": n.score,
-                "path": n.node.metadata.get("file_path"),
-                "title": n.node.metadata.get("title", n.node.metadata.get("file_path") or "Untitled"),
-            }
-        )
-    return hits
+        tier = n.node.metadata.get("tier", "unknown")
+        hit = {
+            "id": n.node.node_id,
+            "snippet": n.node.text,
+            "similarity": n.score,
+            "tier": tier,
+            "path": n.node.metadata.get("file_path"),
+            "title": n.node.metadata.get("title", n.node.metadata.get("file_path") or "Untitled"),
+        }
+        if tier in PRIORITY_TIERS:
+            tiered[tier].append(hit)
+        else:
+            unknown.append(hit)
+
+    # Build prioritized list: up to N per tier (to fill k results, favoring higher tiers)
+    prioritized = []
+    per_tier = max(1, k // len(PRIORITY_TIERS))
+    for tier in PRIORITY_TIERS:
+        prioritized.extend(tiered[tier][:per_tier])
+    # If not enough, fill with more from each tier in order
+    while len(prioritized) < k:
+        for tier in PRIORITY_TIERS:
+            if len(tiered[tier]) > per_tier:
+                prioritized.append(tiered[tier][per_tier])
+                if len(prioritized) >= k:
+                    break
+        else:
+            break  # No more to add
+
+    # Fill with unknowns if still short
+    if len(prioritized) < k:
+        prioritized.extend(unknown[: (k - len(prioritized)) ])
+
+    return prioritized[:k]
 
 def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
     return search(query=query, k=k, search_type=search_type)

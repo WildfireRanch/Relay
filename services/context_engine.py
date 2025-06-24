@@ -1,6 +1,7 @@
 # File: context_engine.py
 # Directory: services/
-# Purpose: Gather per-user runtime context from code, docs, overlays, logs, and semantic knowledge base
+# Purpose: Gather per-user runtime context for agent prompt using tiered, prioritized semantic search
+
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -8,7 +9,7 @@ import services.kb as kb
 
 class ContextEngine:
     """
-    Gather runtime context from code, docs, overlays, logs, and KB.
+    Gather runtime context from code, docs, overlays, and KB using prioritized tiered search.
     Supports per-user memory and context for multi-turn conversations.
     """
 
@@ -21,183 +22,66 @@ class ContextEngine:
         env_root = os.getenv("RELAY_PROJECT_ROOT")
         self.base = Path(env_root).resolve() if env_root else Path(base or Path.cwd())
 
-    @staticmethod
-    def needs_code_context(query: str) -> bool:
+    def build_context(self, query: str, k: int = 8) -> str:
         """
-        Detect if the user's query implies code or documentation context is needed.
+        Build a tiered, labeled agent context window using prioritized semantic search.
+        Returns a prompt like:
+            # [Global Context]
+            ...
+            # [Overlay: context-btc.md]
+            ...
+            # [Project Summary: PROJECT_SUMMARY.md]
+            ...
+            # [Code: services/miner.py]
+            ...
         """
-        keywords = [
-            "code", "review", "audit", "directory", "structure",
-            "files", "access", "source", "refactor"
-        ]
-        return any(kw in query.lower() for kw in keywords)
+        # 1. Priority-aware semantic search (returns ordered, tier-labeled blocks)
+        results = kb.search(query, k=k, user_id=self.user_id)
+        blocks = []
+        for r in results:
+            # Compose a readable label based on tier
+            label = ""
+            if r["tier"] == "global":
+                label = "# [Global Context]"
+            elif r["tier"] == "context":
+                label = f"# [Overlay: {r['title']}]"
+            elif r["tier"] == "project_summary":
+                label = f"# [Project Summary: {r['title']}]"
+            elif r["tier"] == "project_docs":
+                label = f"# [Project Doc: {r['title']}]"
+            elif r["tier"] == "code":
+                label = f"# [Code: {r['title']}]"
+            else:
+                label = f"# [Other: {r['title']}]"
+            snippet = r['snippet'][:2000]  # Tune/truncate as needed for context window
+            blocks.append(f"{label}\n{snippet}")
 
-    def read_source_files(
-        self,
-        roots: Optional[List[str]] = None,
-        exts: Optional[List[str]] = None
-    ) -> str:
-        """
-        Load and concatenate source files under specified roots and extensions.
-        Excludes common build and dependency directories.
-        """
-        if roots is None:
-            roots = ["services"]
-        if exts is None:
-            exts = [".py", ".tsx", ".ts"]
-        excluded = {"node_modules", ".git", ".venv", "__pycache__", ".next"}
-        snippets: List[str] = []
-        for root in roots:
-            path = self.base / root
-            if not path.exists():
-                continue
-            for f in path.rglob("*"):
-                if (
-                    f.suffix in exts and
-                    f.is_file() and
-                    not any(ex in str(f) for ex in excluded)
-                ):
-                    try:
-                        rel = f.relative_to(self.base)
-                        snippet = f"# File: {rel}\n{f.read_text()}"
-                        snippets.append(snippet)
-                    except Exception as e:
-                        print(f"[ContextEngine] Error reading file {f}: {e}")
-                        continue
-        return "\n".join(snippets)
+        # Optionally: add logs/session memory as an extra tier
+        # logs = self.read_logs_summary()[:1000]
+        # blocks.append(f"# [Session Memory]\n{logs}")
 
-    def read_docs(
-        self,
-        root: str = "docs",
-        exts: Optional[List[str]] = None,
-        exclude: Optional[List[str]] = None
-    ) -> str:
-        """
-        Load and concatenate documentation files under the docs directory.
-        Optionally skip files matching any string in ``exclude``.
-        """
-        if exts is None:
-            exts = [".md", ".txt"]
-        path = self.base / root
-        if not path.exists():
-            return ""
-        snippets: List[str] = []
-        for f in path.rglob("*"):
-            if exclude and any(str(f).endswith(x) for x in exclude):
-                continue
-            if f.suffix in exts and f.is_file():
-                try:
-                    rel = f.relative_to(self.base)
-                    snippet = f"# Doc: {rel}\n{f.read_text()}"
-                    snippets.append(snippet)
-                except Exception as e:
-                    print(f"[ContextEngine] Error reading doc {f}: {e}")
-                    continue
-        return "\n".join(snippets)
+        prompt = "\n\n".join(blocks)
+        return prompt
 
-    def read_additional_context_roots(
-        self,
-        roots: Optional[List[str]] = None,
-        exts: Optional[List[str]] = None
-    ) -> str:
-        """
-        Load and concatenate context overlay files from /context/ or other roots.
-        Each overlay is annotated for traceability.
-        """
-        if roots is None:
-            roots = ["context"]  # Add more directories if needed
-        if exts is None:
-            exts = [".md", ".txt"]
-        snippets: List[str] = []
-        for root in roots:
-            path = self.base / root
-            if not path.exists():
-                continue
-            for f in path.rglob("*"):
-                if f.suffix in exts and f.is_file() and not f.name.startswith('.'):
-                    try:
-                        rel = f.relative_to(self.base)
-                        snippet = f"# Context: {rel}\n{f.read_text()}"
-                        snippets.append(snippet)
-                    except Exception as e:
-                        print(f"[ContextEngine] Error reading context file {f}: {e}")
-                        continue
-        return "\n".join(snippets)
+    # --- Old methods (not needed anymore, but kept for reference/expansion) ---
+    def read_source_files(self, roots: Optional[List[str]] = None, exts: Optional[List[str]] = None) -> str:
+        return ""  # Now handled by LlamaIndex tiered search
+
+    def read_docs(self, root: str = "docs", exts: Optional[List[str]] = None, exclude: Optional[List[str]] = None) -> str:
+        return ""  # Now handled by LlamaIndex tiered search
+
+    def read_additional_context_roots(self, roots: Optional[List[str]] = None, exts: Optional[List[str]] = None) -> str:
+        return ""  # Now handled by LlamaIndex tiered search
 
     def read_logs_summary(self) -> str:
         """
-        Load the relay context summary log for this user, if available.
-        Falls back to generic summary if user-specific is missing.
+        (Optional) Load session/memory log if you want to add as extra context.
         """
         summary_path = self.base / f"docs/generated/{self.user_id}_context.md"
         if summary_path.exists():
             try:
                 return summary_path.read_text()
-            except Exception as e:
-                print(f"[ContextEngine] Error reading logs summary: {e}")
+            except Exception:
                 return ""
-        # Fallback to generic summary
         generic = self.base / "docs/generated/relay_context.md"
         return generic.read_text() if generic.exists() else ""
-
-    def build_context(self, query: str) -> str:
-        """
-        Build a combined context string based on the query.
-        Chooses between code/docs/logs versus KB snippets.
-        Appends per-user summaries from KB as well.
-        """
-        logs = self.read_logs_summary()[:1000]
-
-        manual = self.base / "docs/generated/global_context.md"
-        auto = self.base / "docs/generated/global_context.auto.md"
-        global_context = ""
-        try:
-            if manual.exists():
-                global_context = f"# Doc: {manual.relative_to(self.base)}\n{manual.read_text()}"
-            elif auto.exists():
-                global_context = f"# Doc: {auto.relative_to(self.base)}\n{auto.read_text()}"
-        except Exception as e:
-            print(f"[ContextEngine] Error reading global context: {e}")
-
-        # If code context needed, load code, docs, overlays, logs, and KB summary
-        if self.needs_code_context(query):
-            code = self.read_source_files(
-                roots=[
-                    "services",
-                    "frontend/src/app",
-                    "frontend/src/components",
-                    "routes",
-                    "."
-                ],
-                exts=[".py", ".ts", ".tsx", ".json", ".env"],
-            )[:5000]
-
-            docs_body = self.read_docs(
-                "docs",
-                exclude=["global_context.md", "global_context.auto.md"]
-            )[:3000]
-
-            overlays = self.read_additional_context_roots()
-            if overlays:
-                docs_body = f"{docs_body}\n\n# [Overlays]\n{overlays}"
-
-            docs = f"{global_context}\n\n{docs_body}" if global_context else docs_body
-
-            kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
-            context = f"{code}\n\n{docs}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
-        else:
-            # Use KB search for semantic context (per-user if supported)
-            try:
-                hits = kb.search(query, user_id=self.user_id, k=4)
-            except TypeError:
-                hits = kb.search(query, k=4)
-            snippets = []
-            for i, h in enumerate(hits):
-                snippets.append(f"[{i+1}] {h['path']}\n{h['snippet']}")
-            kb_context = "\n\n".join(snippets) or "No internal docs matched."
-            kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
-            if global_context:
-                context = f"{kb_context}\n\n{global_context}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
-            else:
-                context = f"{kb_context}\n\nLogs:\n{logs}\n\nKB Summary:\n{kb_summary}"
-        return context
