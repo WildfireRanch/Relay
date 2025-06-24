@@ -53,14 +53,15 @@ async def ask_get(
     request: Request,
     question: str = Query(...),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    debug: Optional[bool] = Query(False)
+    debug: Optional[bool] = Query(False),
+    reflect: Optional[bool] = Query(False)
 ):
     user_id = x_user_id or "anonymous"
     try:
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
         context_files, used_global_context = extract_context_meta(context)
-        result = await answer(user_id, question, context=context)
+        result = await answer(user_id, question, context=context, reflect=reflect)
         if isinstance(result, str):
             response = result
             action = None
@@ -99,7 +100,8 @@ async def ask_post(
     request: Request,
     payload: dict,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    debug: Optional[bool] = Query(False)
+    debug: Optional[bool] = Query(False),
+    reflect: Optional[bool] = Query(False)
 ):
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
@@ -109,7 +111,7 @@ async def ask_post(
         ce = ContextEngine(user_id=user_id)
         context = ce.build_context(question)
         context_files, used_global_context = extract_context_meta(context)
-        result = await answer(user_id, question, context=context)
+        result = await answer(user_id, question, context=context, reflect=reflect)
         if isinstance(result, str):
             response = result
             action = None
@@ -149,7 +151,8 @@ async def ask_post(
 async def ask_stream(
     request: Request,
     payload: dict,
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    reflect: Optional[bool] = Query(False)
 ):
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
@@ -164,7 +167,7 @@ async def ask_stream(
 
         async def streamer() -> AsyncGenerator[str, None]:
             nonlocal captured_action
-            async for chunk in answer(user_id, question, context=context, stream=True):
+            async for chunk in answer(user_id, question, context=context, stream=True, reflect=reflect):
                 full_response.append(chunk)
                 yield chunk
 
