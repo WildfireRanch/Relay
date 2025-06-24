@@ -1,71 +1,66 @@
-# === Core Web Application ===
-fastapi==0.110.2
-uvicorn[standard]==0.30.1
+ # === Core Web Application ===
+fastapi>=0.95
+uvicorn[standard]>=0.22
 
 # === Google Docs Sync ===
-google-api-python-client==2.121.0
-google-auth==2.29.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.0
-httplib2==0.22.0
-markdownify==1.1.0
+google-api-python-client>=2.70
+google-auth>=2.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+httplib2>=0.22
+markdownify>=1.1.0
 
 # === Environment & Configuration ===
-python-dotenv==1.0.1
+python-dotenv>=1.0.0
 
 # === HTTP Clients ===
-aiohttp==3.9.5
-httpx==0.28.0
-requests==2.31.0
-requests-oauthlib==2.0.0
+aiohttp>=3.8
+aiohappyeyeballs>=2.6
+httpx>=0.28
+requests>=2.31
+requests-oauthlib>=2.0.0
 
 # === AI & LLM Integration ===
-langchain==0.2.3
-langchain-community==0.2.3
-langchain-core==0.2.3
-langchain-openai==0.1.6
-openai==1.30.5
-transformers==4.41.2
+langchain>=0.2
+langchain-community>=0.2
+langchain-core>=0.2
+langchain-openai>=0.1
+openai>=1.0
+transformers>=4.30
 
 # === Semantic Search & Embeddings ===
-llama-index-core==0.10.37
-llama-index-llms-openai==0.10.37
-llama-index-embeddings-openai==0.10.37
-llama-index-readers-file==0.10.37
+llama-index-core
+llama-index-llms-openai
+llama-index-embeddings-openai
+llama-index-readers-file
 tiktoken==0.7.0
 
 # === Markdown & Text Processing ===
-markdown==3.4.1
-python-frontmatter==1.1.0
+markdown>=3.4.1
+python-frontmatter>=1.1.0
 
 # === File I/O & Utilities ===
-aiofiles==23.2.1
+aiofiles>=23.1.0
 
 # === Monitoring & Diagnostics ===
-psutil==5.9.8
+psutil>=5.9
 
 # === Authentication (optional, for JWT backend validation) ===
-itsdangerous==2.1.2
-pyjwt[crypto]==2.8.0
+itsdangerous>=2.1
+pyjwt[crypto]>=2.8
 
 # === Structured Data ===
-pydantic==2.7.1
+pydantic>=1.10
 
 # === Async Utilities ===
-anyio==3.7.1
+anyio>=3.7
 
 # === Databases (optional, for SQLAlchemy/SQLite) ===
-sqlalchemy==2.0.30
+sqlalchemy>=2.0
 
 # === Testing ===
-pytest==8.2.2
-pytest-asyncio==0.23.6
+pytest>=7.0
+pytest-asyncio>=0.21
 
 # === Linting/Formatting ===
-black==24.4.2
-
-# === (Optional) Fast JSON for FastAPI ===
-orjson==3.10.3
-
-# === (Optional) Modern Logging ===
-loguru==0.7.2
+black>=24.0
