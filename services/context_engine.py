@@ -1,7 +1,6 @@
 # File: context_engine.py
 # Directory: services/
-# Purpose: Gather per-user runtime context from code, docs, logs, and the semantic knowledge base
-
+# Purpose: Gather per-user runtime context from code, docs, overlays, logs, and semantic knowledge base
 import os
 from pathlib import Path
 from typing import List, Optional
@@ -9,7 +8,7 @@ import services.kb as kb
 
 class ContextEngine:
     """
-    Gather runtime context from code, docs, logs, and KB.
+    Gather runtime context from code, docs, overlays, logs, and KB.
     Supports per-user memory and context for multi-turn conversations.
     """
 
@@ -96,6 +95,35 @@ class ContextEngine:
                     continue
         return "\n".join(snippets)
 
+    def read_additional_context_roots(
+        self,
+        roots: Optional[List[str]] = None,
+        exts: Optional[List[str]] = None
+    ) -> str:
+        """
+        Load and concatenate context overlay files from /context/ or other roots.
+        Each overlay is annotated for traceability.
+        """
+        if roots is None:
+            roots = ["context"]  # Add more directories if needed
+        if exts is None:
+            exts = [".md", ".txt"]
+        snippets: List[str] = []
+        for root in roots:
+            path = self.base / root
+            if not path.exists():
+                continue
+            for f in path.rglob("*"):
+                if f.suffix in exts and f.is_file() and not f.name.startswith('.'):
+                    try:
+                        rel = f.relative_to(self.base)
+                        snippet = f"# Context: {rel}\n{f.read_text()}"
+                        snippets.append(snippet)
+                    except Exception as e:
+                        print(f"[ContextEngine] Error reading context file {f}: {e}")
+                        continue
+        return "\n".join(snippets)
+
     def read_logs_summary(self) -> str:
         """
         Load the relay context summary log for this user, if available.
@@ -131,7 +159,7 @@ class ContextEngine:
         except Exception as e:
             print(f"[ContextEngine] Error reading global context: {e}")
 
-        # If code context needed, load code, docs, logs, and KB summary
+        # If code context needed, load code, docs, overlays, logs, and KB summary
         if self.needs_code_context(query):
             code = self.read_source_files(
                 roots=[
@@ -149,6 +177,10 @@ class ContextEngine:
                 exclude=["global_context.md", "global_context.auto.md"]
             )[:3000]
 
+            overlays = self.read_additional_context_roots()
+            if overlays:
+                docs_body = f"{docs_body}\n\n# [Overlays]\n{overlays}"
+
             docs = f"{global_context}\n\n{docs_body}" if global_context else docs_body
 
             kb_summary = kb.get_recent_summaries(self.user_id) if hasattr(kb, "get_recent_summaries") else ""
@@ -158,7 +190,6 @@ class ContextEngine:
             try:
                 hits = kb.search(query, user_id=self.user_id, k=4)
             except TypeError:
-                # Fallback if kb.search doesn't accept user_id
                 hits = kb.search(query, k=4)
             snippets = []
             for i, h in enumerate(hits):
