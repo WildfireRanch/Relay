@@ -107,7 +107,7 @@ def index_directories():
                         documents.append(doc)
 
     # --- 4. Chunking (Code vs Text) ---
-    code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30, chunk_overlap=10)
+    code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30)
     text_splitter = SentenceSplitter(max_chunk_size=1024)
 
     for doc in documents:
