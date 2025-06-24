@@ -51,6 +51,7 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `ENV`                    | Backend  | `local`, `develop`, `main` for env-specific logic |
 | `API_KEY`                | Backend  | Master API key for protected endpoints            |
 | `ENABLE_ADMIN_TOOLS`     | Backend  | Enables `/admin/*` endpoints                      |
+| `ENABLE_REFLECT_AND_PLAN` | Backend  | Run reflection step before answering |
 | `FRONTEND_ORIGIN`        | Backend  | CORS allowlist override                           |
 | `OPENAI_API_KEY`         | Backend  | For embeddings and agent chat/completions         |
 | `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)      |
@@ -109,6 +110,9 @@ Echo will auto-inject:
 * Domain/project context (e.g. from `/context/context-solarshack.md`)
 * Function names from specified files
 * Global project context if present
+
+To run the optional reflection & planning step, set `ENABLE_REFLECT_AND_PLAN=1` or
+append `?reflect=1` to `/ask` requests.
 
 ---
 
