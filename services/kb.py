@@ -53,6 +53,11 @@ if MODEL_NAME == "text-embedding-3-large":
 else:
     EMBED_MODEL = OpenAIEmbedding(model=MODEL_NAME)
 
+# ─── Index cache ───────────────────────────────────────────────────────────
+# Reuse the loaded VectorStoreIndex to avoid repeated disk I/O.  The cache is
+# invalidated whenever the index is rebuilt.
+_INDEX_CACHE: Optional[VectorStoreIndex] = None
+
 # ─── Index paths (from config) ─────────────────────────────────────────────
 # INDEX_ROOT / INDEX_DIR provided by services.config
 
@@ -117,11 +122,18 @@ def embed_all() -> None:
     logger.info("✅ Index persisted → %s", INDEX_DIR)
 
 def get_index() -> VectorStoreIndex:
-    """Return a loaded index, rebuilding if missing or mismatched."""
+    """Return a cached or loaded index, rebuilding if missing or mismatched."""
+    global _INDEX_CACHE
+
+    if _INDEX_CACHE is not None and index_is_valid():
+        return _INDEX_CACHE
+
     if not index_is_valid():
         embed_all()
+
     ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
-    return load_index_from_storage(ctx, embed_model=EMBED_MODEL)
+    _INDEX_CACHE = load_index_from_storage(ctx, embed_model=EMBED_MODEL)
+    return _INDEX_CACHE
 
 # ─── Core search used by routes ────────────────────────────────────────────
 def search(
@@ -193,7 +205,9 @@ def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
     return search(query=query, k=k, search_type=search_type)
 
 def api_reindex() -> dict:
+    global _INDEX_CACHE
     embed_all()
+    _INDEX_CACHE = None
     return {
         "status": "ok",
         "message": "Re-index complete",
