@@ -1,6 +1,6 @@
 // File: MemoryPanel.tsx
 // Directory: frontend/src/components
-// Purpose: Displays per-user session memory from /logs/sessions with filtering, deep context audit, and JSON export
+// Purpose: Displays per-user session memory with table/card toggle, filtering, drilldown, and context inspection
 
 "use client";
 
@@ -9,7 +9,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 
-// Memory log entry interface
 interface MemoryEntry {
   timestamp: string;
   user: string;
@@ -26,6 +25,8 @@ interface MemoryEntry {
   fallback?: boolean;
 }
 
+type ViewMode = "cards" | "table";
+
 export default function MemoryPanel() {
   const [memory, setMemory] = useState<MemoryEntry[]>([]);
   const [search, setSearch] = useState("");
@@ -35,6 +36,8 @@ export default function MemoryPanel() {
     status: "idle",
     time: 0
   });
+  const [view, setView] = useState<ViewMode>("cards");
+  const [modalContext, setModalContext] = useState<{ path: string; content: string } | null>(null);
 
   async function fetchMemory() {
     const start = Date.now();
@@ -59,6 +62,22 @@ export default function MemoryPanel() {
       setFetchInfo({ status: "error", time: Date.now() - start, error: errorMsg });
       setMemory([]);
       console.error("[MemoryPanel] Fetch failed:", e);
+    }
+  }
+
+  // Fetch single context file content for drilldown modal
+  async function fetchContextFile(path: string) {
+    try {
+      const res = await fetch(`${API_ROOT}/files/context?path=${encodeURIComponent(path)}`, {
+        headers: {
+          "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
+        }
+      });
+      if (!res.ok) throw new Error(`Status ${res.status}`);
+      const content = await res.text();
+      setModalContext({ path, content });
+    } catch (e) {
+      setModalContext({ path, content: `Failed to fetch: ${e}` });
     }
   }
 
@@ -102,6 +121,10 @@ export default function MemoryPanel() {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank");
   }
 
+  function bytesToKB(bytes: number) {
+    return (bytes / 1024).toFixed(1);
+  }
+
   return (
     <div className="space-y-4">
       {/* Insights bar: fetch status, counts, averages */}
@@ -114,6 +137,11 @@ export default function MemoryPanel() {
         <span>Used Global Context: <b>{summary.usedGlobal}</b></span>
         <span>Fallbacks: <b>{summary.fallback}</b></span>
         {fetchInfo.error && <span className="text-red-600">Error: {fetchInfo.error}</span>}
+        <Button onClick={fetchMemory} variant="outline">Refresh</Button>
+        <Button onClick={downloadMemory} variant="outline">Download JSON</Button>
+        <Button onClick={() => setView(view === "cards" ? "table" : "cards")} variant="secondary">
+          {view === "cards" ? "Table View" : "Card View"}
+        </Button>
       </div>
       {/* Filter/search controls */}
       <div className="flex gap-2 items-center mb-4">
@@ -143,7 +171,6 @@ export default function MemoryPanel() {
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <Button onClick={downloadMemory} variant="outline">Download JSON</Button>
       </div>
       {/* Filtered/total counts */}
       <div className="text-xs text-gray-400 mb-2">
@@ -152,64 +179,149 @@ export default function MemoryPanel() {
         {filterUser && <> | User: <code>{filterUser}</code></>}
         {filterGlobal !== "any" && <> | Global Context: <code>{filterGlobal}</code></>}
       </div>
-      {filtered.length === 0 && (
+      {fetchInfo.status === "loading" ? (
+        <div className="p-8 text-gray-400 animate-pulse">
+          Loading memory logs...
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="text-sm text-muted-foreground p-4">No memory entries found for current filter.</div>
+      ) : view === "table" ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full border text-xs">
+            <thead>
+              <tr className="bg-gray-100">
+                <th className="px-2 py-1 text-left">Timestamp</th>
+                <th className="px-2 py-1 text-left">User</th>
+                <th className="px-2 py-1 text-left">Query</th>
+                <th className="px-2 py-1 text-left">Topics</th>
+                <th className="px-2 py-1 text-left">Context Files</th>
+                <th className="px-2 py-1 text-left">Used Global</th>
+                <th className="px-2 py-1 text-left">Fallback</th>
+                <th className="px-2 py-1 text-left">Replay</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((m, i) => (
+                <tr key={i} className="border-t hover:bg-gray-50">
+                  <td className="px-2 py-1">{new Date(m.timestamp).toLocaleString()}</td>
+                  <td className="px-2 py-1">{m.user}</td>
+                  <td className="px-2 py-1">{m.query}</td>
+                  <td className="px-2 py-1">{Array.isArray(m.topics) && m.topics.join(", ")}</td>
+                  <td className="px-2 py-1">
+                    {(m.context_files ?? []).map((cf, idx) => (
+                      <span key={cf}>
+                        <a
+                          className="underline cursor-pointer"
+                          onClick={() => fetchContextFile(cf)}
+                        >
+                          {cf}
+                        </a>
+                        {idx < (m.context_files?.length ?? 0) - 1 ? ", " : ""}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="px-2 py-1">
+                    {m.used_global_context && (
+                      <span className="inline-block px-2 py-1 text-xs bg-green-100 text-green-700 rounded">Yes</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1">
+                    {m.fallback && (
+                      <span className="inline-block px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded">Fallback</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => replayQuery(m.query)}
+                    >
+                      🔁
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        filtered.map((m, i) => (
+          <Card key={i}>
+            <CardContent className="p-4 space-y-2">
+              <div className="text-sm font-mono text-muted-foreground">
+                {new Date(m.timestamp).toLocaleString()} • {m.user}
+              </div>
+              <div className="text-sm">
+                <strong>Query:</strong> {m.query}
+              </div>
+              {Array.isArray(m.topics) && m.topics.length > 0 && (
+                <div className="text-xs">Topics: {m.topics.join(", ")}</div>
+              )}
+              {Array.isArray(m.files) && m.files.length > 0 && (
+                <div className="text-xs">Files: {m.files.join(", ")}</div>
+              )}
+              {(m.context_files ?? []).length > 0 && (
+                <div className="text-xs text-blue-800">
+                  <strong>Context Files:</strong>{" "}
+                  {(m.context_files ?? []).map((cf, idx) => (
+                    <span key={cf}>
+                      <a
+                        className="underline cursor-pointer"
+                        onClick={() => fetchContextFile(cf)}
+                      >
+                        {cf}
+                      </a>
+                      {idx < (m.context_files?.length ?? 0) - 1 ? ", " : ""}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {typeof m.context_length === "number" && (
+                <div className="text-xs text-gray-600">Context Length: {m.context_length} chars</div>
+              )}
+              {typeof m.prompt_length === "number" && (
+                <div className="text-xs text-gray-600">Prompt Length: {m.prompt_length} | Response: {m.response_length}</div>
+              )}
+              {m.used_global_context && (
+                <span className="inline-block px-2 py-1 text-xs bg-green-100 text-green-700 rounded">Global context</span>
+              )}
+              {m.fallback && (
+                <span className="inline-block px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded">Fallback</span>
+              )}
+              {m.summary && (
+                <pre className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">{m.summary}</pre>
+              )}
+              <details className="mt-2">
+                <summary className="cursor-pointer text-xs text-blue-700">Debug: Raw Entry</summary>
+                <pre className="bg-gray-100 p-2 rounded text-xs overflow-auto">{JSON.stringify(m, null, 2)}</pre>
+              </details>
+              <div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="mt-2"
+                  onClick={() => replayQuery(m.query)}
+                >
+                  🔁 Replay Query
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))
       )}
 
-      {filtered.map((m, i) => (
-        <Card key={i}>
-          <CardContent className="p-4 space-y-2">
-            <div className="text-sm font-mono text-muted-foreground">
-              {m.timestamp} • {m.user}
-            </div>
-            <div className="text-sm">
-              <strong>Query:</strong> {m.query}
-            </div>
-            {Array.isArray(m.topics) && m.topics.length > 0 && (
-              <div className="text-xs">Topics: {m.topics.join(", ")}</div>
-            )}
-            {Array.isArray(m.files) && m.files.length > 0 && (
-              <div className="text-xs">Files: {m.files.join(", ")}</div>
-            )}
-            {Array.isArray(m.context_files) && m.context_files.length > 0 && (
-              <div className="text-xs text-blue-800">
-                <strong>Context Files:</strong> {m.context_files.join(", ")}
-              </div>
-            )}
-            {typeof m.context_length === "number" && (
-              <div className="text-xs text-gray-600">Context Length: {m.context_length} chars</div>
-            )}
-            {typeof m.prompt_length === "number" && (
-              <div className="text-xs text-gray-600">Prompt Length: {m.prompt_length} | Response: {m.response_length}</div>
-            )}
-            {m.used_global_context && (
-              <div className="text-xs text-green-700">Global context used ✅</div>
-            )}
-            {m.fallback && (
-              <div className="text-xs text-orange-600">Fallback/no custom context ❗</div>
-            )}
-            {m.summary && (
-              <pre className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">{m.summary}</pre>
-            )}
-            {/* Debug: show raw entry as collapsible */}
-            <details className="mt-2">
-              <summary className="cursor-pointer text-xs text-blue-700">Debug: Raw Entry</summary>
-              <pre className="bg-gray-100 p-2 rounded text-xs overflow-auto">{JSON.stringify(m, null, 2)}</pre>
-            </details>
-            {/* Replay/QC */}
-            <div>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="mt-2"
-                onClick={() => replayQuery(m.query)}
-              >
-                🔁 Replay Query
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
+      {/* Context File Drilldown Modal */}
+      {modalContext && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-40">
+          <div className="bg-white rounded shadow-lg max-w-2xl w-full p-6 relative">
+            <div className="text-sm mb-2 font-bold">Context File: <code>{modalContext.path}</code></div>
+            <pre className="bg-gray-100 p-4 rounded max-h-[400px] overflow-auto text-xs">{modalContext.content}</pre>
+            <Button variant="secondary" onClick={() => setModalContext(null)} className="absolute top-2 right-2">
+              Close
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
