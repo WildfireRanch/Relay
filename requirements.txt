@@ -34,6 +34,8 @@ llama-index-llms-openai
 llama-index-embeddings-openai
 llama-index-readers-file
 tiktoken==0.7.0
+tree_sitter>=0.20.4
+tree_sitter_languages>=1.7.1
 
 # === Markdown & Text Processing ===
 markdown>=3.4.1
