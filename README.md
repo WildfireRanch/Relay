@@ -178,3 +178,9 @@ npm run dev
 ---
 
 *Last updated: 2025-06-23*
+
+##NEED TO INCORPORATE:
+#Recent upgrades:
+#All context indexed and surfaced by tier, guaranteeing the most relevant info is always injected first
+#Prompt assembly and search logic now 100% order-preserving, with every chunk labeled for operator visibility
+#Operator panels cross-link and provide deep audit for all agent actions

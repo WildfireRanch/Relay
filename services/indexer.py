@@ -1,4 +1,4 @@
-# File: services/indexer.py
+# services/indexer.py
 # Purpose: Recursively index code and docs with tier metadata for prioritized semantic search.
 # Stack: LlamaIndex, OpenAI, Python 3.12+
 # Usage: Call index_directories() to scan, split, and embed all target files.
@@ -19,17 +19,62 @@ PRIORITY_INDEX_PATHS = [
     ("code", ["./services/", "./routes/", "./frontend/", "./src/", "./backend/"]),
 ]
 
-# ---- 2. Embedding Model ----
+# ---- 2. Exclude Rules for Files, Extensions, and Folders ----
+IGNORED_FILENAMES = {
+    "package-lock.json", "yarn.lock", ".env", ".DS_Store", ".gitignore",
+}
+IGNORED_EXTENSIONS = {
+    ".lock", ".log", ".exe", ".bin", ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".ico",
+}
+IGNORED_FOLDERS = {
+    "node_modules", ".git", "__pycache__", "dist", "build", ".venv", "env",
+}
+MAX_FILE_SIZE_MB = 2  # Optional: skip files over 2 MB (adjust as needed)
+
+def should_index_file(filepath: str, tier: str) -> bool:
+    """
+    Returns True if a file should be indexed, otherwise False.
+    Excludes files/folders by name, extension, size, or path.
+    Allows broader set for 'code' tier to support code review.
+    """
+    filename = os.path.basename(filepath)
+    ext = os.path.splitext(filename)[1].lower()
+
+    # Ignore by filename or extension
+    if filename in IGNORED_FILENAMES or ext in IGNORED_EXTENSIONS:
+        return False
+
+    # Ignore by folder in path
+    parts = filepath.replace("\\", "/").split("/")
+    if any(folder in parts for folder in IGNORED_FOLDERS):
+        return False
+
+    # Optional: ignore big files
+    if os.path.isfile(filepath):
+        if os.path.getsize(filepath) > MAX_FILE_SIZE_MB * 1024 * 1024:
+            return False
+
+    # For code tier, allow a broad set of code/doc files for review
+    if tier == "code":
+        return ext in {".py", ".js", ".ts", ".tsx", ".java", ".go", ".cpp", ".json", ".md"}
+
+    return True
+
+# ---- 3. Embedding Model ----
 model_name = (
     os.getenv("KB_EMBED_MODEL")
     or os.getenv("OPENAI_EMBED_MODEL")
     or "text-embedding-3-large"
 )
-embed_model = OpenAIEmbedding(model=model_name, dimensions=3072 if model_name == "text-embedding-3-large" else None)
+embed_model = OpenAIEmbedding(
+    model=model_name,
+    dimensions=3072 if model_name == "text-embedding-3-large" else None
+)
 
 def index_directories():
     """
     Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search.
+    Applies strict filtering to skip junk files and folders.
     """
     documents = []
 
@@ -39,15 +84,21 @@ def index_directories():
                 # Folder: Use LlamaIndex reader (recursively)
                 if os.path.exists(path):
                     docs = SimpleDirectoryReader(path, recursive=True).load_data()
+                    # Attach tier and filter
+                    filtered_docs = []
                     for d in docs:
-                        d.metadata = d.metadata or {}
-                        d.metadata["tier"] = tier
-                    documents.extend(docs)
+                        # LlamaIndex may set file path as 'file_path' or 'filename'
+                        file_path = d.metadata.get("file_path") or d.metadata.get("filename") or ""
+                        if should_index_file(file_path, tier):
+                            d.metadata = d.metadata or {}
+                            d.metadata["tier"] = tier
+                            filtered_docs.append(d)
+                    documents.extend(filtered_docs)
             elif "*" in path or path.endswith(".md"):
-                # Glob/single file: add as individual Document
+                # Glob or single file: Add if not ignored
                 for f in glob.glob(path):
-                    if os.path.isfile(f):
-                        with open(f, "r") as file:
+                    if os.path.isfile(f) and should_index_file(f, tier):
+                        with open(f, "r", encoding="utf-8") as file:
                             text = file.read()
                         doc = Document(
                             text=text,
@@ -55,19 +106,18 @@ def index_directories():
                         )
                         documents.append(doc)
 
-    # --- 3. Chunking ---
+    # --- 4. Chunking (Code vs Text) ---
     code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30, chunk_overlap=10)
     text_splitter = SentenceSplitter(max_chunk_size=1024)
 
     for doc in documents:
-        # Use "file_path" (may be missing for some docs; fallback to empty string)
         file_path = doc.metadata.get('file_path', '')
         if file_path.endswith(('.py', '.js', '.ts', '.tsx', '.java', '.go', '.cpp')):
             doc.chunks = code_splitter.split(doc.text)
         else:
             doc.chunks = text_splitter.split(doc.text)
 
-    # --- 4. Index & Persist ---
+    # --- 5. Index & Persist ---
     print(f"Total documents indexed: {len(documents)}")
     index = VectorStoreIndex.from_documents(
         documents, embed_model=embed_model, show_progress=True
