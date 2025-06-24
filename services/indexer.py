@@ -32,32 +32,22 @@ IGNORED_FOLDERS = {
 MAX_FILE_SIZE_MB = 2  # Optional: skip files over 2 MB (adjust as needed)
 
 def should_index_file(filepath: str, tier: str) -> bool:
-    """
-    Returns True if a file should be indexed, otherwise False.
-    Excludes files/folders by name, extension, size, or path.
-    Allows broader set for 'code' tier to support code review.
-    """
+    """Returns True if a file should be indexed, otherwise False."""
     filename = os.path.basename(filepath)
     ext = os.path.splitext(filename)[1].lower()
-
-    # Ignore by filename or extension
     if filename in IGNORED_FILENAMES or ext in IGNORED_EXTENSIONS:
         return False
-
     # Ignore by folder in path
     parts = filepath.replace("\\", "/").split("/")
     if any(folder in parts for folder in IGNORED_FOLDERS):
         return False
-
-    # Optional: ignore big files
+    # Ignore big files
     if os.path.isfile(filepath):
         if os.path.getsize(filepath) > MAX_FILE_SIZE_MB * 1024 * 1024:
             return False
-
     # For code tier, allow a broad set of code/doc files for review
     if tier == "code":
         return ext in {".py", ".js", ".ts", ".tsx", ".java", ".go", ".cpp", ".json", ".md"}
-
     return True
 
 # ---- 3. Embedding Model ----
@@ -73,10 +63,7 @@ embed_model = OpenAIEmbedding(
 
 # ---- 4. Language detection for code files ----
 def get_language_from_path(file_path: str) -> str:
-    """
-    Returns the code language for a given file path by extension.
-    Defaults to 'python' if unknown.
-    """
+    """Returns the code language for a given file path by extension."""
     file_path = file_path.lower()
     if file_path.endswith(".py"):
         return "python"
@@ -90,26 +77,18 @@ def get_language_from_path(file_path: str) -> str:
         return "go"
     elif file_path.endswith(".cpp"):
         return "cpp"
-    # Add more as needed
     return "python"  # fallback
 
 def index_directories():
-    """
-    Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search.
-    Applies strict filtering to skip junk files and folders.
-    """
+    """Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search."""
     documents = []
-
     for tier, paths in PRIORITY_INDEX_PATHS:
         for path in paths:
             if path.endswith("/"):
-                # Folder: Use LlamaIndex reader (recursively)
                 if os.path.exists(path):
                     docs = SimpleDirectoryReader(path, recursive=True).load_data()
-                    # Attach tier and filter
                     filtered_docs = []
                     for d in docs:
-                        # LlamaIndex may set file path as 'file_path' or 'filename'
                         file_path = d.metadata.get("file_path") or d.metadata.get("filename") or ""
                         if should_index_file(file_path, tier):
                             d.metadata = d.metadata or {}
@@ -117,7 +96,6 @@ def index_directories():
                             filtered_docs.append(d)
                     documents.extend(filtered_docs)
             elif "*" in path or path.endswith(".md"):
-                # Glob or single file: Add if not ignored
                 for f in glob.glob(path):
                     if os.path.isfile(f) and should_index_file(f, tier):
                         with open(f, "r", encoding="utf-8") as file:
@@ -145,8 +123,8 @@ def index_directories():
     # --- 6. Index & Persist ---
     print(f"Total nodes to index: {len(all_chunked_nodes)}")
     index = VectorStoreIndex.from_nodes(
-    all_chunked_nodes, embed_model=embed_model, show_progress=True
-)
+        all_chunked_nodes, embed_model=embed_model, show_progress=True
+    )
     index.storage_context.persist(persist_dir="./data/index")
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     print("Indexing complete! Prioritized tiers saved.")
