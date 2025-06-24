@@ -71,6 +71,28 @@ embed_model = OpenAIEmbedding(
     dimensions=3072 if model_name == "text-embedding-3-large" else None
 )
 
+# ---- 4. Language detection for code files ----
+def get_language_from_path(file_path: str) -> str:
+    """
+    Returns the code language for a given file path by extension.
+    Defaults to 'python' if unknown.
+    """
+    file_path = file_path.lower()
+    if file_path.endswith(".py"):
+        return "python"
+    elif file_path.endswith((".js", ".jsx")):
+        return "javascript"
+    elif file_path.endswith((".ts", ".tsx")):
+        return "typescript"
+    elif file_path.endswith(".java"):
+        return "java"
+    elif file_path.endswith(".go"):
+        return "go"
+    elif file_path.endswith(".cpp"):
+        return "cpp"
+    # Add more as needed
+    return "python"  # fallback
+
 def index_directories():
     """
     Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search.
@@ -106,18 +128,19 @@ def index_directories():
                         )
                         documents.append(doc)
 
-    # --- 4. Chunking (Code vs Text) ---
-    code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30)
+    # --- 5. Chunking (Code vs Text, with language detection for code) ---
     text_splitter = SentenceSplitter(max_chunk_size=1024)
-
     for doc in documents:
         file_path = doc.metadata.get('file_path', '')
+        # If this is a recognized code file, pick language; otherwise, treat as text
         if file_path.endswith(('.py', '.js', '.ts', '.tsx', '.java', '.go', '.cpp')):
+            language = get_language_from_path(file_path)
+            code_splitter = CodeSplitter(language=language, max_chars=1024, chunk_lines=30)
             doc.chunks = code_splitter.split(doc.text)
         else:
             doc.chunks = text_splitter.split(doc.text)
 
-    # --- 5. Index & Persist ---
+    # --- 6. Index & Persist ---
     print(f"Total documents indexed: {len(documents)}")
     index = VectorStoreIndex.from_documents(
         documents, embed_model=embed_model, show_progress=True
