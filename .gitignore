@@ -1,63 +1,117 @@
-# File: .gitignore
-# Directory: project root
-# Purpose: Ignore credentials, tokens, env files, caches, and build artifacts
-
-# === Environment files ===
-.env
-*.env
-
-# === Python caches & venv ===
+# === Python Bytecode ===
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+
+# === Virtual Environments ===
 .venv/
 venv/
 env/
 
-# === Google OAuth artifacts ===
-# Client secrets (bootstrapped at runtime)
-frontend/sync/credentials.json
-# OAuth tokens (should never be committed)
-frontend/sync/token.json
-# Catch any stray credentials.json
-**/credentials.json
-# Temporary credentials path
-/tmp/credentials.json
-
-# === Node.js / frontend ===
-node_modules/
-npm-debug.log
-
-# === Node-RED data ===
-nodered-data/
-nodered-data/*
-
-# === VSCode / Codespaces ===
-.vscode/
-*.code-workspace
-
-# === System files ===
+# === OS Files ===
 .DS_Store
-*.swp
-*.swo
+Thumbs.db
 
-# === Storybook demo and starter files (ignore these) ===
-frontend/src/stories/
-frontend/src/stories/**
-frontend/vitest.config.ts
-frontend/vitest.shims.d.ts
+# === IDEs ===
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
 
-# Ignore all .storybook/ config except main/preview (optional)
-# If you want to keep .storybook/main.ts and .storybook/preview.ts, do this:
-frontend/.storybook/
-!frontend/.storybook/main.ts
-!frontend/.storybook/preview.ts
+# === Jupyter Notebooks ===
+.ipynb_checkpoints/
 
-# (already covered) Build output, cache, and node_modules
+# === Environment & Secrets ===
+.env
+.env.*
+*.env
+*.secret
+*.key
+*.pem
+
+# === API / OAuth / Token Files ===
+token.json
+frontend/sync/token.json
+
+# === Log Files ===
+*.log
+logs/
+*.jsonl
+
+# === Database & Index Files ===
+*.sqlite*
+*.db
+data/index/
+data/index/*
+data/cache/
+data/cache/*
+index/
+index/*
+*.faiss
+*.h5
+*.parquet
+
+# === LlamaIndex / Semantic Index / Embeddings ===
+# (Assuming you store index files under data/index or similar)
+data/index/
+index/
+vectorstore/
+*.ann
+*.bin
+*.pkl
+
+# === Google Docs Sync (if local copies/exports) ===
+docs/imported/
+docs/generated/
+
+# === Node (frontend) ===
 node_modules/
-.next/
-out/
-.storybook/coverage/
-storybook-static/
-.turbo/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/.vercel/
+frontend/.env
+frontend/.env.*
+
+# === Build / Dist / Package ===
+dist/
+build/
+*.egg-info/
+*.eggs/
+
+# === Coverage / Testing ===
+.coverage
+.tox/
+htmlcov/
+.cache/
+.pytest_cache/
+
+# === Misc ===
+*.bak
+*.tmp
+*.swp
+
+# === Backups ===
+*~
+*.zip
+*.tar.gz
+*.tar
+*.gz
+
+# === Admin/Backup Artifacts ===
+index_backup_*.zip
+admin_events.log
+
+# === VSCode Settings ===
+frontend/.vscode/
+backend/.vscode/
+.vscode/
+
+# === Exclude requirements lockfiles for local use only (uncomment if you want to ignore) ===
+# requirements*.lock
+
+# === Exclude compiled files ===
+*.so
+*.dll
