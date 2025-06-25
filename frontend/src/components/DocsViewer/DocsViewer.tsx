@@ -1,5 +1,7 @@
-// File: frontend/src/components/DocsViewer.tsx
-// Purpose: Browse, manage, and debug semantic context docs with tier-aware metadata, sync, and promote/prune support
+// File: DocsViewer.tsx
+// Directory: frontend/src/components/
+// Purpose : Browse, manage, and debug semantic context docs with tier-aware metadata,
+//           sync, promotion, pinning, and prioritization (tier control)
 
 "use client";
 
@@ -114,6 +116,36 @@ export default function DocsViewer() {
     }
   }
 
+  async function handlePin(path: string) {
+    try {
+      const res = await fetch(`${apiUrl}/docs/mark_priority`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, pinned: true }),
+      });
+      const data = await res.json();
+      alert(`📌 Pinned: ${data.updated}`);
+      await loadDocs();
+    } catch {
+      alert("❌ Failed to pin doc.");
+    }
+  }
+
+  async function handleSetTier(path: string, tier: string) {
+    try {
+      const res = await fetch(`${apiUrl}/docs/mark_priority`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, tier }),
+      });
+      const data = await res.json();
+      alert(`🎯 Tier set to: ${data.tier}`);
+      await loadDocs();
+    } catch {
+      alert("❌ Failed to set tier.");
+    }
+  }
+
   async function doSearch(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setSearchLoading(true);
@@ -135,9 +167,7 @@ export default function DocsViewer() {
     setCtxLoading(true);
     setCtxResult("");
     try {
-      const res = await fetch(
-        `${apiUrl}/ask?question=${encodeURIComponent(ctxQuestion)}&debug=true`
-      );
+      const res = await fetch(`${apiUrl}/ask?question=${encodeURIComponent(ctxQuestion)}&debug=true`);
       const data = await res.json();
       setCtxResult(data.context || "No context returned.");
     } catch {
@@ -180,10 +210,11 @@ export default function DocsViewer() {
                     </div>
                     <div className="text-gray-400">{doc.doc_id || "—"}</div>
                     {doc.path !== activeDoc && (
-                      <div className="flex gap-1 mt-1">
-                        <Button variant="outline" size="xs" onClick={() => handlePromote(doc.path)}>
-                          ⬆️ Promote
-                        </Button>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        <Button variant="outline" size="sm" onClick={() => handlePromote(doc.path)}>⬆️ Promote</Button>
+                        <Button variant="outline" size="sm" onClick={() => handlePin(doc.path)}>📌 Pin</Button>
+                        <Button variant="outline" size="sm" onClick={() => handleSetTier(doc.path, "global")}>🎯 Global</Button>
+                        <Button variant="outline" size="sm" onClick={() => handleSetTier(doc.path, "project")}>🪪 Project</Button>
                       </div>
                     )}
                   </div>
@@ -246,8 +277,7 @@ export default function DocsViewer() {
                   {hits[selectedHit].snippet}
                 </pre>
                 <div className="text-xs text-gray-500 mt-2">
-                  Score: {hits[selectedHit].score?.toFixed(2) || "N/A"} | Type:{" "}
-                  {hits[selectedHit].type || "?"}
+                  Score: {hits[selectedHit].score?.toFixed(2) || "N/A"} | Type: {hits[selectedHit].type || "?"}
                 </div>
               </div>
             ) : (

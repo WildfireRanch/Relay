@@ -30,11 +30,13 @@ class ContextEngine:
         self.base = Path(env_root).resolve() if env_root else Path(base or Path.cwd())
 
     def build_context(
-        self,
-        query: str,
-        k: int = 8,
-        score_threshold: Optional[float] = None,
-    ) -> str:
+    self,
+    query: str,
+    k: int = 8,
+    score_threshold: Optional[float] = None,
+    return_debug: bool = False,
+    )-> str | dict:
+
         """
         Build a tiered, labeled agent context window using prioritized semantic search.
         Optionally filter out low-scoring KB hits.

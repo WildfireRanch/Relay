@@ -46,24 +46,52 @@ def load_global_context(path="./docs/generated/global_context.md"):
     return "Global project context not available."
 
 # -- Main context builder --
-def build_context(query: str, files: list[str], topics: list[str] = []):
+def build_context(query: str, files: list[str], topics: list[str] = [], debug: bool = False):
     """
     Generates a multi-layered context block to inject into GPT queries.
-    Includes:
-      - Relay project summary
-      - Code context and key functions
-      - External topic summaries (e.g. mining, solar, automation)
-      - Global synced context (e.g. from Google Docs)
-      - Relevant semantic recall from vector index
+    Returns:
+      - full string prompt (always)
+      - optional debug output: files_used metadata
     """
-    project_summary = load_summary()
-    code_context = collect_code_context(files)
-    function_signatures = extract_functions(files)
-    semantic_docs = query_index(query)
-    external_context = load_context(topics)
-    global_context = load_global_context()
+    files_used = []
 
-    return f"""
+    # --- Load static blocks ---
+    project_summary = load_summary()
+    if "Project summary not available." not in project_summary:
+        files_used.append({"type": "summary", "source": "docs/PROJECT_SUMMARY.md"})
+
+    code_context = collect_code_context(files)
+    if code_context.strip():
+        for f in files:
+            files_used.append({"type": "code", "source": f})
+
+    function_signatures = extract_functions(files)
+    if function_signatures.strip():
+        for f in files:
+            files_used.append({"type": "functions", "source": f})
+
+    external_context = load_context(topics)
+    if external_context.strip():
+        for topic in topics:
+            files_used.append({"type": "external", "source": f"context/{topic}.md"})
+
+    global_context = load_global_context()
+    if "not available" not in global_context:
+        files_used.append({"type": "global", "source": "docs/generated/global_context.md"})
+
+    # --- Semantic search chunks ---
+    semantic_docs = query_index(query)
+    semantic_sources = []
+    for line in semantic_docs.splitlines():
+        if line.startswith("# "):
+            # Try to extract source titles from chunk headers
+            semantic_sources.append(line.lstrip("# ").strip())
+
+    for title in set(semantic_sources):
+        files_used.append({"type": "semantic", "title": title})
+
+    # --- Assemble final context ---
+    full_context = f"""
 ## 🧠 Project Summary:
 {project_summary}
 
@@ -81,4 +109,12 @@ def build_context(query: str, files: list[str], topics: list[str] = []):
 
 ## 🔍 Relevant Knowledge Base Excerpts:
 {semantic_docs}
-"""
+""".strip()
+
+    if debug:
+        return {
+            "context": full_context,
+            "files_used": files_used,
+        }
+
+    return full_context
