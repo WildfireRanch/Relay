@@ -227,4 +227,16 @@ Context chunking for global/FAQ content tuned for atomic, high-recall QA.
 Recommended chunk overlap and chunk size audit for future upgrades.
 
 Debug & explain tools:
-Expanded CLI and UI support for “show context,” “priority filter,” and live context source drilldown.
+Expanded CLI and UI support for “show context,” “priority filter,” and live context source drilldown. 6-25-25
+## 🧩 Visual Layout Builder (Puck)
+
+Relay now supports a fully embedded drag-and-drop layout editor using [Puck](https://github.com/measuredco/puck). The `/editor` route allows interactive design of UI screens using real components like `AskAgent`, `LogsPanel`, `Card`, and more.
+
+### Features:
+- Visual editor at `/editor` with live preview
+- Layout saved to `/public/layout.json` via custom API route (`/api/layout`)
+- Homepage (`/`) renders layout using `<Render config={...} data={...} />`
+- All components registered in `puck.config.tsx`
+- Editor access available via 🧩 Sandbox button in sidebar
+
+> 🔐 Future: Add named layouts, version history, and user-specific layouts

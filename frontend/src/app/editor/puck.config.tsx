@@ -1,4 +1,3 @@
-// File: src/app/editor/puck.config.tsx
 import type { Config } from '@measured/puck'
 
 // 🧩 Full Panel Components
@@ -23,16 +22,16 @@ import { Progress } from '../../components/ui/progress'
 import { Textarea } from '../../components/ui/textarea'
 
 type Props = {
-  AskAgent: {}
-  LogsPanel: {}
-  DocsViewer: {}
-  ActionQueue: {}
-  Navbar: {}
-  Sidebar: {}
-  MemoryPanel: {}
-  StatusPanel: {}
-  SearchPanel: {}
-  DocsSyncPanel: {}
+  AskAgent: object
+  LogsPanel: object
+  DocsViewer: object
+  ActionQueue: object
+  Navbar: object
+  Sidebar: object
+  MemoryPanel: object
+  StatusPanel: object
+  SearchPanel: object
+  DocsSyncPanel: object
 
   Badge: { text: string; color?: string }
   Button: { label: string }
@@ -45,46 +44,16 @@ type Props = {
 
 const config: Config<Props> = {
   components: {
-    AskAgent: {
-      fields: {},
-      render: () => <AskAgent />,
-    },
-    LogsPanel: {
-      fields: {},
-      render: () => <LogsPanel />,
-    },
-    DocsViewer: {
-      fields: {},
-      render: () => <DocsViewer />,
-    },
-    ActionQueue: {
-      fields: {},
-      render: () => <ActionQueue />,
-    },
-    Navbar: {
-      fields: {},
-      render: () => <Navbar />,
-    },
-    Sidebar: {
-      fields: {},
-      render: () => <Sidebar />,
-    },
-    MemoryPanel: {
-      fields: {},
-      render: () => <MemoryPanel />,
-    },
-    StatusPanel: {
-      fields: {},
-      render: () => <StatusPanel />,
-    },
-    SearchPanel: {
-      fields: {},
-      render: () => <SearchPanel />,
-    },
-    DocsSyncPanel: {
-      fields: {},
-      render: () => <DocsSyncPanel />,
-    },
+    AskAgent: { fields: {}, render: () => <AskAgent /> },
+    LogsPanel: { fields: {}, render: () => <LogsPanel /> },
+    DocsViewer: { fields: {}, render: () => <DocsViewer /> },
+    ActionQueue: { fields: {}, render: () => <ActionQueue /> },
+    Navbar: { fields: {}, render: () => <Navbar /> },
+    Sidebar: { fields: {}, render: () => <Sidebar /> },
+    MemoryPanel: { fields: {}, render: () => <MemoryPanel /> },
+    StatusPanel: { fields: {}, render: () => <StatusPanel /> },
+    SearchPanel: { fields: {}, render: () => <SearchPanel /> },
+    DocsSyncPanel: { fields: {}, render: () => <DocsSyncPanel /> },
 
     // 🧩 UI Elements
     Badge: {
