@@ -102,7 +102,11 @@ export default function MemoryPanel() {
     setMemory(prev => {
       const clone = [...prev]
       const tags = new Set(clone[index].tags || [])
-      tags.has(tag) ? tags.delete(tag) : tags.add(tag)
+      if (tags.has(tag)) {
+        tags.delete(tag)
+      } else {
+        tags.add(tag)
+      }
       clone[index].tags = Array.from(tags)
       return clone
     })
