@@ -1,5 +1,5 @@
 // File: frontend/src/components/MemoryPanel.tsx
-// Purpose: Robust, scalable, tier-aware memory inspector with user filtering, search, source drilldown, and replay support
+// Purpose: Robust, scalable, tier-aware memory inspector with pagination, user filtering, tag/save, date filtering, and replay support
 
 "use client"
 
@@ -32,6 +32,8 @@ interface MemoryEntry {
   prompt_length?: number
   response_length?: number
   fallback?: boolean
+  tags?: string[]
+  saved?: boolean
 }
 
 const isNonEmptyArray = <T,>(arr?: T[] | null): arr is T[] => Array.isArray(arr) && arr.length > 0
@@ -41,8 +43,16 @@ export default function MemoryPanel() {
   const [search, setSearch] = useState("")
   const [filterUser, setFilterUser] = useState("")
   const [filterGlobal, setFilterGlobal] = useState<"any" | "with" | "without">("any")
-  const [fetchInfo, setFetchInfo] = useState({ status: "idle", time: 0, error: undefined as string | undefined })
+  const [filterDays, setFilterDays] = useState(7)
+  const [fetchInfo, setFetchInfo] = useState({
+    status: "idle",
+    time: 0,
+    error: undefined as string | undefined,
+  })
   const [modalContext, setModalContext] = useState<{ path: string; content: string } | null>(null)
+
+  const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = 10
 
   useEffect(() => {
     fetchMemory()
@@ -51,6 +61,7 @@ export default function MemoryPanel() {
   async function fetchMemory() {
     const start = Date.now()
     setFetchInfo({ status: "loading", time: 0, error: undefined })
+
     try {
       const res = await fetch(`${API_ROOT}/logs/sessions/all`, {
         headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
@@ -59,8 +70,9 @@ export default function MemoryPanel() {
       const data = await res.json()
       setMemory(data.entries || [])
       setFetchInfo({ status: "success", time: Date.now() - start, error: "" })
-    } catch (e: any) {
-      setFetchInfo({ status: "error", time: Date.now() - start, error: e?.message || String(e) })
+    } catch (e: unknown) {
+      const errorMsg = e instanceof Error ? e.message : String(e)
+      setFetchInfo({ status: "error", time: Date.now() - start, error: errorMsg })
       setMemory([])
     }
   }
@@ -78,9 +90,30 @@ export default function MemoryPanel() {
     }
   }
 
+  function toggleSave(index: number) {
+    setMemory(prev => {
+      const clone = [...prev]
+      clone[index].saved = !clone[index].saved
+      return clone
+    })
+  }
+
+  function toggleTag(index: number, tag: string) {
+    setMemory(prev => {
+      const clone = [...prev]
+      const tags = new Set(clone[index].tags || [])
+      tags.has(tag) ? tags.delete(tag) : tags.add(tag)
+      clone[index].tags = Array.from(tags)
+      return clone
+    })
+  }
+
   const users = useMemo(() => Array.from(new Set(memory.map(m => m.user))).sort(), [memory])
 
   const filtered = useMemo(() => {
+    const now = Date.now()
+    const cutoff = now - filterDays * 24 * 60 * 60 * 1000
+
     return memory
       .filter(m => {
         const matchUser = !filterUser || m.user === filterUser
@@ -91,14 +124,20 @@ export default function MemoryPanel() {
             : filterGlobal === "with"
             ? !!m.used_global_context
             : !m.used_global_context
-        return matchUser && matchSearch && matchGlobal
+        const matchTime = new Date(m.timestamp).getTime() >= cutoff
+        return matchUser && matchSearch && matchGlobal && matchTime
       })
       .sort((a, b) => {
         const tierScore = (tier?: string) => (tier === "global" ? 3 : tier === "project" ? 2 : tier === "code" ? 1 : 0)
         const maxTier = (files?: ContextSource[]) => Math.max(...(files || []).map(f => tierScore(f.tier)), 0)
         return maxTier(b.files_used) - maxTier(a.files_used)
       })
-  }, [memory, search, filterUser, filterGlobal])
+  }, [memory, search, filterUser, filterGlobal, filterDays])
+
+  const paginated = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filtered.slice(start, start + pageSize)
+  }, [filtered, currentPage])
 
   function replayQuery(query: string) {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank")
@@ -131,9 +170,18 @@ export default function MemoryPanel() {
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
+        <select
+          className="border rounded px-2 py-1 text-sm"
+          value={filterDays}
+          onChange={e => setFilterDays(parseInt(e.target.value))}
+        >
+          {[1, 7, 14, 30, 90].map(days => (
+            <option key={days} value={days}>Last {days} days</option>
+          ))}
+        </select>
       </div>
 
-      {filtered.map((m, i) => (
+      {paginated.map((m, i) => (
         <Card key={i}>
           <CardContent className="p-4 space-y-2">
             <div className="text-sm font-mono text-muted-foreground">
@@ -183,22 +231,71 @@ export default function MemoryPanel() {
               <span className="inline-block px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded">Fallback</span>
             )}
 
+            {m.tags?.length > 0 && (
+              <div className="text-xs text-blue-600">
+                <strong>Tags:</strong> {m.tags.join(", ")}
+              </div>
+            )}
+
             {m.summary && (
               <pre className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">{m.summary}</pre>
             )}
+
+            <div className="flex gap-2 flex-wrap text-xs mt-2">
+              {["important", "bug", "training", "review"].map(tag => (
+                <Button
+                  key={tag}
+                  variant={m.tags?.includes(tag) ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => toggleTag(i, tag)}
+                >
+                  {tag}
+                </Button>
+              ))}
+              <Button
+                variant={m.saved ? "default" : "outline"}
+                size="sm"
+                onClick={() => toggleSave(i)}
+              >
+                {m.saved ? "💾 Saved" : "Save"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => replayQuery(m.query)}>
+                🔁 Replay
+              </Button>
+            </div>
 
             <details className="mt-2">
               <summary className="cursor-pointer text-xs text-blue-700">Debug: Raw Entry</summary>
               <pre className="bg-gray-100 p-2 rounded text-xs overflow-auto">{JSON.stringify(m, null, 2)}</pre>
             </details>
-
-            <Button size="sm" variant="ghost" className="mt-2" onClick={() => replayQuery(m.query)}>
-              🔁 Replay
-            </Button>
           </CardContent>
         </Card>
       ))}
 
+      {/* Pagination controls */}
+      {filtered.length > pageSize && (
+        <div className="flex gap-2 justify-center mt-4">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+          >
+            ⬅ Prev
+          </Button>
+          <span className="text-xs flex items-center">Page {currentPage} / {Math.ceil(filtered.length / pageSize)}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setCurrentPage(p => p + 1)}
+            disabled={currentPage * pageSize >= filtered.length}
+          >
+            Next ➡
+          </Button>
+        </div>
+      )}
+
+      {/* Modal viewer for context file contents */}
       {modalContext && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-40">
           <div className="bg-white rounded shadow-lg max-w-2xl w-full p-6 relative">
