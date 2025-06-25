@@ -1,112 +1,107 @@
-// File: MemoryPanel.tsx
-// Directory: frontend/src/components/
-// Purpose : Displays per-user session memory with context injection source tracking,
-//           filtering, drilldown, and debug display with tier-aware context summary
+// File: frontend/src/components/MemoryPanel.tsx
+// Purpose: Robust, scalable, tier-aware memory inspector with user filtering, search, source drilldown, and replay support
 
-"use client";
+"use client"
 
-import { useEffect, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { API_ROOT } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react"
+import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { API_ROOT } from "@/lib/api"
 
 interface ContextSource {
-  type: string;
-  title?: string;
-  path?: string;
-  tier?: string;
-  score?: number;
-  doc_id?: string;
+  type: string
+  title?: string
+  path?: string
+  tier?: string
+  score?: number
+  doc_id?: string
 }
 
 interface MemoryEntry {
-  timestamp: string;
-  user: string;
-  query: string;
-  topics?: string[];
-  files?: string[];
-  summary?: string;
-  context_length?: number;
-  used_global_context?: boolean;
-  context_files?: string[];
-  files_used?: ContextSource[];
-  agent_response?: string;
-  prompt_length?: number;
-  response_length?: number;
-  fallback?: boolean;
+  timestamp: string
+  user: string
+  query: string
+  topics?: string[]
+  files?: string[]
+  summary?: string
+  context_length?: number
+  used_global_context?: boolean
+  context_files?: string[]
+  files_used?: ContextSource[]
+  agent_response?: string
+  prompt_length?: number
+  response_length?: number
+  fallback?: boolean
 }
 
-function isNonEmptyArray<T>(arr: T[] | undefined | null): arr is T[] {
-  return Array.isArray(arr) && arr.length > 0;
-}
+const isNonEmptyArray = <T,>(arr?: T[] | null): arr is T[] => Array.isArray(arr) && arr.length > 0
 
 export default function MemoryPanel() {
-  const [memory, setMemory] = useState<MemoryEntry[]>([]);
-  const [search, setSearch] = useState("");
-  const [filterUser, setFilterUser] = useState("");
-  const [filterGlobal, setFilterGlobal] = useState<"any" | "with" | "without">("any");
-  const [fetchInfo, setFetchInfo] = useState<{ status: string; time: number; error?: string }>({
-    status: "idle",
-    time: 0
-  });
-  const [modalContext, setModalContext] = useState<{ path: string; content: string } | null>(null);
+  const [memory, setMemory] = useState<MemoryEntry[]>([])
+  const [search, setSearch] = useState("")
+  const [filterUser, setFilterUser] = useState("")
+  const [filterGlobal, setFilterGlobal] = useState<"any" | "with" | "without">("any")
+  const [fetchInfo, setFetchInfo] = useState({ status: "idle", time: 0, error: undefined as string | undefined })
+  const [modalContext, setModalContext] = useState<{ path: string; content: string } | null>(null)
 
-  useEffect(() => { fetchMemory(); }, []);
+  useEffect(() => {
+    fetchMemory()
+  }, [])
 
   async function fetchMemory() {
-    const start = Date.now();
-    setFetchInfo({ status: "loading", time: 0 });
+    const start = Date.now()
+    setFetchInfo({ status: "loading", time: 0, error: undefined })
     try {
       const res = await fetch(`${API_ROOT}/logs/sessions/all`, {
-        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
-      });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const data = await res.json();
-      setMemory(data.entries || []);
-      setFetchInfo({ status: "success", time: Date.now() - start });
-    } catch (e: unknown) {
-      const errorMsg = e instanceof Error ? e.message : String(e);
-      setFetchInfo({ status: "error", time: Date.now() - start, error: errorMsg });
-      setMemory([]);
+        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
+      })
+      if (!res.ok) throw new Error(`Status ${res.status}`)
+      const data = await res.json()
+      setMemory(data.entries || [])
+      setFetchInfo({ status: "success", time: Date.now() - start, error: "" })
+    } catch (e: any) {
+      setFetchInfo({ status: "error", time: Date.now() - start, error: e?.message || String(e) })
+      setMemory([])
     }
   }
 
   async function fetchContextFile(path: string) {
     try {
       const res = await fetch(`${API_ROOT}/files/context?path=${encodeURIComponent(path)}`, {
-        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
-      });
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const content = await res.text();
-      setModalContext({ path, content });
+        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
+      })
+      if (!res.ok) throw new Error(`Status ${res.status}`)
+      const content = await res.text()
+      setModalContext({ path, content })
     } catch (e) {
-      setModalContext({ path, content: `Failed to fetch: ${e}` });
+      setModalContext({ path, content: `Failed to fetch: ${e}` })
     }
   }
 
-  const users = Array.from(new Set(memory.map(m => m.user))).sort();
-  const filtered = memory
-    .filter((m: MemoryEntry) => {
-      const matchUser = !filterUser || m.user === filterUser;
-      const matchSearch = !search || JSON.stringify(m).toLowerCase().includes(search.toLowerCase());
-      const matchGlobal = filterGlobal === "any" ? true : filterGlobal === "with" ? !!m.used_global_context : !m.used_global_context;
-      return matchUser && matchSearch && matchGlobal;
-    })
-    .sort((a, b) => {
-      const tierScore = (tier: string | undefined) => {
-        switch (tier) {
-          case "global": return 3;
-          case "project": return 2;
-          case "code": return 1;
-          default: return 0;
-        }
-      };
-      const maxTier = (files?: ContextSource[]) => Math.max(...(files || []).map(f => tierScore(f.tier)), 0);
-      return maxTier(b.files_used) - maxTier(a.files_used);
-    });
+  const users = useMemo(() => Array.from(new Set(memory.map(m => m.user))).sort(), [memory])
+
+  const filtered = useMemo(() => {
+    return memory
+      .filter(m => {
+        const matchUser = !filterUser || m.user === filterUser
+        const matchSearch = !search || JSON.stringify(m).toLowerCase().includes(search.toLowerCase())
+        const matchGlobal =
+          filterGlobal === "any"
+            ? true
+            : filterGlobal === "with"
+            ? !!m.used_global_context
+            : !m.used_global_context
+        return matchUser && matchSearch && matchGlobal
+      })
+      .sort((a, b) => {
+        const tierScore = (tier?: string) => (tier === "global" ? 3 : tier === "project" ? 2 : tier === "code" ? 1 : 0)
+        const maxTier = (files?: ContextSource[]) => Math.max(...(files || []).map(f => tierScore(f.tier)), 0)
+        return maxTier(b.files_used) - maxTier(a.files_used)
+      })
+  }, [memory, search, filterUser, filterGlobal])
 
   function replayQuery(query: string) {
-    window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank");
+    window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank")
   }
 
   return (
@@ -121,33 +116,41 @@ export default function MemoryPanel() {
       </div>
 
       <div className="flex gap-2 mb-4">
-        <select className="border rounded px-2 py-1 text-sm" value={filterUser} onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")}>
+        <select className="border rounded px-2 py-1 text-sm" value={filterUser} onChange={e => setFilterUser(e.target.value)}>
           <option value="">All Users</option>
           {users.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
-        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")}>
+        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as any)}>
           <option value="any">All Context</option>
           <option value="with">With Global</option>
           <option value="without">Without Global</option>
         </select>
-        <input className="border rounded px-2 py-1 text-sm w-64" placeholder="Search memory..." value={search} onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")} />
+        <input
+          className="border rounded px-2 py-1 text-sm w-64"
+          placeholder="Search memory..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
       </div>
 
-      {filtered.map((m: MemoryEntry, i: number) => (
+      {filtered.map((m, i) => (
         <Card key={i}>
           <CardContent className="p-4 space-y-2">
-            <div className="text-sm font-mono text-muted-foreground">{new Date(m.timestamp).toLocaleString()} • {m.user}</div>
-            <div className="text-sm"><strong>Query:</strong> {m.query}</div>
+            <div className="text-sm font-mono text-muted-foreground">
+              {new Date(m.timestamp).toLocaleString()} • {m.user}
+            </div>
+            <div className="text-sm font-semibold">Query:</div>
+            <div className="text-sm">{m.query}</div>
+
             {isNonEmptyArray(m.topics) && <div className="text-xs">Topics: {m.topics.join(", ")}</div>}
             {isNonEmptyArray(m.files) && <div className="text-xs">Files: {m.files.join(", ")}</div>}
 
             {isNonEmptyArray(m.context_files) && (
               <div className="text-xs text-blue-800">
-                <strong>Context Files:</strong>{" "}
-                {m.context_files.map((cf, idx, arr) => (
+                <strong>Context Files:</strong> {m.context_files.map((cf, idx) => (
                   <span key={cf}>
                     <a className="underline cursor-pointer" onClick={() => fetchContextFile(cf)}>{cf}</a>
-                    {idx < arr.length - 1 ? ", " : ""}
+                    {idx < m.context_files!.length - 1 ? ", " : ""}
                   </span>
                 ))}
               </div>
@@ -156,13 +159,13 @@ export default function MemoryPanel() {
             {isNonEmptyArray(m.files_used) && (
               <div className="text-xs text-purple-700">
                 <strong>Injected:</strong>{" "}
-                {m.files_used.map((f, idx, arr) => (
+                {m.files_used.map((f, idx) => (
                   <span key={idx}>
                     <span className="underline cursor-pointer" onClick={() => f.path && fetchContextFile(f.path)}>
                       {f.path || f.title || f.doc_id || f.type}
                     </span>
                     {f.tier && <span className="ml-1 text-gray-500">[{f.tier}]</span>}
-                    {idx < arr.length - 1 ? ", " : ""}
+                    {idx < m.files_used!.length - 1 ? ", " : ""}
                   </span>
                 ))}
               </div>
@@ -189,7 +192,9 @@ export default function MemoryPanel() {
               <pre className="bg-gray-100 p-2 rounded text-xs overflow-auto">{JSON.stringify(m, null, 2)}</pre>
             </details>
 
-            <Button size="sm" variant="ghost" className="mt-2" onClick={() => replayQuery(m.query)}>🔁 Replay</Button>
+            <Button size="sm" variant="ghost" className="mt-2" onClick={() => replayQuery(m.query)}>
+              🔁 Replay
+            </Button>
           </CardContent>
         </Card>
       ))}
@@ -206,5 +211,5 @@ export default function MemoryPanel() {
         </div>
       )}
     </div>
-  );
+  )
 }

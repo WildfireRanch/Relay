@@ -6,8 +6,7 @@
 import { useEffect, useState } from 'react'
 import { Render } from '@measured/puck'
 import '@measured/puck/puck.css'
-
-import config from './editor/puck.config'
+import config from '@/app/editor/puck.config'
 import { API_ROOT } from '@/lib/api'
 
 export default function Home() {
