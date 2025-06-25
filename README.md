@@ -79,8 +79,17 @@ Relay supports hybrid context/memory awareness across docs, code, and operationa
 * `/status/context` returns freshness and full file inventory (used in StatusPanel)
 * `/status/code` returns tracked source files, last-modified timestamps, and mapped functions
 * Deep logging of every `/ask` event: tracks context files used, prompt/response size, global context, fallback flag
+### 🆕 2025-06-24 Upgrades
 
-**Note:** Place Markdown files in `/context/` or create `docs/generated/global_context.md` so `/status/context` has something to show.
+ * **Aggressive file filtering**: Junk, lockfiles, and binary blobs are excluded from the index.
+ * **Node-native tiered indexing**: All content is chunked to semantic nodes and tagged by tier (`global`, `context`, `project_summary`, `project_docs`, `code`).
+ * **Tier-prioritized search**: Answers are guaranteed to surface project-critical facts first (e.g., from `global_context.md`).
+ * **Deduplication and content hashing**: Only unique context chunks are indexed and surfaced.
+ * **CLI and API explain/debug tools**: Query any term, see similarity/tier breakdown, and debug search results in real time.
+ * **Order-preserving, operator-visible prompt assembly**: All injected context chunks are labeled by tier for traceability and audit.
+
+
+ **Note:** Place Markdown files in `/context/` or create `docs/generated/global_context.md` so `/status/context` has something to show.
 
 **To trigger context/doc sync:**
 
