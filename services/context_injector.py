@@ -3,8 +3,9 @@
 
 import os
 from pathlib import Path
-from services.indexer import collect_code_context  # existing
-from services.kb import query_index                # existing
+# Lightweight helpers for reading code files and KB search
+from services.indexer import collect_code_context
+from services.kb import query_index
 
 # -- Extract function/class names from files --
 def extract_functions(files, base_dir="./"):
