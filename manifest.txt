@@ -1,14 +1,19 @@
 services/logger.py
+services/summarize_memory.py
+services/config.py
 services/env_checker.py
 services/indexer.py
 services/kb.py
-services/embeddings.py
 services/mqtt_client.py
 services/agent.py
 services/gmail.py
+services/context_injector.py
+services/memory.py
 services/google_docs_sync.py
 services/context_engine.py
+services/delete_embeddings.py
 services/settings.py
+services/google.py
 services/_init_.py
 services/miner.py
 services/weather.py
@@ -17,6 +22,7 @@ services/logs.py
 services/solark.py
 frontend/src/app/layout.tsx
 frontend/src/app/page.tsx
+frontend/src/app/audit/page.tsx
 frontend/src/app/control/page.tsx
 frontend/src/app/dashboard/page.tsx
 frontend/src/app/gmail-ops/page.tsx
@@ -24,6 +30,7 @@ frontend/src/app/api/kb/search/route.ts
 frontend/src/app/api/status/summary/route.ts
 frontend/src/app/api/docs/view/route.ts
 frontend/src/app/api/docs/list/route.ts
+frontend/src/app/action-queue/page.tsx
 frontend/src/app/status/page.tsx
 frontend/src/app/settings/page.tsx
 frontend/src/app/docs/page.tsx
@@ -36,4 +43,5 @@ docs/imported/relay_code_update_250605.md
 docs/imported/relay_code_update_250603.md
 docs/imported/repository_overview_250606.md
 docs/imported/🔧_google_docs_sync_integration.md
+docs/generated/global_context.md
 docs/generated/relay_context.md
