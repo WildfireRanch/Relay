@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { Puck } from '@measured/puck'
 import '@measured/puck/puck.css'
-import config from '@src/app/editor/puck.config' 
+import config from '@puck' 
 
 export default function EditorPage() {
   const [initialData, setInitialData] = useState({})
