@@ -199,3 +199,32 @@ npm run dev
 #All context indexed and surfaced by tier, guaranteeing the most relevant info is always injected first
 #Prompt assembly and search logic now 100% order-preserving, with every chunk labeled for operator visibility
 #Operator panels cross-link and provide deep audit for all agent actions
+README / Project Summary Snippet: 2025-06-24
+🟢 Context, Memory, and QA Upgrades
+Robust context pipeline:
+Context is now assembled from highly relevant, tiered chunks (global/project/code), deduplicated and pruned for signal—not just a cut-and-paste dump.
+Agent prompt assembly is order-preserving and operator-visible.
+
+MemoryPanel QA upgrades:
+All context injection sources, priority tiers, and global/project context are now fully traceable and filterable in the MemoryPanel, with defensive array handling and priority context filter.
+
+Semantic search improvements:
+Boosted tier prioritization (global, context, project_summary) in all KB queries—ensuring fact-based answers surface first (even for direct queries).
+
+Code and error hardening:
+Patched all array access for context/files to prevent UI and build errors.
+Added defensive checks for missing/null/undefined values in frontend and backend.
+
+Admin and reindex flow:
+One-click destructive reindex now available in the UI, with full audit logging.
+
+Best practices enforced:
+
+All new memory entries record context files as arrays, never as strings/null.
+
+Context chunking for global/FAQ content tuned for atomic, high-recall QA.
+
+Recommended chunk overlap and chunk size audit for future upgrades.
+
+Debug & explain tools:
+Expanded CLI and UI support for “show context,” “priority filter,” and live context source drilldown.
