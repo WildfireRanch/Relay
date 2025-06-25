@@ -159,7 +159,13 @@ export default function MemoryPanel() {
           <option value="">All Users</option>
           {users.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
-        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as any)}>
+        <select
+          className="border rounded px-2 py-1 text-sm"
+          value={filterGlobal}
+          onChange={e =>
+            setFilterGlobal(e.target.value as 'any' | 'with' | 'without')
+          }
+        >
           <option value="any">All Context</option>
           <option value="with">With Global</option>
           <option value="without">Without Global</option>
