@@ -281,6 +281,11 @@ def search(
 def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
     return search(query=query, k=k, search_type=search_type)
 
+def query_index(query: str, k: int = 4) -> str:
+    """Return formatted search snippets for a query."""
+    results = search(query, k=k)
+    return "\n\n".join(f"{r['title']}:\n{r['snippet']}" for r in results)
+
 def api_reindex(verbose: bool = False) -> dict:
     global _INDEX_CACHE
     embed_all(verbose=verbose)

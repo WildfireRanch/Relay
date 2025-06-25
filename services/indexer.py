@@ -5,6 +5,7 @@
 
 import os
 import glob
+from pathlib import Path
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Document
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
@@ -78,6 +79,18 @@ def get_language_from_path(file_path: str) -> str:
     elif file_path.endswith(".cpp"):
         return "cpp"
     return "python"  # fallback
+
+def collect_code_context(files: list[str], base_dir: str = "./") -> str:
+    """Read and join contents of files for prompt context."""
+    contents: list[str] = []
+    for f in files:
+        path = Path(base_dir) / f
+        if path.exists() and path.is_file():
+            try:
+                contents.append(f"### {f}\n" + path.read_text())
+            except Exception:
+                continue
+    return "\n\n".join(contents)
 
 def index_directories():
     """Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search."""

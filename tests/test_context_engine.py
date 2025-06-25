@@ -6,14 +6,17 @@ import pytest
 
 # Stub services.kb before importing context_engine
 kb_stub = types.ModuleType("services.kb")
-kb_stub.search = lambda query, user_id=None, k=4: [
-    {
-        "path": "doc.md",
-        "snippet": "snippet",
-        "tier": "global",
-        "title": "doc.md",
-    }
-]
+def stub_search(query, user_id=None, k=4, score_threshold=None):
+    return [
+        {
+            "path": "doc.md",
+            "snippet": "snippet",
+            "tier": "global",
+            "title": "doc.md",
+        }
+    ]
+
+kb_stub.search = stub_search
 kb_stub.get_recent_summaries = lambda user_id: "summary"
 kb_stub.api_reindex = lambda: {"status": "ok"}
 sys.modules.setdefault("services.kb", kb_stub)
@@ -37,6 +40,25 @@ def ctx(tmp_path, monkeypatch):
 def test_context_build_includes_search_snippet(ctx):
     result = ctx.build_context("tell me something")
     assert "snippet" in result
+
+
+def test_build_context_passes_threshold(ctx, monkeypatch):
+    called = {}
+
+    def fake_search(query, user_id=None, k=4, score_threshold=None):
+        called["threshold"] = score_threshold
+        return [
+            {
+                "path": "doc.md",
+                "snippet": "snippet",
+                "tier": "global",
+                "title": "doc.md",
+            }
+        ]
+
+    monkeypatch.setattr(kb_stub, "search", fake_search)
+    ctx.build_context("test", score_threshold=0.5)
+    assert called["threshold"] == 0.5
 
 
 def test_env_root_change_clears_cache(tmp_path, monkeypatch):

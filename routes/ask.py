@@ -54,12 +54,17 @@ async def ask_get(
     question: str = Query(...),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     debug: Optional[bool] = Query(False),
-    reflect: Optional[bool] = Query(False)
+    reflect: Optional[bool] = Query(False),
+    score_threshold: Optional[float] = Query(None)
 ):
     user_id = x_user_id or "anonymous"
     try:
+        threshold_env = os.getenv("KB_SCORE_THRESHOLD")
+        threshold = (
+            score_threshold if score_threshold is not None else float(threshold_env) if threshold_env else None
+        )
         ce = ContextEngine(user_id=user_id)
-        context = ce.build_context(question)
+        context = ce.build_context(question, score_threshold=threshold)
         context_files, used_global_context = extract_context_meta(context)
         result = await answer(user_id, question, context=context, reflect=reflect)
         if isinstance(result, str):
@@ -101,15 +106,20 @@ async def ask_post(
     payload: dict,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     debug: Optional[bool] = Query(False),
-    reflect: Optional[bool] = Query(False)
+    reflect: Optional[bool] = Query(False),
+    score_threshold: Optional[float] = Query(None)
 ):
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
     if not question:
         raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
     try:
+        threshold_env = os.getenv("KB_SCORE_THRESHOLD")
+        threshold = (
+            score_threshold if score_threshold is not None else float(threshold_env) if threshold_env else None
+        )
         ce = ContextEngine(user_id=user_id)
-        context = ce.build_context(question)
+        context = ce.build_context(question, score_threshold=threshold)
         context_files, used_global_context = extract_context_meta(context)
         result = await answer(user_id, question, context=context, reflect=reflect)
         if isinstance(result, str):
@@ -152,15 +162,20 @@ async def ask_stream(
     request: Request,
     payload: dict,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
-    reflect: Optional[bool] = Query(False)
+    reflect: Optional[bool] = Query(False),
+    score_threshold: Optional[float] = Query(None)
 ):
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
     if not question:
         raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
     try:
+        threshold_env = os.getenv("KB_SCORE_THRESHOLD")
+        threshold = (
+            score_threshold if score_threshold is not None else float(threshold_env) if threshold_env else None
+        )
         ce = ContextEngine(user_id=user_id)
-        context = ce.build_context(question)
+        context = ce.build_context(question, score_threshold=threshold)
         context_files, used_global_context = extract_context_meta(context)
         full_response = []
         captured_action = None
