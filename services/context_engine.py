@@ -29,9 +29,16 @@ class ContextEngine:
             globals()["_CACHED_ENV_ROOT"] = env_root
         self.base = Path(env_root).resolve() if env_root else Path(base or Path.cwd())
 
-    def build_context(self, query: str, k: int = 8) -> str:
+    def build_context(
+        self,
+        query: str,
+        k: int = 8,
+        score_threshold: Optional[float] = None,
+    ) -> str:
         """
         Build a tiered, labeled agent context window using prioritized semantic search.
+        Optionally filter out low-scoring KB hits.
+
         Returns a prompt like:
             # [Global Context]
             ...
@@ -43,7 +50,12 @@ class ContextEngine:
             ...
         """
         # 1. Priority-aware semantic search (returns ordered, tier-labeled blocks)
-        results = kb.search(query, k=k, user_id=self.user_id)
+        results = kb.search(
+            query,
+            k=k,
+            user_id=self.user_id,
+            score_threshold=score_threshold,
+        )
         blocks = []
         for r in results:
             # Compose a readable label based on tier

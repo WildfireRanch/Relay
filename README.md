@@ -62,6 +62,7 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `POST_AUTH_REDIRECT_URI` | Backend  | Redirect URI post-auth                            |
 | `INDEX_ROOT`             | Backend  | Filesystem path for semantic index                |
 | `KB_EMBED_MODEL`         | Backend  | Embedding model for KB                            |
+| `KB_SCORE_THRESHOLD`     | Backend  | Minimum similarity score for KB search |
 | `RELAY_PROJECT_ROOT`     | Backend  | Root path for doc/code/context scans              |
 | `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to browser                        |
 | `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                    |
@@ -113,6 +114,7 @@ Echo will auto-inject:
 
 To run the optional reflection & planning step, set `ENABLE_REFLECT_AND_PLAN=1` or
 append `?reflect=1` to `/ask` requests.
+Set `KB_SCORE_THRESHOLD` or pass `?score_threshold=0.15` to filter low-scoring KB results.
 
 ---
 
