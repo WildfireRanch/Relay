@@ -121,16 +121,16 @@ export default function MemoryPanel() {
       </div>
 
       <div className="flex gap-2 mb-4">
-        <select className="border rounded px-2 py-1 text-sm" value={filterUser} onChange={e => setFilterUser(e.target.value)}>
+        <select className="border rounded px-2 py-1 text-sm" value={filterUser} onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")}>
           <option value="">All Users</option>
           {users.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
-        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as any)}>
+        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")}>
           <option value="any">All Context</option>
           <option value="with">With Global</option>
           <option value="without">Without Global</option>
         </select>
-        <input className="border rounded px-2 py-1 text-sm w-64" placeholder="Search memory..." value={search} onChange={e => setSearch(e.target.value)} />
+        <input className="border rounded px-2 py-1 text-sm w-64" placeholder="Search memory..." value={search} onChange={e => setFilterGlobal(e.target.value as "any" | "with" | "without")} />
       </div>
 
       {filtered.map((m: MemoryEntry, i: number) => (
