@@ -14,6 +14,7 @@ const sections = [
       { href: "/ask", label: "Ask Echo", icon: "💬" },
       { href: "/docs", label: "Docs", icon: "📚" },
       { href: "/status", label: "Status", icon: "📊" },
+      { href: "/metricschart", label: "Metrics", icon: "📈" },
       { href: "/editor", label: "Sandbox", icon: "🧩" }, // ← Added here
     ],
   },
