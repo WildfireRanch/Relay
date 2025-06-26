@@ -2,7 +2,7 @@ import type { Config } from '@measured/puck'
 
 // 🧩 Full Panel Components
 import ActionQueue from '../../components/ActionQueue/ActionQueuePanel'
-import AskAgent from '../../components/AskAgent/AskAgent'
+import AskAgent from '../../components/AskAgent'
 import DocsSyncPanel from '../../components/DocsSyncPanel'
 import DocsViewer from '../../components/DocsViewer/DocsViewer'
 import LogsPanel from '../../components/LogsPanel/LogsPanel'
