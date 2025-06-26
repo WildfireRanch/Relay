@@ -1,4 +1,7 @@
 // File: frontend/src/components/Codex/CodexPatchView.tsx
+
+"use client";
+
 interface Props {
   patch: string;
 }

@@ -1,4 +1,6 @@
 // File: frontend/src/components/Codex/CodexEditor.tsx
+"use client";
+
 import { Textarea } from "@/components/ui/textarea";
 
 interface Props {
