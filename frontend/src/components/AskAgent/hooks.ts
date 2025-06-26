@@ -1,27 +1,30 @@
-import { useState, useRef } from "react"
-import { API_ROOT } from "@/lib/api"
+// File: components/AskAgent/hooks.ts
+
+import { useState } from "react";
+import { API_ROOT } from "@/lib/api";
 
 export interface Message {
-  user: string
-  agent: string
-  context?: string
-  action?: { type: string; payload: unknown }
-  id?: string
-  status?: "pending" | "approved" | "denied"
+  user: string;
+  agent: string;
+  context?: string;
+  action?: { type: string; payload: unknown };
+  id?: string;
+  status?: "pending" | "approved" | "denied";
 }
 
 export function useAskAgent(userId: string) {
-  const [messages, setMessages] = useState<Message[]>([])
-  const [loading, setLoading] = useState(false)
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const sendQuery = async (
     query: string,
-    files: string[],
-    topics: string[],
-    scrollToBottom: () => void
+    files: string[] = [],
+    topics: string[] = [],
+    scrollToBottom?: () => void
   ) => {
-    if (!query.trim()) return
-    setLoading(true)
+    if (!query.trim()) return;
+
+    setLoading(true);
 
     try {
       const res = await fetch(`${API_ROOT}/ask?debug=true`, {
@@ -30,15 +33,12 @@ export function useAskAgent(userId: string) {
           "Content-Type": "application/json",
           "X-User-Id": userId,
         },
-        body: JSON.stringify({
-          question: query,
-          files,
-          topics,
-        }),
-      })
+        body: JSON.stringify({ question: query, files, topics }),
+      });
 
-      const data = await res.json()
-      setMessages(prev => [
+      const data = await res.json();
+
+      setMessages((prev) => [
         ...prev,
         {
           user: query,
@@ -46,22 +46,20 @@ export function useAskAgent(userId: string) {
           context: data?.context,
           action: data?.action,
           id: data?.id,
-          status: "pending",
+          status: data?.id ? "pending" : undefined,
         },
-      ])
-      scrollToBottom()
-    } catch {
-      setMessages(prev => [
-        ...prev,
-        {
-          user: query,
-          agent: "Error contacting Relay.",
-        },
-      ])
-    }
+      ]);
 
-    setLoading(false)
-  }
+      scrollToBottom?.();
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { user: query, agent: "Error contacting Relay." },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const updateActionStatus = async (
     id: string,
@@ -76,20 +74,22 @@ export function useAskAgent(userId: string) {
           "X-User-Id": userId,
         },
         body: JSON.stringify({ id, comment: "inline approval" }),
-      })
+      });
 
-      setMessages(prev => {
-        const updated = [...prev]
-        updated[idx] = {
-          ...updated[idx],
-          status: action === "approve" ? "approved" : "denied",
+      setMessages((prev) => {
+        const updated = [...prev];
+        if (updated[idx]) {
+          updated[idx] = {
+            ...updated[idx],
+            status: action === "approve" ? "approved" : "denied",
+          };
         }
-        return updated
-      })
+        return updated;
+      });
     } catch {
-      alert("Error approving/denying action.")
+      alert("Error approving/denying action.");
     }
-  }
+  };
 
   return {
     messages,
@@ -97,5 +97,5 @@ export function useAskAgent(userId: string) {
     sendQuery,
     updateActionStatus,
     loading,
-  }
+  };
 }
