@@ -102,7 +102,11 @@ export default function MemoryPanel() {
     setMemory(prev => {
       const clone = [...prev]
       const tags = new Set(clone[index].tags || [])
-      tags.has(tag) ? tags.delete(tag) : tags.add(tag)
+      if (tags.has(tag)) {
+        tags.delete(tag)
+      } else {
+        tags.add(tag)
+      }
       clone[index].tags = Array.from(tags)
       return clone
     })
@@ -159,7 +163,15 @@ export default function MemoryPanel() {
           <option value="">All Users</option>
           {users.map(u => <option key={u} value={u}>{u}</option>)}
         </select>
-        <select className="border rounded px-2 py-1 text-sm" value={filterGlobal} onChange={e => setFilterGlobal(e.target.value as any)}>
+        <select
+          className="border rounded px-2 py-1 text-sm"
+          value={filterGlobal}
+          onChange={e =>
+            setFilterGlobal(
+              e.target.value as "any" | "with" | "without"
+            )
+          }
+        >
           <option value="any">All Context</option>
           <option value="with">With Global</option>
           <option value="without">Without Global</option>
