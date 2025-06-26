@@ -1,6 +1,6 @@
 // File: src/components/index.ts
 
-export { default as AskAgent } from "./AskAgent";
+export { default as AskEcho } from "./AskAgent/ChatWindow";
 export { default as ActionQueuePanel } from "./ActionQueue/ActionQueuePanel";
 export { default as AuditPanel } from "./AuditPanel/AuditPanel";
 export { default as DocsViewer } from "./DocsViewer/DocsViewer";
