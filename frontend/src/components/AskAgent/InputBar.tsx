@@ -1,5 +1,7 @@
 // File: components/AskAgent/InputBar.tsx
 
+import React from "react";
+
 type Props = {
   value: string;
   onChange: (val: string) => void;
@@ -7,7 +9,7 @@ type Props = {
   loading: boolean;
 };
 
-export default function InputBar({ value, onChange, onSend, loading }: Props) {
+const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
   return (
     <form
       onSubmit={(e) => {
@@ -15,6 +17,7 @@ export default function InputBar({ value, onChange, onSend, loading }: Props) {
         onSend();
       }}
       className="flex items-center gap-2 mt-4"
+      autoComplete="off"
     >
       <input
         type="text"
@@ -41,4 +44,6 @@ export default function InputBar({ value, onChange, onSend, loading }: Props) {
       </button>
     </form>
   );
-}
+};
+
+export default InputBar;

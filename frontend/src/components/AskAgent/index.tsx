@@ -1,5 +1,5 @@
-// File: AskAgent.tsx
-// Directory: frontend/src/components
+// File: Index.tsx
+// Directory: frontend/src/components/AskAgent
 // Purpose: Agent query panel with inline patch review, context toggles, and live control queue integration
 
 "use client";

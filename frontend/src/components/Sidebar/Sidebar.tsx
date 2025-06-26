@@ -19,7 +19,7 @@ const sections = [
     ],
   },
   {
-    title: "Ops",
+    title: "Operations",
     links: [
       { href: "/action-queue", label: "Action Queue", icon: "📋" },
       { href: "/audit", label: "Audit Log", icon: "🛡️" },
