@@ -231,10 +231,11 @@ export default function MemoryPanel() {
               <span className="inline-block px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded">Fallback</span>
             )}
 
-            {m.tags?.length > 0 && (
-              <div className="text-xs text-blue-600">
-                <strong>Tags:</strong> {m.tags.join(", ")}
-              </div>
+           {Array.isArray(m.tags) && m.tags.length > 0 && (
+           <div className="text-xs text-blue-600">
+           <strong>Tags:</strong> {m.tags.join(", ")}
+           </div>
+           
             )}
 
             {m.summary && (
