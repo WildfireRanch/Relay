@@ -8,7 +8,7 @@ import os
 from typing import Dict, Any, Optional, AsyncGenerator
 from typing import Dict, Tuple
 from openai import AsyncOpenAI, OpenAIError
-from utils.patch_utils import validate_patch_format  # TODO: Implement this helper
+from utils.patch_utils import validate_patch_format
 from core.logging import log_event  # Centralized Relay logging
 from dotenv import load_dotenv
 
