@@ -5,8 +5,7 @@
 # Dependencies: OpenAI (GPT-4), Relay config, project file context
 
 import os
-from typing import Dict, Any, Optional, AsyncGenerator
-from typing import Dict, Tuple
+from typing import Dict, Any, Optional, AsyncGenerator, Tuple
 from openai import AsyncOpenAI, OpenAIError
 from utils.patch_utils import validate_patch_format
 from core.logging import log_event  # Centralized Relay logging
