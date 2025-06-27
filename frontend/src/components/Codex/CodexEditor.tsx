@@ -1,23 +1,17 @@
-// File: frontend/src/components/Codex/CodexEditor.tsx
 "use client";
 
-import { Textarea } from "@/components/ui/textarea";
-
+// File: frontend/src/components/Codex/CodexPatchView.tsx
 interface Props {
-  code: string;
-  setCode: (val: string) => void;
+  patch: string;
 }
 
-export default function CodexEditor({ code, setCode }: Props) {
+export default function CodexPatchView({ patch }: Props) {
   return (
-    <div>
-      <label className="block text-sm font-medium mb-1">Code Context</label>
-      <Textarea
-        value={code}
-        onChange={(e) => setCode(e.target.value)}
-        className="w-full min-h-[200px] font-mono text-sm bg-gray-50"
-        placeholder="Paste your code here..."
-      />
+    <div className="mt-4">
+      <label className="block text-sm font-medium mb-1">Generated Patch</label>
+      <pre className="w-full max-h-[500px] overflow-auto bg-black text-green-400 p-4 rounded text-sm whitespace-pre-wrap">
+        {patch || "No patch yet."}
+      </pre>
     </div>
   );
 }

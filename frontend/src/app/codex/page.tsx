@@ -1,38 +1,17 @@
-// File: frontend/src/app/codex/page.tsx
+"use client";
 
-import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
-import { useState } from "react";
+// File: frontend/src/components/Codex/CodexPatchView.tsx
+interface Props {
+  patch: string;
+}
 
-export default function CodexPage() {
-  const [code, setCode] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [streamingPatch, setStreamingPatch] = useState("");
-
+export default function CodexPatchView({ patch }: Props) {
   return (
-    <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold">🧠 Codex — Code Editing Agent</h1>
-
-      <CodexEditor code={code} setCode={setCode} />
-      <CodexPromptBar prompt={prompt} setPrompt={setPrompt} onSubmit={async () => {
-        setStreamingPatch("⏳ Working...");
-        const res = await fetch("/ask/codex_stream", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: prompt, context: code }),
-        });
-
-        const reader = res.body?.getReader();
-        const decoder = new TextDecoder();
-        let patch = "";
-        while (true) {
-          const { value, done } = await reader!.read();
-          if (done) break;
-          patch += decoder.decode(value, { stream: true });
-          setStreamingPatch(patch);
-        }
-      }} />
-
-      <CodexPatchView patch={streamingPatch} />
+    <div className="mt-4">
+      <label className="block text-sm font-medium mb-1">Generated Patch</label>
+      <pre className="w-full max-h-[500px] overflow-auto bg-black text-green-400 p-4 rounded text-sm whitespace-pre-wrap">
+        {patch || "No patch yet."}
+      </pre>
     </div>
   );
 }

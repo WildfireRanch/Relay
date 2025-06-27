@@ -1,7 +1,6 @@
-// File: frontend/src/components/Codex/CodexPatchView.tsx
-
 "use client";
 
+// File: frontend/src/components/Codex/CodexPatchView.tsx
 interface Props {
   patch: string;
 }
