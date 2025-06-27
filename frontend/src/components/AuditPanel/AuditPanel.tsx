@@ -1,3 +1,7 @@
+// File: AuditPanel.tsx
+// Directory: frontend/src/components
+// Purpose: Unified agent audit dashboard with drilldown into agent actions/patches and related context
+
 "use client";
 
 import { useEffect, useState } from "react";
@@ -40,22 +44,33 @@ export default function AuditPanel() {
 
   // === Fetch audit logs from backend ===
   async function fetchLog() {
-    const res = await fetch("/control/list_log", {
-      headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
-    });
-    const data = await res.json();
-    setLogs(data.log || []);
+    try {
+      const res = await fetch("/control/list_log", {
+        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
+      });
+      if (!res.ok) throw new Error("Bad response");
+      const data = await res.json();
+      setLogs(data.log || []);
+    } catch (err) {
+      console.error("[AuditPanel] Failed to fetch logs:", err);
+      setLogs([]);
+    }
   }
 
   // === Fetch related queue action by id ===
   async function fetchRelated(id: string) {
-    const res = await fetch("/control/list_queue", {
-      headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
-    });
-    const data = await res.json();
-    // Find the matching action by ID, typed correctly
-    const action: ActionDetail | undefined = (data.actions as ActionDetail[] | undefined)?.find(a => a.id === id);
-    setRelatedAction(action || null);
+    try {
+      const res = await fetch("/control/list_queue", {
+        headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
+      });
+      if (!res.ok) throw new Error("Bad response");
+      const data = await res.json();
+      const action: ActionDetail | undefined = (data.actions as ActionDetail[] | undefined)?.find(a => a.id === id);
+      setRelatedAction(action || null);
+    } catch (err) {
+      console.error("[AuditPanel] Failed to fetch related action:", err);
+      setRelatedAction(null);
+    }
   }
 
   useEffect(() => {
@@ -70,10 +85,10 @@ export default function AuditPanel() {
     (!filter.type || entry.type === filter.type) &&
     (!filter.status || entry.status === filter.status) &&
     (search.trim() === "" ||
-      entry.comment?.toLowerCase().includes(search.toLowerCase()) ||
-      entry.type?.toLowerCase().includes(search.toLowerCase()) ||
-      entry.path?.toLowerCase().includes(search.toLowerCase()) ||
-      entry.id?.toLowerCase().includes(search.toLowerCase()))
+      (entry.comment?.toLowerCase().includes(search.toLowerCase()) ?? false) ||
+      (entry.type?.toLowerCase().includes(search.toLowerCase()) ?? false) ||
+      (entry.path?.toLowerCase().includes(search.toLowerCase()) ?? false) ||
+      (entry.id?.toLowerCase().includes(search.toLowerCase()) ?? false))
   );
 
   // === Export as JSON/CSV ===
@@ -83,7 +98,6 @@ export default function AuditPanel() {
     if (format === "json") {
       blob = new Blob([JSON.stringify(filtered, null, 2)], { type: "application/json" });
     } else {
-      // Simple CSV
       const header = ["id", "type", "path", "timestamp", "status", "user", "comment"];
       const csv = [
         header.join(","),

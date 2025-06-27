@@ -1,4 +1,4 @@
-# File: scripts/generate_global_context_auto.py
+# File: scripts/generate_global_context.auto.py
 # Purpose: Auto-generate /docs/generated/global_context.auto.md from all /context/*.md
 
 from pathlib import Path

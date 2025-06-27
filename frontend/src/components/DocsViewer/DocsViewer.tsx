@@ -1,5 +1,7 @@
-// File: frontend/src/components/DocsViewer.tsx
-// Purpose: Browse docs, run semantic search, and preview agent context for any question.
+// File: DocsViewer.tsx
+// Directory: frontend/src/components/
+// Purpose : Browse, manage, and debug semantic context docs with tier-aware metadata,
+//           sync, promotion, pinning, and prioritization (tier control)
 
 "use client";
 
@@ -8,6 +10,14 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 const apiUrl = API_ROOT || "";
+
+type KBMeta = {
+  path: string;
+  doc_id?: string;
+  tier?: string;
+  source?: string;
+  last_modified?: string;
+};
 
 type KBHit = {
   file?: string;
@@ -18,45 +28,33 @@ type KBHit = {
 };
 
 export default function DocsViewer() {
-  // Tabs: docs, search, context
   const [tab, setTab] = useState<"docs" | "search" | "context">("docs");
 
-  // ----- Docs state -----
-  const [docs, setDocs] = useState<string[]>([]);
+  const [docs, setDocs] = useState<KBMeta[]>([]);
   const [activeDoc, setActiveDoc] = useState<string | null>(null);
   const [content, setContent] = useState<string>("");
 
-  // ---- Google sync ----
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
 
-  // ---- Semantic Search state ----
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<KBHit[]>([]);
   const [selectedHit, setSelectedHit] = useState<number | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
-  // ---- Agent Context Trace state ----
   const [ctxQuestion, setCtxQuestion] = useState("");
   const [ctxLoading, setCtxLoading] = useState(false);
   const [ctxResult, setCtxResult] = useState<string>("");
 
-  // ---- Effects: load docs on docs tab ----
   useEffect(() => {
-    if (tab === "docs") {
-      loadDocs();
-    }
+    if (tab === "docs") loadDocs();
   }, [tab]);
 
   useEffect(() => {
-    if (activeDoc) {
-      loadContent(activeDoc);
-    } else {
-      setContent("");
-    }
+    if (activeDoc) loadContent(activeDoc);
+    else setContent("");
   }, [activeDoc]);
 
-  // ---- Docs ----
   async function loadDocs() {
     try {
       const res = await fetch(`${apiUrl}/docs/list`);
@@ -66,6 +64,7 @@ export default function DocsViewer() {
       setDocs([]);
     }
   }
+
   async function loadContent(path: string) {
     try {
       const res = await fetch(`${apiUrl}/docs/view?path=${encodeURIComponent(path)}`);
@@ -75,6 +74,7 @@ export default function DocsViewer() {
       setContent("Failed to load doc.");
     }
   }
+
   async function handleSync() {
     setSyncing(true);
     setSyncStatus(null);
@@ -84,13 +84,68 @@ export default function DocsViewer() {
       setSyncStatus(`✅ Synced ${data.synced_docs.length} docs.`);
       await loadDocs();
     } catch {
-      setSyncStatus(`❌ Sync failed`);
+      setSyncStatus("❌ Sync failed");
     } finally {
       setSyncing(false);
     }
   }
 
-  // ---- Semantic Search ----
+  async function handlePrune() {
+    try {
+      const res = await fetch(`${apiUrl}/docs/prune_duplicates`, { method: "POST" });
+      const data = await res.json();
+      alert(`🧹 Pruned ${data.removed || 0} duplicates.`);
+      await loadDocs();
+    } catch {
+      alert("❌ Prune failed.");
+    }
+  }
+
+  async function handlePromote(path: string) {
+    try {
+      const res = await fetch(`${apiUrl}/docs/promote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path }),
+      });
+      const data = await res.json();
+      alert(`⬆️ Promoted to canonical: ${data.promoted || "unknown"}`);
+      await loadDocs();
+    } catch {
+      alert("❌ Promote failed.");
+    }
+  }
+
+  async function handlePin(path: string) {
+    try {
+      const res = await fetch(`${apiUrl}/docs/mark_priority`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, pinned: true }),
+      });
+      const data = await res.json();
+      alert(`📌 Pinned: ${data.updated}`);
+      await loadDocs();
+    } catch {
+      alert("❌ Failed to pin doc.");
+    }
+  }
+
+  async function handleSetTier(path: string, tier: string) {
+    try {
+      const res = await fetch(`${apiUrl}/docs/mark_priority`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, tier }),
+      });
+      const data = await res.json();
+      alert(`🎯 Tier set to: ${data.tier}`);
+      await loadDocs();
+    } catch {
+      alert("❌ Failed to set tier.");
+    }
+  }
+
   async function doSearch(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setSearchLoading(true);
@@ -106,17 +161,13 @@ export default function DocsViewer() {
     setSearchLoading(false);
   }
 
-  // ---- Agent Context Tab ----
   async function fetchContextForPrompt(e?: React.FormEvent) {
     if (e) e.preventDefault();
     if (!ctxQuestion) return;
     setCtxLoading(true);
     setCtxResult("");
     try {
-      // Call /ask?question=...&debug=true to get actual context window
-      const res = await fetch(
-        `${apiUrl}/ask?question=${encodeURIComponent(ctxQuestion)}&debug=true`
-      );
+      const res = await fetch(`${apiUrl}/ask?question=${encodeURIComponent(ctxQuestion)}&debug=true`);
       const data = await res.json();
       setCtxResult(data.context || "No context returned.");
     } catch {
@@ -125,7 +176,6 @@ export default function DocsViewer() {
     setCtxLoading(false);
   }
 
-  // ---- UI ----
   return (
     <div className="max-w-5xl mx-auto py-6">
       <div className="flex gap-4 mb-4">
@@ -140,31 +190,44 @@ export default function DocsViewer() {
         </Button>
       </div>
 
-      {/* ---- DOCS TAB ---- */}
       {tab === "docs" && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="space-y-4 col-span-1">
             <div className="space-y-2">
               <h2 className="font-semibold">Docs</h2>
-              <div className="h-[400px] overflow-auto border rounded-md p-2">
+              <div className="h-[400px] overflow-auto border rounded-md p-2 text-xs">
                 {docs.map((doc) => (
-                  <Button
-                    key={doc}
-                    variant={doc === activeDoc ? "default" : "ghost"}
-                    className="w-full justify-start text-left"
-                    onClick={() => setActiveDoc(doc)}
-                  >
-                    {doc.replace("imported/", "")}
-                  </Button>
+                  <div key={doc.path} className="mb-2">
+                    <Button
+                      variant={doc.path === activeDoc ? "default" : "ghost"}
+                      className="w-full justify-start text-left"
+                      onClick={() => setActiveDoc(doc.path)}
+                    >
+                      {doc.path.replace(/^.*[\\/]/, "")}
+                    </Button>
+                    <div className="text-gray-500">
+                      {doc.tier || "—"} · {doc.source || "local"}
+                    </div>
+                    <div className="text-gray-400">{doc.doc_id || "—"}</div>
+                    {doc.path !== activeDoc && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        <Button variant="outline" size="sm" onClick={() => handlePromote(doc.path)}>⬆️ Promote</Button>
+                        <Button variant="outline" size="sm" onClick={() => handlePin(doc.path)}>📌 Pin</Button>
+                        <Button variant="outline" size="sm" onClick={() => handleSetTier(doc.path, "global")}>🎯 Global</Button>
+                        <Button variant="outline" size="sm" onClick={() => handleSetTier(doc.path, "project")}>🪪 Project</Button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
-            <div>
-              <Button onClick={handleSync} disabled={syncing} className="w-full text-sm">
-                {syncing ? "🔄 Syncing..." : "🔄 Sync Google Docs"}
-              </Button>
-              {syncStatus && <p className="text-xs text-muted-foreground mt-2">{syncStatus}</p>}
-            </div>
+            <Button onClick={handleSync} disabled={syncing} className="w-full text-sm">
+              {syncing ? "🔄 Syncing..." : "🔄 Sync Google Docs"}
+            </Button>
+            <Button onClick={handlePrune} className="w-full text-sm mt-2">
+              🧹 Prune Duplicates
+            </Button>
+            {syncStatus && <p className="text-xs text-muted-foreground mt-2">{syncStatus}</p>}
           </div>
           <div className="col-span-3">
             <h2 className="font-semibold mb-2">{activeDoc || "Select a document"}</h2>
@@ -175,7 +238,6 @@ export default function DocsViewer() {
         </div>
       )}
 
-      {/* ---- SEMANTIC SEARCH TAB ---- */}
       {tab === "search" && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="space-y-4 col-span-1">
@@ -184,7 +246,7 @@ export default function DocsViewer() {
                 className="border px-2 py-1 rounded w-full"
                 placeholder="Semantic search code/docs…"
                 value={search}
-                onChange={e => setSearch(e.target.value)}
+                onChange={(e) => setSearch(e.target.value)}
               />
               <Button className="px-3" type="submit" disabled={searchLoading}>
                 {searchLoading ? "…" : "Go"}
@@ -198,10 +260,11 @@ export default function DocsViewer() {
                   className="w-full justify-start text-left text-xs"
                   onClick={() => setSelectedHit(i)}
                 >
-                  {(hit.file || hit.type || "snippet") +
-                    (hit.line ? ` :L${hit.line}` : "")}
+                  {(hit.file || hit.type || "snippet") + (hit.line ? ` :L${hit.line}` : "")}
                   <div className="truncate">{hit.snippet.slice(0, 70)}…</div>
-                  <span className="text-gray-500">{hit.score !== undefined ? `score: ${hit.score.toFixed(2)}` : ""}</span>
+                  <span className="text-gray-500">
+                    {hit.score !== undefined ? `score: ${hit.score.toFixed(2)}` : ""}
+                  </span>
                 </Button>
               ))}
             </div>
@@ -226,7 +289,6 @@ export default function DocsViewer() {
         </div>
       )}
 
-      {/* ---- AGENT CONTEXT TAB ---- */}
       {tab === "context" && (
         <div className="max-w-2xl mx-auto mt-8">
           <form className="flex gap-2 mb-4" onSubmit={fetchContextForPrompt}>
@@ -234,7 +296,7 @@ export default function DocsViewer() {
               className="border px-2 py-1 rounded w-full"
               placeholder="Type a user/agent prompt…"
               value={ctxQuestion}
-              onChange={e => setCtxQuestion(e.target.value)}
+              onChange={(e) => setCtxQuestion(e.target.value)}
             />
             <Button type="submit" disabled={ctxLoading}>
               {ctxLoading ? "…" : "Show Context"}

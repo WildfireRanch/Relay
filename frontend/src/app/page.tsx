@@ -1,12 +1,24 @@
-// File: frontend/src/app/page.tsx
-// Purpose: WildfireRanch Command Center homepage with Echo (top-right) and Relay (Ask Agent header)
+// File: src/app/page.tsx
+// Purpose: Homepage + dynamic layout rendering from saved file (layout.json)
 
-import { API_ROOT } from "@/lib/api";
-import AskAgent from "@/components/AskAgent/AskAgent";
-import SearchPanel from "@/components/SearchPanel";
-import StatusPanel from "@/components/StatusPanel";
+'use client'
+
+import { useEffect, useState } from 'react'
+import { Render } from '@measured/puck'
+import '@measured/puck/puck.css'
+import config from '@/app/editor/puck.config'
+import { API_ROOT } from '@/lib/api'
 
 export default function Home() {
+  const [layout, setLayout] = useState({})
+
+  useEffect(() => {
+    fetch('/layout.json')
+      .then(res => res.json())
+      .then(data => setLayout(data))
+      .catch(() => console.warn('⚠️ No layout.json found, rendering empty layout'))
+  }, [])
+
   return (
     <main className="p-6 space-y-6 relative">
       {/* Echo - Strategist (top-right corner) */}
@@ -33,28 +45,13 @@ export default function Home() {
       <h1 className="text-3xl font-bold">WildfireRanch Command Center</h1>
       <p className="text-muted-foreground">Relay is ready for action.</p>
 
-      {/* AskAgent module with Relay branding */}
-      <div className="mt-6">
-        <div className="flex items-center gap-2 mb-2">
-          <img src="/Relay.png" alt="Relay" className="w-6 h-6 rounded-sm" />
-          <h2 className="text-xl font-semibold">Ask Relay</h2>
-        </div>
-        <AskAgent />
-      </div>
-
-      {/* Search Knowledge Base */}
-      <div className="mt-6">
-        <h2 className="text-xl font-semibold mb-2">Search Knowledge Base</h2>
-        <SearchPanel />
-      </div>
-
-      {/* Inline Relay Status */}
-      <StatusPanel />
+      {/* Dynamic layout from Puck */}
+      <Render config={config} data={layout} />
 
       {/* API root in footer for debugging */}
       <div className="text-xs text-gray-400 text-center mt-6">
         API root: <span className="font-mono">{API_ROOT}</span>
       </div>
     </main>
-  );
+  )
 }

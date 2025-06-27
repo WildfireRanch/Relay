@@ -51,6 +51,7 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `ENV`                    | Backend  | `local`, `develop`, `main` for env-specific logic |
 | `API_KEY`                | Backend  | Master API key for protected endpoints            |
 | `ENABLE_ADMIN_TOOLS`     | Backend  | Enables `/admin/*` endpoints                      |
+| `ENABLE_REFLECT_AND_PLAN` | Backend  | Run reflection step before answering |
 | `FRONTEND_ORIGIN`        | Backend  | CORS allowlist override                           |
 | `OPENAI_API_KEY`         | Backend  | For embeddings and agent chat/completions         |
 | `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)      |
@@ -61,6 +62,7 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `POST_AUTH_REDIRECT_URI` | Backend  | Redirect URI post-auth                            |
 | `INDEX_ROOT`             | Backend  | Filesystem path for semantic index                |
 | `KB_EMBED_MODEL`         | Backend  | Embedding model for KB                            |
+| `KB_SCORE_THRESHOLD`     | Backend  | Minimum similarity score for KB search |
 | `RELAY_PROJECT_ROOT`     | Backend  | Root path for doc/code/context scans              |
 | `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to browser                        |
 | `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                    |
@@ -78,6 +80,17 @@ Relay supports hybrid context/memory awareness across docs, code, and operationa
 * `/status/context` returns freshness and full file inventory (used in StatusPanel)
 * `/status/code` returns tracked source files, last-modified timestamps, and mapped functions
 * Deep logging of every `/ask` event: tracks context files used, prompt/response size, global context, fallback flag
+### 🆕 2025-06-24 Upgrades
+
+ * **Aggressive file filtering**: Junk, lockfiles, and binary blobs are excluded from the index.
+ * **Node-native tiered indexing**: All content is chunked to semantic nodes and tagged by tier (`global`, `context`, `project_summary`, `project_docs`, `code`).
+ * **Tier-prioritized search**: Answers are guaranteed to surface project-critical facts first (e.g., from `global_context.md`).
+ * **Deduplication and content hashing**: Only unique context chunks are indexed and surfaced.
+ * **CLI and API explain/debug tools**: Query any term, see similarity/tier breakdown, and debug search results in real time.
+ * **Order-preserving, operator-visible prompt assembly**: All injected context chunks are labeled by tier for traceability and audit.
+
+
+ **Note:** Place Markdown files in `/context/` or create `docs/generated/global_context.md` so `/status/context` has something to show.
 
 **To trigger context/doc sync:**
 
@@ -107,6 +120,10 @@ Echo will auto-inject:
 * Domain/project context (e.g. from `/context/context-solarshack.md`)
 * Function names from specified files
 * Global project context if present
+
+To run the optional reflection & planning step, set `ENABLE_REFLECT_AND_PLAN=1` or
+append `?reflect=1` to `/ask` requests.
+Set `KB_SCORE_THRESHOLD` or pass `?score_threshold=0.15` to filter low-scoring KB results.
 
 ---
 
@@ -176,3 +193,50 @@ npm run dev
 ---
 
 *Last updated: 2025-06-23*
+
+##NEED TO INCORPORATE:
+#Recent upgrades:
+#All context indexed and surfaced by tier, guaranteeing the most relevant info is always injected first
+#Prompt assembly and search logic now 100% order-preserving, with every chunk labeled for operator visibility
+#Operator panels cross-link and provide deep audit for all agent actions
+README / Project Summary Snippet: 2025-06-24
+🟢 Context, Memory, and QA Upgrades
+Robust context pipeline:
+Context is now assembled from highly relevant, tiered chunks (global/project/code), deduplicated and pruned for signal—not just a cut-and-paste dump.
+Agent prompt assembly is order-preserving and operator-visible.
+
+MemoryPanel QA upgrades:
+All context injection sources, priority tiers, and global/project context are now fully traceable and filterable in the MemoryPanel, with defensive array handling and priority context filter.
+
+Semantic search improvements:
+Boosted tier prioritization (global, context, project_summary) in all KB queries—ensuring fact-based answers surface first (even for direct queries).
+
+Code and error hardening:
+Patched all array access for context/files to prevent UI and build errors.
+Added defensive checks for missing/null/undefined values in frontend and backend.
+
+Admin and reindex flow:
+One-click destructive reindex now available in the UI, with full audit logging.
+
+Best practices enforced:
+
+All new memory entries record context files as arrays, never as strings/null.
+
+Context chunking for global/FAQ content tuned for atomic, high-recall QA.
+
+Recommended chunk overlap and chunk size audit for future upgrades.
+
+Debug & explain tools:
+Expanded CLI and UI support for “show context,” “priority filter,” and live context source drilldown. 6-25-25
+## 🧩 Visual Layout Builder (Puck)
+
+Relay now supports a fully embedded drag-and-drop layout editor using [Puck](https://github.com/measuredco/puck). The `/editor` route allows interactive design of UI screens using real components like `AskAgent`, `LogsPanel`, `Card`, and more.
+
+### Features:
+- Visual editor at `/editor` with live preview
+- Layout saved to `/public/layout.json` via custom API route (`/api/layout`)
+- Homepage (`/`) renders layout using `<Render config={...} data={...} />`
+- All components registered in `puck.config.tsx`
+- Editor access available via 🧩 Sandbox button in sidebar
+
+> 🔐 Future: Add named layouts, version history, and user-specific layouts

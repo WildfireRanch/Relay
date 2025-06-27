@@ -1,5 +1,5 @@
-# === Core Web Application ===
-fastapi>=0.95
+ # === Core Web Application ===
+fastapi>=0.110.0
 uvicorn[standard]>=0.22
 
 # === Google Docs Sync ===
@@ -25,14 +25,14 @@ langchain>=0.2
 langchain-community>=0.2
 langchain-core>=0.2
 langchain-openai>=0.1
-openai>=1.0
+openai>=1.30.5
 transformers>=4.30
 
 # === Semantic Search & Embeddings ===
-llama-index-core
-llama-index-llms-openai
-llama-index-embeddings-openai
-llama-index-readers-file
+llama-index>=0.12.43
+tiktoken==0.7.0
+tree_sitter>=0.20.4
+tree_sitter_language_pack>=0.0.1
 
 # === Markdown & Text Processing ===
 markdown>=3.4.1
@@ -49,7 +49,7 @@ itsdangerous>=2.1
 pyjwt[crypto]>=2.8
 
 # === Structured Data ===
-pydantic>=1.10
+pydantic>=2.11.7
 
 # === Async Utilities ===
 anyio>=3.7

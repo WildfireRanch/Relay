@@ -1,3 +1,7 @@
+// File: ActionQueuePanel.tsx
+// Directory: frontend/src/components
+// Purpose: Superpanel for agent patch/action queue with approve/deny, context diff, and deep audit
+
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
@@ -107,7 +111,6 @@ export default function ActionQueuePanel() {
         </Button>
         <span className="text-xs text-gray-400">Queue updates every 15s</span>
       </div>
-
       {actions.map((a) => (
         <Card key={a.id}>
           <CardContent className="p-4 space-y-2">
@@ -162,6 +165,7 @@ export default function ActionQueuePanel() {
               </pre>
             )}
 
+            {/* Context diff compare */}
             <div className="mt-2">
               <label className="text-xs mr-2">Compare context to:</label>
               <select
@@ -195,7 +199,7 @@ export default function ActionQueuePanel() {
               {showHistory[a.id] ? "Hide History" : "Show History"}
             </Button>
 
-            {showHistory[a.id] && a.history && (
+            {showHistory[a.id] && Array.isArray(a.history) && (
               <ul className="bg-gray-50 p-2 rounded text-xs mt-1 max-h-32 overflow-auto border">
                 {a.history.map((h, i) => (
                   <li key={i}>
@@ -208,7 +212,7 @@ export default function ActionQueuePanel() {
             )}
 
             {a.status === "pending" && (
-              <form className="flex flex-col gap-2 mt-2">
+              <form className="flex flex-col gap-2 mt-2" onSubmit={e => e.preventDefault()}>
                 <Textarea
                   id={`comment-${a.id}`}
                   name={`comment-${a.id}`}
@@ -246,9 +250,10 @@ export default function ActionQueuePanel() {
     </div>
   );
 
+  // Simple line diff for context comparison
   function diffContext(ctx1: string, ctx2: string): string {
-    const lines1 = new Set(ctx1.split("\n"));
-    const lines2 = new Set(ctx2.split("\n"));
+    const lines1 = new Set((ctx1 || "").split("\n"));
+    const lines2 = new Set((ctx2 || "").split("\n"));
     let out = "";
     for (const l of lines1) {
       if (!lines2.has(l)) out += `+ ${l}\n`;

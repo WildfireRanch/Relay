@@ -12,7 +12,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 def generate_auto_context():
     try:
         result = subprocess.run(
-            ["python", "scripts/generate_global_context_auto.py"],
+            ["python", "scripts/generate_global_context.auto.py"],
             capture_output=True, text=True, check=True
         )
         return JSONResponse({"status": "success", "output": result.stdout})

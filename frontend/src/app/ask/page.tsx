@@ -1,22 +1,26 @@
 "use client";
-// File: app/ask/page.tsx
-// Directory: frontend/src/app/ask
 
-import React, { useState, useRef, useEffect } from "react";
+// File: app/ask/page.tsx
+// Purpose: Ask Echo interface with local history, Markdown rendering, and streaming support
+
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism"; // use cjs if esm fails
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { API_ROOT } from "@/lib/api";
 
+// Message type for chat
 type Message = {
   role: "user" | "assistant";
   content: string;
 };
 
-const USER_ID = "bret-demo"; // Replace with real auth/user logic later
+// Temporary hardcoded user ID and localStorage key
+const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
-export default function AskEchoPage() {
+export default function AskPage() {
+  // Load chat history from localStorage if available
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -24,11 +28,13 @@ export default function AskEchoPage() {
     }
     return [];
   });
+
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Persist messages + auto-scroll to bottom on message update
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
@@ -36,13 +42,16 @@ export default function AskEchoPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function sendMessage(e?: React.FormEvent) {
+  // Send query to backend and handle streaming or full response
+  const sendMessage = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
 
-    setMessages(msgs => [...msgs, { role: "user", content: input }]);
+    const userMessage = input;
+    setMessages(msgs => [...msgs, { role: "user", content: userMessage }]);
     setLoading(true);
     setStreaming(true);
+    setInput("");
 
     let assistantContent = "";
 
@@ -53,42 +62,47 @@ export default function AskEchoPage() {
           "Content-Type": "application/json",
           "X-User-Id": USER_ID,
         },
-        body: JSON.stringify({ question: input }),
+        body: JSON.stringify({ question: userMessage }),
       });
 
+      // Streaming response via text/event-stream
       if (res.body && res.headers.get("content-type")?.includes("text/event-stream")) {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let done = false;
+
         while (!done) {
           const { value, done: streamDone } = await reader.read();
           done = streamDone;
           const chunk = decoder.decode(value);
           assistantContent += chunk;
+
+          // Replace last assistant message with streaming content
           setMessages(msgs =>
-            msgs.slice(0, -1).concat([{ role: "assistant", content: assistantContent }])
+            msgs
+              .filter(m => m.role !== "assistant")
+              .concat({ role: "assistant", content: assistantContent })
           );
         }
       } else {
+        // Fallback to JSON response
         const data = await res.json();
         assistantContent = data.response || "[no response]";
-        setMessages(msgs =>
-          [...msgs, { role: "assistant", content: assistantContent }]
-        );
+        setMessages(msgs => [...msgs, { role: "assistant", content: assistantContent }]);
       }
     } catch {
-      setMessages(msgs =>
-        [...msgs, { role: "assistant", content: "[error] Unable to get response." }]
-      );
+      setMessages(msgs => [...msgs, { role: "assistant", content: "[error] Unable to get response." }]);
     }
-    setInput("");
+
     setLoading(false);
     setStreaming(false);
-  }
+  }, [input, loading]);
 
   return (
     <div className="w-full max-w-2xl mx-auto min-h-screen flex flex-col">
       <h1 className="text-3xl font-bold my-4">Ask Echo</h1>
+
+      {/* Chat history area */}
       <div className="flex-1 space-y-2 overflow-y-auto border rounded-xl p-4 bg-muted">
         {messages.map((msg, i) => (
           <div
@@ -102,6 +116,7 @@ export default function AskEchoPage() {
             <span className="block whitespace-pre-wrap">
               <ReactMarkdown
                 components={{
+                  // Syntax highlighting for code blocks
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   code({ inline, className, children, ...props }: any) {
                     const match = /language-(\w+)/.exec(className || "");
@@ -119,7 +134,7 @@ export default function AskEchoPage() {
                         {children}
                       </code>
                     );
-                  }
+                  },
                 }}
               >
                 {msg.content}
@@ -134,6 +149,8 @@ export default function AskEchoPage() {
         )}
         <div ref={bottomRef} />
       </div>
+
+      {/* Input bar */}
       <form
         onSubmit={sendMessage}
         className="flex items-center gap-2 mt-4"
@@ -163,6 +180,7 @@ export default function AskEchoPage() {
           {loading || streaming ? "Sending…" : "Send"}
         </button>
       </form>
+
       <div className="text-xs text-gray-400 text-center mt-2">
         API root: <span className="font-mono">{API_ROOT}</span>
       </div>

@@ -1,12 +1,7 @@
 {
-  // TypeScript compiler options for a Next.js project
   "compilerOptions": {
     "target": "esnext",
-    "lib": [
-      "dom",
-      "dom.iterable",
-      "esnext"
-    ],
+    "lib": ["dom", "dom.iterable", "esnext"],
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
@@ -19,29 +14,28 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
-    // --- ALIAS SUPPORT (crucial for @/ imports) ---
-    // The following two lines enable `@/` to refer to your `src/` directory
-    "baseUrl": ".",                   // Sets project root as the base for imports
+
+    // 🔗 ALIASES
+    "baseUrl": ".", 
     "paths": {
-      "@/*": ["src/*"]                // Now, `@/lib/api` resolves to `src/lib/api`
+      "@/*": ["src/*"],                           // ✅ @/lib/api → src/lib/api
+      "@components/*": ["src/components/*"],      // ✅ Optional shortcut
+      "@puck": ["src/app/editor/puck.config.tsx"] // ✅ For config import
     },
-    // --- PLUGINS (Next.js will pick this up) ---
+
+    // 📦 Plugins (picked up by Next.js automatically)
     "plugins": [
       {
         "name": "next"
       }
     ]
   },
-  // --- Which files to include for type checking ---
   "include": [
+    "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
-    "next-env.d.ts",
-    "types/**/*.d.ts",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    "types/**/*.d.ts"
   ],
-  // --- Which files/folders to ignore ---
-  "exclude": [
-    "node_modules"
-  ]
+  "exclude": ["node_modules"]
 }

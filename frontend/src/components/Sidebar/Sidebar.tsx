@@ -14,10 +14,12 @@ const sections = [
       { href: "/ask", label: "Ask Echo", icon: "💬" },
       { href: "/docs", label: "Docs", icon: "📚" },
       { href: "/status", label: "Status", icon: "📊" },
+      { href: "/metricschart", label: "Metrics", icon: "📈" },
+      { href: "/editor", label: "Sandbox", icon: "🧩" }, // ← Added here
     ],
   },
   {
-    title: "Ops",
+    title: "Operations",
     links: [
       { href: "/action-queue", label: "Action Queue", icon: "📋" },
       { href: "/audit", label: "Audit Log", icon: "🛡️" },

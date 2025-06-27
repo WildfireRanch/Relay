@@ -12,7 +12,7 @@ FILES = [
     ("routes/admin_routes.py", "core"),
     ("routes/status.py", "support"),
     ("scripts/sync_context_docs.py", "support"),
-    ("scripts/generate_global_context_auto.py", "support"),
+    ("scripts/generate_global_context.auto.py", "support"),
     ("main.py", "entrypoint")
 ]
 

@@ -19,6 +19,9 @@ client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 RAILWAY_KEY = os.getenv("API_KEY")
 RAILWAY_URL = os.getenv("RAILWAY_URL", "https://relay.wildfireranch.us/control/queue_action")
 
+# Optional reflection flag
+REFLECT_ENV = os.getenv("ENABLE_REFLECT_AND_PLAN", "false").lower() in ("1", "true", "yes")
+
 # === System prompt to define Relay's identity and context awareness ===
 SYSTEM_PROMPT = """
 You are Relay, the intelligent assistant for Bret's WildfireRanch pursuits including the solar shack project (solar powered bitcoin mining) and developing a business plan for a utility scale solar farm.
@@ -79,6 +82,7 @@ async def answer(
     query: str,
     context: Optional[str] = None,
     stream: bool = False,
+    reflect: Optional[bool] = None,
 ) -> Any:
     """Main agent entry point.
 
@@ -94,6 +98,9 @@ async def answer(
     stream: bool
         If ``True`` yield tokens as they are produced by OpenAI.  Otherwise
         return the complete assistant message as a string.
+    reflect: Optional[bool]
+        If ``True`` run ``reflect_and_plan`` before answering. Defaults to
+        ``ENABLE_REFLECT_AND_PLAN`` environment variable when ``None``.
     """
 
     print(f"[agent] Incoming query from {user_id}: {query}")
@@ -109,9 +116,13 @@ async def answer(
         context = engine.build_context(query)
     print(f"[agent] Built context length: {len(context)} chars")
 
-    # --- Reflection & planning ---
-    plan = await reflect_and_plan(user_id, query)
-    print(f"[agent] Reflection plan: {plan}")
+    # --- Reflection & planning (optional) ---
+    use_reflection = reflect if reflect is not None else REFLECT_ENV
+    if use_reflection:
+        plan = await reflect_and_plan(user_id, query)
+        print(f"[agent] Reflection plan: {plan}")
+    else:
+        plan = {"plan": []}
 
     # --- Update conversation history ---
     history = conversation_history.setdefault(user_id, [])

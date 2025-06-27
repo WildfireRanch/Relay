@@ -1,12 +1,14 @@
-# ────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
 # File: main.py
 # Directory: project root
 # Purpose : FastAPI entrypoint for Relay backend
-#           • TEMP: CORS wide open for debug
-#           • KB auto-heal on cold start
-#           • Single-key security (API_KEY)
-# Last Updated: 2025-06-23 (Echo – CORS debug + /test-cors)
-# ────────────────────────────────────────────────────────────────────────────
+#           • CORS control (debug vs prod)
+#           • Env validation and docs dir init
+#           • API key guardrails and route mounts
+#           • KB index auto-heal at startup
+#           • Health check and CORS validation routes
+# Last Updated: 2025-06-24 (Echo — Upgraded, continuity-audited version)
+# ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
@@ -18,46 +20,46 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# ─── .env for local dev ─────────────────────────────────────────────────────
+# ─── Load .env if local ──────────────────────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:
         from dotenv import load_dotenv
         load_dotenv()
-        logging.info("Loaded .env for local development")
+        logging.info("✅ Loaded .env for local development")
     except ImportError:
-        logging.warning("python-dotenv not installed; skipping .env load")
+        logging.warning("⚠️ python-dotenv not installed; skipping .env load")
 
 ENV_NAME = os.getenv("ENV", "local")
 
-# ─── Basic env validation ──────────────────────────────────────────────────
+# ─── Validate required env vars ──────────────────────────────────────────────
 for key in ("API_KEY", "OPENAI_API_KEY"):
     if not os.getenv(key):
-        logging.error("Missing env var: %s", key)
+        logging.error(f"❌ Missing required env var: {key}")
 
-# ─── Ensure docs dirs exist ────────────────────────────────────────────────
+# ─── Ensure docs directories exist ───────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 for sub in ("docs/imported", "docs/generated"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ─── FastAPI app ───────────────────────────────────────────────────────────
+# ─── Initialize FastAPI app ──────────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
-    description="Backend for Relay agent: ask, status, control, docs, KB, admin",
+    description="Backend API for Relay agent – ask, control, status, docs, admin",
 )
 
-# ─── CORS (env-controlled) ─────────────────────────────────────────────────
+# ─── Configure CORS ──────────────────────────────────────────────────────────
 cors_origins = ["*"]
-allow_creds = False  # '*' requires credentials disabled
+allow_creds = False  # '*' requires credentials = False
+
+# Controlled via FRONTEND_ORIGIN env (optional)
 override_origin = os.getenv("FRONTEND_ORIGIN")
 if override_origin:
     cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
     allow_creds = True
-    logging.info("CORS restricted to: %s", cors_origins)
+    logging.info(f"🔒 CORS restricted to: {cors_origins}")
 else:
-    logging.warning(
-        "🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False"
-    )
+    logging.warning("🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False")
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,7 +70,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-# ─── Router imports ────────────────────────────────────────────────────────
+# ─── Import and mount routers ────────────────────────────────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
@@ -79,7 +81,7 @@ from routes.kb import router as kb_router
 from routes.search import router as search_router
 from routes import admin as admin_router
 
-# ─── Register routers ──────────────────────────────────────────────────────
+# Core agent and utility routes
 app.include_router(ask_router)
 app.include_router(status_router)
 app.include_router(control_router)
@@ -89,56 +91,67 @@ app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
 
-# Admin tools are optional, gated by ENABLE_ADMIN_TOOLS
+# Admin tools are gated via ENABLE_ADMIN_TOOLS
 if os.getenv("ENABLE_ADMIN_TOOLS", "false").lower() in ("1", "true", "yes"):
     app.include_router(admin_router.router)
+    logging.info("🛠️ Admin tools enabled")
 else:
-    logging.info("Admin endpoints disabled (set ENABLE_ADMIN_TOOLS=1 to enable)")
+    logging.info("Admin tools disabled (ENABLE_ADMIN_TOOLS not set)")
 
-# ─── KB auto-heal on startup ───────────────────────────────────────────────
-from services import kb  # late import avoids circular deps
+# ─── On-startup: KB auto-reindex if needed ───────────────────────────────────
+from services import kb  # defer to avoid circular import
 
 @app.on_event("startup")
 def ensure_kb_index():
     """
-    Rebuild KB index if:
-      · directory missing   (first boot on fresh volume)
-      · vector dim mismatch (model changed between deploys)
+    KB Auto-Heal:
+    If KB index is missing or invalid (e.g., wrong vector dim after upgrade),
+    rebuild it on boot to avoid runtime errors.
     """
     if not kb.index_is_valid():
-        logging.warning("KB index invalid or missing → rebuilding…")
+        logging.warning("📚 KB index missing or invalid — triggering rebuild…")
         logging.info(kb.api_reindex())
     else:
-        logging.info("KB index valid – no rebuild needed")
+        logging.info("✅ KB index validated on startup")
 
-# ─── Root & health endpoints ───────────────────────────────────────────────
+# ─── Root health checks ──────────────────────────────────────────────────────
 @app.get("/")
 def root():
     return JSONResponse({"message": "Relay Agent is Online"})
 
 @app.get("/health")
 def health_check():
+    """
+    Health check endpoint for orchestration/liveness probes.
+    Validates env vars and required folders.
+    """
     ok = True
     details: dict[str, bool] = {}
+
     for key in ("API_KEY", "OPENAI_API_KEY"):
         present = bool(os.getenv(key))
         details[key] = present
         ok &= present
+
     for sub in ("docs/imported", "docs/generated"):
         exists = (PROJECT_ROOT / sub).exists()
         details[sub] = exists
         ok &= exists
+
     return JSONResponse(
         {"status": "ok" if ok else "error", "details": details},
         status_code=200 if ok else 503,
     )
 
-# ─── CORS Echo Route (for live validation) ─────────────────────────────────
 @app.options("/test-cors")
 def test_cors():
+    """
+    Debug route to validate CORS preflight behavior.
+    Use with `OPTIONS /test-cors` from frontend.
+    """
     return JSONResponse({"message": "CORS preflight success"})
 
-# ─── Local dev entrypoint ──────────────────────────────────────────────────
+# ─── Local development entrypoint ────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
 

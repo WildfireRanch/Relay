@@ -1,61 +1,148 @@
-
-#services/indexer.py
-# File: services/indexer.py
-# Purpose: Recursively index code and docs, create semantic embeddings for search
+# services/indexer.py
+# Purpose: Recursively index code and docs with tier metadata for prioritized semantic search.
 # Stack: LlamaIndex, OpenAI, Python 3.12+
 # Usage: Call index_directories() to scan, split, and embed all target files.
 
 import os
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+import glob
+from pathlib import Path
+from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Document
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from services.config import INDEX_DIR
 
-# ---- Config ----
-ROOT_DIRS = ["./src", "./backend", "./frontend", "./docs"]  # Edit as needed
+# ---- 1. Define priority tiers and associated paths ----
+PRIORITY_INDEX_PATHS = [
+    ("global", ["./docs/generated/global_context.md", "./docs/generated/global_context.auto.md"]),
+    ("context", ["./context/"]),  # Cross-project overlays
+    ("project_summary", ["./docs/PROJECT_SUMMARY.md", "./docs/RELAY_CODE_UPDATE.md", "./docs/context-commandcenter.md"]),
+    ("project_docs", ["./docs/imported/", "./docs/kb/", "./docs/*.md"]),
+    ("code", ["./services/", "./routes/", "./frontend/", "./src/", "./backend/"]),
+]
 
-# ---- Embedding Model ----
-embed_model = OpenAIEmbedding(model="text-embedding-3-large")
+# ---- 2. Exclude Rules for Files, Extensions, and Folders ----
+IGNORED_FILENAMES = {
+    "package-lock.json", "yarn.lock", ".env", ".DS_Store", ".gitignore",
+}
+IGNORED_EXTENSIONS = {
+    ".lock", ".log", ".exe", ".bin", ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".ico",
+}
+IGNORED_FOLDERS = {
+    "node_modules", ".git", "__pycache__", "dist", "build", ".venv", "env",
+}
+MAX_FILE_SIZE_MB = 2  # Optional: skip files over 2 MB (adjust as needed)
+
+def should_index_file(filepath: str, tier: str) -> bool:
+    """Returns True if a file should be indexed, otherwise False."""
+    filename = os.path.basename(filepath)
+    ext = os.path.splitext(filename)[1].lower()
+    if filename in IGNORED_FILENAMES or ext in IGNORED_EXTENSIONS:
+        return False
+    # Ignore by folder in path
+    parts = filepath.replace("\\", "/").split("/")
+    if any(folder in parts for folder in IGNORED_FOLDERS):
+        return False
+    # Ignore big files
+    if os.path.isfile(filepath):
+        if os.path.getsize(filepath) > MAX_FILE_SIZE_MB * 1024 * 1024:
+            return False
+    # For code tier, allow a broad set of code/doc files for review
+    if tier == "code":
+        return ext in {".py", ".js", ".ts", ".tsx", ".java", ".go", ".cpp", ".json", ".md"}
+    return True
+
+# ---- 3. Embedding Model ----
 model_name = (
     os.getenv("KB_EMBED_MODEL")
     or os.getenv("OPENAI_EMBED_MODEL")
     or "text-embedding-3-large"
 )
-if model_name == "text-embedding-3-large":
-    embed_model = OpenAIEmbedding(model=model_name, dimensions=3072)
-else:
-    embed_model = OpenAIEmbedding(model=model_name)
+embed_model = OpenAIEmbedding(
+    model=model_name,
+    dimensions=3072 if model_name == "text-embedding-3-large" else None
+)
+
+# ---- 4. Language detection for code files ----
+def get_language_from_path(file_path: str) -> str:
+    """Returns the code language for a given file path by extension."""
+    file_path = file_path.lower()
+    if file_path.endswith(".py"):
+        return "python"
+    elif file_path.endswith((".js", ".jsx")):
+        return "javascript"
+    elif file_path.endswith((".ts", ".tsx")):
+        return "typescript"
+    elif file_path.endswith(".java"):
+        return "java"
+    elif file_path.endswith(".go"):
+        return "go"
+    elif file_path.endswith(".cpp"):
+        return "cpp"
+    return "python"  # fallback
+
+def collect_code_context(files: list[str], base_dir: str = "./") -> str:
+    """Read and join contents of files for prompt context."""
+    contents: list[str] = []
+    for f in files:
+        path = Path(base_dir) / f
+        if path.exists() and path.is_file():
+            try:
+                contents.append(f"### {f}\n" + path.read_text())
+            except Exception:
+                continue
+    return "\n\n".join(contents)
 
 def index_directories():
-    """
-    Recursively scans ROOT_DIRS, splits files into semantic chunks, embeds, and stores index.
-    """
-    """Rebuild the semantic index from ROOT_DIRS and persist to ``INDEX_DIR``."""
+    """Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search."""
     documents = []
-    for dir_path in ROOT_DIRS:
-        if os.path.exists(dir_path):
-            # Loads files recursively from dir_path
-            docs = SimpleDirectoryReader(dir_path, recursive=True).load_data()
-            documents.extend(docs)
+    for tier, paths in PRIORITY_INDEX_PATHS:
+        for path in paths:
+            if path.endswith("/"):
+                if os.path.exists(path):
+                    docs = SimpleDirectoryReader(path, recursive=True).load_data()
+                    filtered_docs = []
+                    for d in docs:
+                        file_path = d.metadata.get("file_path") or d.metadata.get("filename") or ""
+                        if should_index_file(file_path, tier):
+                            d.metadata = d.metadata or {}
+                            d.metadata["tier"] = tier
+                            filtered_docs.append(d)
+                    documents.extend(filtered_docs)
+            elif "*" in path or path.endswith(".md"):
+                for f in glob.glob(path):
+                    if os.path.isfile(f) and should_index_file(f, tier):
+                        with open(f, "r", encoding="utf-8") as file:
+                            text = file.read()
+                        doc = Document(
+                            text=text,
+                            metadata={"tier": tier, "file_path": f}
+                        )
+                        documents.append(doc)
 
-    # Initialize chunkers for code vs. text
-    code_splitter = CodeSplitter(max_chars=1024, chunk_lines=30, chunk_overlap=10)
-    text_splitter = SentenceSplitter(max_chunk_size=1024)
-
+    # --- 5. Chunking: Get nodes (split text/code), flatten for indexing ---
+    all_chunked_nodes = []
+    text_splitter = SentenceSplitter(chunk_size=1024)
     for doc in documents:
-        # Choose splitter based on file type
-        if doc.metadata['file_path'].endswith(('.py', '.js', '.ts', '.tsx', '.java', '.go', '.cpp')):
-            doc.chunks = code_splitter.split(doc.text)
+        file_path = doc.metadata.get('file_path', '')
+        if file_path.endswith(('.py', '.js', '.ts', '.tsx', '.java', '.go', '.cpp')):
+            language = get_language_from_path(file_path)
+            code_splitter = CodeSplitter(language=language, max_chars=1024, chunk_lines=30)
+            nodes = code_splitter.get_nodes_from_documents([doc])
+            all_chunked_nodes.extend(nodes)
         else:
-            doc.chunks = text_splitter.split(doc.text)
+            nodes = text_splitter.get_nodes_from_documents([doc])
+            all_chunked_nodes.extend(nodes)
 
-    # Build the vector index and persist to disk
-    index = VectorStoreIndex.from_documents(
-        documents, embed_model=embed_model, show_progress=True
+    # --- 6. Index & Persist ---
+    print(f"Total nodes to index: {len(all_chunked_nodes)}")
+    index = VectorStoreIndex(
+        nodes=all_chunked_nodes,
+        embed_model=embed_model,
+        show_progress=True
     )
     index.storage_context.persist(persist_dir="./data/index")
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
-    print("Indexing complete!")
+    print("Indexing complete! Prioritized tiers saved.")
 
 if __name__ == "__main__":
     index_directories()
