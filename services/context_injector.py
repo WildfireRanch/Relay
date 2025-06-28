@@ -98,7 +98,7 @@ def build_context(query: str, files: list[str], topics: list[str] = [], debug: b
 ## 📁 Code Context (Selected Files):
 {code_context}
 
-## 🧰 Key Functions & Classes:
+## 🛠️ Key Functions & Classes:
 {function_signatures}
 
 ## 🌍 External Project Context:
