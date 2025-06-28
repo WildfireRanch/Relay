@@ -80,6 +80,7 @@ from routes.debug import router as debug_router
 from routes.kb import router as kb_router
 from routes.search import router as search_router
 from routes import admin as admin_router
+from routes import codex as codex_router
 
 # Core agent and utility routes
 app.include_router(ask_router)
@@ -90,6 +91,7 @@ app.include_router(oauth_router)
 app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
+app.include_router(codex_router.router)
 
 # Admin tools are gated via ENABLE_ADMIN_TOOLS
 if os.getenv("ENABLE_ADMIN_TOOLS", "false").lower() in ("1", "true", "yes"):

@@ -1,28 +1,84 @@
-// File: src/app/codex/page.tsx
 "use client";
 
+// File: src/app/codex/page.tsx
+
 import { useState } from "react";
-import CodexPatchView from "@/components/Codex/CodexPatchView";
+import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
 import { Button } from "@/components/ui/button";
 
 export default function CodexPage() {
-  const [patch, setPatch] = useState<string>("");
+  const [code, setCode] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [streamingPatch, setStreamingPatch] = useState("");
+  const [parsedPatch, setParsedPatch] = useState<{ file: string; patch: string; reason: string } | null>(null);
+  const [status, setStatus] = useState<string>("");
 
-  const generatePatch = async () => {
-    // Replace this with actual API call to Codex agent
-    const res = await fetch("/api/codex/mock", {
+  const handleSubmit = async () => {
+    setStreamingPatch("⏳ Working...");
+    setParsedPatch(null);
+    const res = await fetch("/ask/codex_stream", {
       method: "POST",
-      body: JSON.stringify({ prompt: "example code" }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: prompt, context: code }),
     });
-    const data = await res.json();
-    setPatch(data.patch || "No patch generated.");
+
+    const reader = res.body?.getReader();
+    const decoder = new TextDecoder();
+    let patch = "";
+    while (true) {
+      const { value, done } = await reader!.read();
+      if (done) break;
+      patch += decoder.decode(value, { stream: true });
+      setStreamingPatch(patch);
+    }
+
+    // Try to extract file/patch/reason from streamed output
+    const fileMatch = patch.match(/File:\s*(.*)/);
+    const reasonMatch = patch.match(/Reason:\s*([\s\S]*)/);
+    const patchStart = patch.indexOf("Patch:");
+    const reasonStart = patch.indexOf("Reason:");
+    const extracted = {
+      file: fileMatch?.[1]?.trim() || "",
+      patch: patchStart !== -1 && reasonStart !== -1 ? patch.slice(patchStart + 6, reasonStart).trim() : "",
+      reason: reasonMatch?.[1]?.trim() || ""
+    };
+    if (extracted.file && extracted.patch) setParsedPatch(extracted);
+  };
+
+  const applyPatch = async () => {
+    if (!parsedPatch) return;
+    setStatus("⏳ Applying patch...");
+    const res = await fetch("/codex/apply_patch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        target_file: parsedPatch.file,
+        patch: parsedPatch.patch,
+        reason: parsedPatch.reason
+      })
+    });
+    if (res.ok) {
+      setStatus("✅ Patch applied successfully.");
+    } else {
+      const err = await res.text();
+      setStatus("❌ Failed to apply patch: " + err);
+    }
   };
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-semibold mb-4">Codex Agent</h1>
-      <Button onClick={generatePatch}>Generate Patch</Button>
-      <CodexPatchView patch={patch} />
+    <div className="p-6 space-y-4">
+      <h1 className="text-2xl font-bold">🧠 Codex — Code Editing Agent</h1>
+
+      <CodexEditor code={code} setCode={setCode} />
+      <CodexPromptBar prompt={prompt} setPrompt={setPrompt} onSubmit={handleSubmit} />
+      <CodexPatchView patch={streamingPatch} />
+
+      {parsedPatch && (
+        <div className="space-y-2">
+          <Button onClick={applyPatch}>✅ Approve & Apply Patch</Button>
+          {status && <div className="text-sm text-muted-foreground">{status}</div>}
+        </div>
+      )}
     </div>
   );
 }

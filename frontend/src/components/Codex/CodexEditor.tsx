@@ -1,17 +1,17 @@
-"use client";
+// File: src/components/Codex/CodexEditor.tsx
+import { Dispatch, SetStateAction } from "react";
 
-// File: frontend/src/components/Codex/CodexPatchView.tsx
-interface Props {
-  patch: string;
+export interface Props {
+  code: string;
+  setCode: Dispatch<SetStateAction<string>>;
 }
 
-export default function CodexPatchView({ patch }: Props) {
+export default function CodexEditor({ code, setCode }: Props) {
   return (
-    <div className="mt-4">
-      <label className="block text-sm font-medium mb-1">Generated Patch</label>
-      <pre className="w-full max-h-[500px] overflow-auto bg-black text-green-400 p-4 rounded text-sm whitespace-pre-wrap">
-        {patch || "No patch yet."}
-      </pre>
-    </div>
+    <textarea
+      value={code}
+      onChange={(e) => setCode(e.target.value)}
+      className="w-full h-48 p-2 border rounded"
+    />
   );
 }
