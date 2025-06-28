@@ -7,7 +7,7 @@ import os
 import traceback
 from openai import AsyncOpenAI, OpenAIError
 from core.logging import log_event
-from agents import critic_agent
+from agents.critic_agent import run_all as run_critics
 
 # === Model Configuration ===
 MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")
@@ -46,9 +46,24 @@ async def ask(query: str, context: str) -> dict:
         log_event("planner_response", {"query": query, "output": raw[:500]})
         plan = eval(raw)  # Unsafe in prod, assumes clean JSON
 
-        # Run all critics immediately after planning
-        critiques = await critic_agent.run_all(plan, context)
-        plan["critics"] = critiques
+        # === Step 1: Run Planner Critics ===
+        try:
+            critic_results = await run_critics(plan, context)
+            plan["critics"] = critic_results
+            log_event("planner_critique", {
+                "query": query,
+                "objective": plan.get("objective"),
+                "passes": all(c.get("passes", False) for c in critic_results),
+                "issues": [c for c in critic_results if not c.get("passes", True)]
+            })
+        except Exception as critic_error:
+            log_event("planner_critic_fail", {
+                "query": query,
+                "error": str(critic_error),
+                "trace": traceback.format_exc()
+            })
+            plan["critics"] = [{"name": "system", "passes": False, "issues": ["Critic system failed"]}]
+
         return plan
 
     except OpenAIError as e:

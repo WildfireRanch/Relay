@@ -1,19 +1,9 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# File: main.py
-# Directory: project root
-# Purpose : FastAPI entrypoint for Relay backend
-#           • CORS control (debug vs prod)
-#           • Env validation and docs dir init
-#           • API key guardrails and route mounts
-#           • KB index auto-heal at startup
-#           • Health check and CORS validation routes
-# Last Updated: 2025-06-24 (Echo — Upgraded, continuity-audited version)
-# ──────────────────────────────────────────────────────────────────────────────
-
+# File: main.py — Relay backend entrypoint
 from __future__ import annotations
 
+import os  # ✅ FIXED: was missing
 import logging
-import os
+import sys
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -31,13 +21,16 @@ if os.getenv("ENV", "local") == "local":
 
 ENV_NAME = os.getenv("ENV", "local")
 
+# ─── Ensure clean rooted imports ─────────────────────────────────────────────
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.append(str(PROJECT_ROOT))
+
 # ─── Validate required env vars ──────────────────────────────────────────────
 for key in ("API_KEY", "OPENAI_API_KEY"):
     if not os.getenv(key):
         logging.error(f"❌ Missing required env var: {key}")
 
 # ─── Ensure docs directories exist ───────────────────────────────────────────
-PROJECT_ROOT = Path(__file__).resolve().parent
 for sub in ("docs/imported", "docs/generated"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
@@ -52,7 +45,6 @@ app = FastAPI(
 cors_origins = ["*"]
 allow_creds = False  # '*' requires credentials = False
 
-# Controlled via FRONTEND_ORIGIN env (optional)
 override_origin = os.getenv("FRONTEND_ORIGIN")
 if override_origin:
     cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
@@ -79,10 +71,9 @@ from routes.oauth import router as oauth_router
 from routes.debug import router as debug_router
 from routes.kb import router as kb_router
 from routes.search import router as search_router
-from routes import admin as admin_router
-from routes import codex as codex_router
+from routes.admin import router as admin_router
+from routes.codex import router as codex_router
 
-# Core agent and utility routes
 app.include_router(ask_router)
 app.include_router(status_router)
 app.include_router(control_router)
@@ -91,28 +82,23 @@ app.include_router(oauth_router)
 app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
-app.include_router(codex_router.router)
+app.include_router(codex_router)
 
-# Admin tools are gated via ENABLE_ADMIN_TOOLS
-if os.getenv("ENABLE_ADMIN_TOOLS", "false").lower() in ("1", "true", "yes"):
-    app.include_router(admin_router.router)
+# Admin tools
+if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
+    app.include_router(admin_router)
     logging.info("🛠️ Admin tools enabled")
 else:
     logging.info("Admin tools disabled (ENABLE_ADMIN_TOOLS not set)")
 
 # ─── On-startup: KB auto-reindex if needed ───────────────────────────────────
-from services import kb  # defer to avoid circular import
+from services import kb
 
-@app.on_event("startup")
+@app.on_event("startup")  # consider lifespan context for future versions
 def ensure_kb_index():
-    """
-    KB Auto-Heal:
-    If KB index is missing or invalid (e.g., wrong vector dim after upgrade),
-    rebuild it on boot to avoid runtime errors.
-    """
     if not kb.index_is_valid():
         logging.warning("📚 KB index missing or invalid — triggering rebuild…")
-        logging.info(kb.api_reindex())
+        logging.info("Reindex result: %s", kb.api_reindex())  # ✅ safer logging
     else:
         logging.info("✅ KB index validated on startup")
 
@@ -123,10 +109,6 @@ def root():
 
 @app.get("/health")
 def health_check():
-    """
-    Health check endpoint for orchestration/liveness probes.
-    Validates env vars and required folders.
-    """
     ok = True
     details: dict[str, bool] = {}
 
@@ -147,10 +129,6 @@ def health_check():
 
 @app.options("/test-cors")
 def test_cors():
-    """
-    Debug route to validate CORS preflight behavior.
-    Use with `OPTIONS /test-cors` from frontend.
-    """
     return JSONResponse({"message": "CORS preflight success"})
 
 # ─── Local development entrypoint ────────────────────────────────────────────
