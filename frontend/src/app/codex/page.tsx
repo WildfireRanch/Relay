@@ -53,7 +53,7 @@ const CodexPage: React.FC = () => {
 
       if (extracted.file && extracted.patch) setParsedPatch(extracted);
     } catch (err) {
-      setStreamingPatch("❌ Error while generating patch");
+      setStreamingPatch("❌ Error while generating patch: " + String(err));
     }
   };
 
