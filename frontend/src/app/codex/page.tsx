@@ -2,11 +2,12 @@
 
 // File: src/app/codex/page.tsx
 
+import React from "react";
 import { useState } from "react";
 import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
 import { Button } from "@/components/ui/button";
 
-export default function CodexPage(): JSX.Element {
+const CodexPage: React.FC = () => {
   const [code, setCode] = useState<string>("");
   const [prompt, setPrompt] = useState<string>("");
   const [streamingPatch, setStreamingPatch] = useState<string>("");
@@ -98,4 +99,6 @@ export default function CodexPage(): JSX.Element {
       )}
     </div>
   );
-}
+};
+
+export default CodexPage;
