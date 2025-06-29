@@ -1,6 +1,6 @@
 # File: utils/logger.py
-from datetime import datetime
+"""Compatibility wrapper forwarding to :mod:`core.logging`."""
 
-def log_event(event_type: str, payload: dict):
-    timestamp = datetime.utcnow().isoformat()
-    print(f"[{timestamp}] {event_type.upper()} → {payload}")
+from core.logging import log_event
+
+__all__ = ["log_event"]
