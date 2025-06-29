@@ -10,7 +10,7 @@ from openai import AsyncOpenAI, OpenAIError
 from utils.patch_utils import validate_patch_format
 from core.logging import log_event
 from dotenv import load_dotenv
-from agents.critic_agent import run_all as run_critics
+from agents.critic_agent import run_critics
 
 load_dotenv()
 
