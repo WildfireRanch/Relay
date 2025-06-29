@@ -1,158 +1,59 @@
-# File: agents/codex_agent.py
-# Purpose: Handle code-editing tasks like bugfixes, refactors, or docstring generation
-# Usage: Called by /ask or other routes when a code patch is requested
-# Response includes a natural language summary and a structured "patch" action
-# Dependencies: OpenAI (GPT-4), Relay config, project file context
+# File: utils/patch_utils.py
+# Directory: utils/
+# Purpose: Patch validation, formatting, and preview utilities for CodexAgent and downstream consumers.
+# This module supports structured patch validation, diff generation, and logging-friendly summaries.
 
-import os
-from typing import Dict, Any, Optional, AsyncGenerator, Tuple
-from openai import AsyncOpenAI, OpenAIError
-from utils.patch_utils import validate_patch_format
-from core.logging import log_event  # Centralized Relay logging
-from dotenv import load_dotenv
+import difflib
+from typing import List, Dict
 
-load_dotenv()
-
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# === CodexAgent Main Handler ===
-async def handle(message: str, context: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+def validate_patch_format(action: dict) -> bool:
     """
-    Handles natural language prompts to perform code editing tasks.
+    Validates the structure of a Codex patch dictionary.
 
-    Args:
-        message (str): Natural language request like "Fix this bug".
-        context (str): Relevant file or code snippet text.
-        user_id (str, optional): For logging or multi-tenant use.
-
-    Returns:
-        Dict with:
-            - response: natural language summary of change
-            - action: { type: "patch", target_file, patch, reason }
+    Expected keys:
+    - type: should be 'patch'
+    - target_file: relative path to the file being patched
+    - patch: the code changes
+    - reason: explanation of the change
     """
-    if not message or not context:
-        raise ValueError("Both message and context must be provided.")
+    required_keys = {"type", "target_file", "patch", "reason"}
+    return isinstance(action, dict) and required_keys.issubset(action.keys())
 
-    prompt = build_prompt(message, context)
-
-    try:
-        completion = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a senior software engineer generating code patches from user requests."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3
-        )
-    except OpenAIError as e:
-        log_event("codex_agent_error", {"error": str(e), "user_id": user_id})
-        raise RuntimeError("Codex agent failed to respond.") from e
-
-    content = completion.choices[0].message.content.strip()
-
-    # TODO: Replace this with proper YAML/JSON extraction once structured output is enforced
-    response, action = parse_codex_response(content)
-
-    if not validate_patch_format(action):
-        raise ValueError("Invalid patch format returned from Codex.")
-
-    log_event("codex_agent_success", {"action": action, "user_id": user_id})
-
-    return {
-        "response": response,
-        "action": action
-    }
-
-
-# === Streaming Variant ===
-async def stream(message: str, context: str, user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+def generate_diff(original: str, updated: str, filename: str = "file.py") -> str:
     """
-    Stream CodexAgent patch response line-by-line.
+    Generate a unified diff string between original and updated content.
+    Useful for previewing changes, validation, or downstream tooling.
     """
-    if not message or not context:
-        yield "[Error] Missing message or context."
-        return
+    original_lines = original.strip().splitlines(keepends=True)
+    updated_lines = updated.strip().splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        original_lines,
+        updated_lines,
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}",
+        lineterm=""
+    )
+    return "".join(diff)
 
-    prompt = build_prompt(message, context)
+def summarize_patch(action: Dict[str, str]) -> str:
+    """
+    Summarize a patch action into a single-line description for logs or notifications.
+    """
+    file = action.get("target_file", "unknown")
+    reason = action.get("reason", "no reason")
+    return f"Patch for {file} — {reason}"
 
-    try:
-        stream = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are a senior software engineer generating code patches from user requests."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.3,
-            stream=True
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
-    except Exception as e:
-        yield f"[Error] Codex stream failed: {str(e)}"
+def render_patch_preview(action: Dict[str, str]) -> str:
+    """
+    Returns a formatted preview block from patch data.
+    Can be used in web UIs or CLI tools to preview patch contents.
+    """
+    patch = action.get("patch", "")
+    file = action.get("target_file", "unknown")
+    return f"# Patch preview for {file}\n\n{patch}"
 
-
-# === Prompt Builder ===
-def build_prompt(message: str, context: str) -> str:
-    return f"""
-You will receive a code editing request from a user, along with the relevant code context.
-
-Task: {message}
-
-Code Context:
-```python
-{context}
-```
-
-Please return:
-1. A brief natural language summary of the change
-2. A code patch (diff-style or full replacement), targeting a specific file
-3. A short reason explaining why the patch is needed
-
-Output format:
-```
-Summary: <text>
-File: <relative/path/to/file.py>
-Patch:
-<diff or full replacement>
-Reason: <text>
-```
-"""
-
-
-# === Response Parser ===
-def parse_codex_response(content: str) -> Tuple[str, Dict[str, str]]:
-    # Simple heuristic parser — replace with structured extraction later
-    lines = content.strip().splitlines()
-    summary = next((line.replace("Summary:", "").strip() for line in lines if line.startswith("Summary:")), "Edit generated.")
-    file_line = next((line for line in lines if line.startswith("File:")), "")
-    file_path = file_line.replace("File:", "").strip()
-
-    patch_lines = []
-    reason = "No reason provided."
-    in_patch = False
-
-    for line in lines:
-        if line.startswith("Patch:"):
-            in_patch = True
-            continue
-        if line.startswith("Reason:"):
-            reason = line.replace("Reason:", "").strip()
-            break
-        if in_patch:
-            patch_lines.append(line)
-
-    return summary, {
-        "type": "patch",
-        "target_file": file_path,
-        "patch": "\n".join(patch_lines).strip(),
-        "reason": reason
-    }
-
-
-# === TODOs for Future ===
-# - Validate patch syntax or apply dry-run (AST-based)
-# - Add preview rendering endpoint (/preview/patch)
-# - Allow multi-file actions (currently only supports 1 file)
-# - Add agent self-critique / fallback suggestion
+# === TODOs ===
+# - Add AST-based patch validator
+# - Add inline diff syntax highlighter
+# - Support patch metadata (language, risk level, source)
+# - Export patch format schema
