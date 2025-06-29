@@ -4,16 +4,21 @@
 from typing import List, Tuple
 from markdownify import markdownify as md
 
-from . import google_docs_sync
+from .google_docs_sync import (
+    get_google_service,
+    find_folder_id,
+    get_docs_in_folder,
+    COMMAND_CENTER_FOLDER_NAME,
+)
 
 
 def fetch_drive_docs() -> List[Tuple[str, str]]:
     """Return (title, markdown) for docs in the COMMAND_CENTER folder."""
-    drive_service, docs_service = google_docs_sync.get_google_service()
-    folder_id = google_docs_sync.find_folder_id(
-        drive_service, google_docs_sync.COMMAND_CENTER_FOLDER_NAME
+    drive_service, docs_service = get_google_service()
+    folder_id = find_folder_id(
+        drive_service, COMMAND_CENTER_FOLDER_NAME
     )
-    files = google_docs_sync.get_docs_in_folder(drive_service, folder_id)
+    files = get_docs_in_folder(drive_service, folder_id)
 
     docs = []
     for file in files:
