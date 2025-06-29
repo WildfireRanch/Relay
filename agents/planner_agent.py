@@ -7,7 +7,7 @@ import os
 import traceback
 from openai import AsyncOpenAI, OpenAIError
 from core.logging import log_event
-from agents.critic_agent import run_all as run_critics
+from agents.critic_agent import run_critics
 
 # === Model Configuration ===
 MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")
