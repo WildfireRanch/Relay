@@ -54,11 +54,19 @@ def get_version():
     """
     Returns current Git commit short hash.
     """
+from subprocess import check_output, CalledProcessError, DEVNULL
+
+@router.get("/version")
+def get_version():
+    """
+    Returns current Git commit short hash.
+    """
     try:
-        commit = check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
-    except (CalledProcessError, FileNotFoundError):
+        commit = check_output(["git", "rev-parse", "--short", "HEAD"], stderr=DEVNULL).decode().strip()
+    except Exception:
         commit = "unknown"
     return {"git_commit": commit}
+
 
 @router.get("/summary")
 def get_summary():
