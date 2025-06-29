@@ -27,17 +27,23 @@ async def run_mcp(
         topics: External context markdown topics.
         role: Agent role to invoke: planner, codex
         user_id: For logging and memory (if implemented)
-        debug: If True, returns context and metadata
+        debug: If True, enables context builder debug mode and returns
+            context metadata with the result
 
     Returns:
-        Dictionary containing agent result and context metadata (optional).
+        Result dictionary. When ``debug`` is True, the return value also
+        includes the injected context and a list of ``files_used``.
     """
 
     # Step 1: Inject multi-domain context
     try:
-        context_data = build_context(query, files, topics, debug=True)
-        context = context_data["context"]
-        files_used = context_data["files_used"]
+        context_data = build_context(query, files, topics, debug=debug)
+        if isinstance(context_data, dict):
+            context = context_data["context"]
+            files_used = context_data["files_used"]
+        else:
+            context = context_data
+            files_used = []
     except Exception as e:
         log_event("mcp_context_error", {"error": str(e), "trace": traceback.format_exc()})
         return {"error": "Failed to build context."}
