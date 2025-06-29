@@ -1,5 +1,6 @@
  # === Core Web Application ===
 fastapi>=0.110.0
+fastapi-mcp>=0.1.5
 uvicorn[standard]>=0.22
 
 # === Google Docs Sync ===
