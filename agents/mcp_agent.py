@@ -3,6 +3,8 @@
 # Roles: planner, codex (with critics), context injection, action queue
 
 import traceback
+from typing import Optional
+
 from agents import planner_agent, codex_agent
 from services.context_injector import build_context
 from utils.logger import log_event
@@ -11,8 +13,8 @@ from services.queue import queue_action
 
 async def run_mcp(
     query: str,
-    files: list[str] = [],
-    topics: list[str] = [],
+    files: Optional[list[str]] = None,
+    topics: Optional[list[str]] = None,
     role: str = "planner",
     user_id: str = "anonymous",
     debug: bool = False,
@@ -34,6 +36,9 @@ async def run_mcp(
         Result dictionary. When ``debug`` is True, the return value also
         includes the injected context and a list of ``files_used``.
     """
+
+    files = files or []
+    topics = topics or []
 
     # Step 1: Inject multi-domain context
     try:
