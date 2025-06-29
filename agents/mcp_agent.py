@@ -7,7 +7,7 @@ from typing import Optional
 
 from agents import planner_agent, codex_agent
 from services.context_injector import build_context
-from utils.logger import log_event
+from core.logging import log_event
 from services.queue import queue_action
 
 
