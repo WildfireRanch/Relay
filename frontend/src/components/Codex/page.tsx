@@ -2,6 +2,7 @@
 
 import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
 import { useState } from "react";
+import { API_ROOT } from "@/lib/api";
 
 export default function CodexPage() {
   const [code, setCode] = useState("");
@@ -14,7 +15,7 @@ export default function CodexPage() {
       <CodexEditor code={code} setCode={setCode} />
       <CodexPromptBar prompt={prompt} setPrompt={setPrompt} onSubmit={async () => {
         setStreamingPatch("⏳ Working...");
-        const res = await fetch("/ask/codex_stream", {
+        const res = await fetch(`${API_ROOT}/ask/codex_stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ question: prompt, context: code }),
