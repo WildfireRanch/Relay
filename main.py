@@ -1,16 +1,18 @@
-# File: main.py — Relay backend entrypoint
+# File: main.py
+# Directory: project root
+# Purpose: Relay backend entrypoint for FastAPI with CORS, startup validation, router mounting, and ENV awareness
+
 from __future__ import annotations
 
-import os  # ✅ FIXED: was missing
+import os
 import logging
 import sys
 from pathlib import Path
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# ─── Load .env if local ──────────────────────────────────────────────────────
+# ─── Load local environment (only in dev) ─────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:
         from dotenv import load_dotenv
@@ -20,33 +22,30 @@ if os.getenv("ENV", "local") == "local":
         logging.warning("⚠️ python-dotenv not installed; skipping .env load")
 
 ENV_NAME = os.getenv("ENV", "local")
-
-# ─── Ensure clean rooted imports ─────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.append(str(PROJECT_ROOT))
 
-# ─── Validate required env vars ──────────────────────────────────────────────
+# ─── Validate required ENV vars ──────────────────────────────────────────────
 for key in ("API_KEY", "OPENAI_API_KEY"):
     if not os.getenv(key):
         logging.error(f"❌ Missing required env var: {key}")
 
-# ─── Ensure docs directories exist ───────────────────────────────────────────
+# ─── Ensure working directories exist ────────────────────────────────────────
 for sub in ("docs/imported", "docs/generated"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ─── Initialize FastAPI app ──────────────────────────────────────────────────
+# ─── Initialize FastAPI ──────────────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
     description="Backend API for Relay agent – ask, control, status, docs, admin",
 )
 
-# ─── Configure CORS ──────────────────────────────────────────────────────────
-cors_origins = ["*"]
-allow_creds = False  # '*' requires credentials = False
-
-override_origin = os.getenv("FRONTEND_ORIGIN")
+# ─── Configure CORS (support static or regex origin) ─────────────────────────
+cors_origins = []
 origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")
+override_origin = os.getenv("FRONTEND_ORIGIN")
+
 if override_origin:
     cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
     allow_creds = True
@@ -55,11 +54,13 @@ elif origin_regex:
     allow_creds = True
     logging.info(f"🔒 CORS regex restriction: {origin_regex}")
 else:
+    cors_origins = ["*"]
+    allow_creds = False
     logging.warning("🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=cors_origins if not origin_regex else [],
     allow_origin_regex=origin_regex,
     allow_credentials=allow_creds,
     allow_methods=["GET", "POST", "OPTIONS"],
@@ -67,7 +68,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-# ─── Import and mount routers ────────────────────────────────────────────────
+# ─── Import and mount routes ─────────────────────────────────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
@@ -91,25 +92,24 @@ app.include_router(search_router)
 app.include_router(codex_router)
 app.include_router(mcp_router)
 
-# Admin tools
 if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
     app.include_router(admin_router)
     logging.info("🛠️ Admin tools enabled")
 else:
     logging.info("Admin tools disabled (ENABLE_ADMIN_TOOLS not set)")
 
-# ─── On-startup: KB auto-reindex if needed ───────────────────────────────────
+# ─── Startup: validate knowledge base ─────────────────────────────────────────
 from services import kb
 
-@app.on_event("startup")  # consider lifespan context for future versions
+@app.on_event("startup")
 def ensure_kb_index():
     if not kb.index_is_valid():
         logging.warning("📚 KB index missing or invalid — triggering rebuild…")
-        logging.info("Reindex result: %s", kb.api_reindex())  # ✅ safer logging
+        logging.info("Reindex result: %s", kb.api_reindex())
     else:
         logging.info("✅ KB index validated on startup")
 
-# ─── Root health checks ──────────────────────────────────────────────────────
+# ─── Health & CORS test routes ───────────────────────────────────────────────
 @app.get("/")
 def root():
     return JSONResponse({"message": "Relay Agent is Online"})
@@ -138,7 +138,16 @@ def health_check():
 def test_cors():
     return JSONResponse({"message": "CORS preflight success"})
 
-# ─── Local development entrypoint ────────────────────────────────────────────
+@app.get("/version")
+def version():
+    try:
+        from subprocess import check_output
+        commit = check_output(["git", "rev-parse", "--short", "HEAD"]).decode().strip()
+    except Exception:
+        commit = "unknown"
+    return {"git_commit": commit, "env": ENV_NAME}
+
+# ─── Dev entrypoint ──────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
 
