@@ -15,6 +15,9 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
+import httpx
+from openai import OpenAIError
+
 from services.config import INDEX_DIR, INDEX_ROOT
 
 from llama_index.core import (
@@ -118,6 +121,17 @@ def _vector_dim_stored() -> int:
 
 EXPECTED_DIM = None  # placeholder
 
+# ─── Helper: mask env vars for error logging ───────────────────────────────
+def _masked_env(keys: List[str]) -> Dict[str, str]:
+    masked = {}
+    for k in keys:
+        val = os.getenv(k)
+        if not val:
+            continue
+        masked_val = val[:4] + "***" if len(val) > 4 else "***"
+        masked[k] = masked_val
+    return masked
+
 def ensure_vector_dim_initialized():
     global EXPECTED_DIM
     if EXPECTED_DIM is None:
@@ -130,7 +144,7 @@ def index_is_valid() -> bool:
     logger.info("[index_is_valid] stored=%s current=%d → %s", stored, EXPECTED_DIM, valid)
     return valid
 
-def embed_all(verbose: bool = False) -> None:
+def embed_all(verbose: bool = False) -> Dict[str, Any]:
     """Rebuild the full semantic index, applying file exclusion and content deduplication."""
     logger.info("📚 Re-indexing KB with model %s", MODEL_NAME)
 
@@ -189,6 +203,7 @@ def embed_all(verbose: bool = False) -> None:
             deduped_docs.append(d)
     docs = deduped_docs
 
+<<<<<<< HEAD
     # ─── NEW: Debug output for document loading ───────────────
     logger.info(f"[KB] Docs loaded for indexing: {len(docs)}")
     for d in docs[:5]:
@@ -206,8 +221,32 @@ def embed_all(verbose: bool = False) -> None:
 
     logger.info("Generated %d vector nodes", len(nodes))
     index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
+=======
+    # Chunk, embed, and index
+    env_info = _masked_env([
+        "KB_EMBED_MODEL",
+        "OPENAI_EMBED_MODEL",
+        "OPENAI_API_KEY",
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+    ])
+    try:
+        nodes = INGEST_PIPELINE.run(documents=docs)
+        logger.info("Generated %d vector nodes", len(nodes))
+    except (OpenAIError, httpx.HTTPError, ConnectionError, TimeoutError) as e:
+        logger.exception("❌ Ingest pipeline failed: %s | env=%s", e, env_info)
+        return {"status": "error", "step": "ingest", "message": str(e)}
+
+    try:
+        index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
+    except (OpenAIError, httpx.HTTPError, ConnectionError, TimeoutError) as e:
+        logger.exception("❌ Index creation failed: %s | env=%s", e, env_info)
+        return {"status": "error", "step": "index", "message": str(e)}
+
+>>>>>>> e6e598dedc86e8331a9ce649044ebc26acd51ced
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
     logger.info("✅ Index persisted → %s", INDEX_DIR)
+    return {"status": "ok", "index_dir": str(INDEX_DIR), "model": MODEL_NAME}
 
 def get_index() -> VectorStoreIndex:
     """Return a cached or loaded index, rebuilding if missing or mismatched."""
@@ -304,8 +343,10 @@ def query_index(query: str, k: int = 4) -> str:
 
 def api_reindex(verbose: bool = False) -> dict:
     global _INDEX_CACHE
-    embed_all(verbose=verbose)
+    result = embed_all(verbose=verbose)
     _INDEX_CACHE = None
+    if result.get("status") != "ok":
+        return result
     return {
         "status": "ok",
         "message": "Re-index complete",

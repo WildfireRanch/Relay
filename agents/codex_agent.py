@@ -7,6 +7,7 @@
 import os
 from typing import Dict, Any, Optional, Tuple, AsyncGenerator
 from openai import AsyncOpenAI, OpenAIError
+from utils.openai_client import create_openai_client
 from utils.patch_utils import validate_patch_format
 from core.logging import log_event
 from dotenv import load_dotenv
@@ -14,7 +15,7 @@ from agents.critic_agent import run_critics
 
 load_dotenv()
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = create_openai_client()
 
 # === CodexAgent Main Handler ===
 async def handle(message: str, context: str, user_id: Optional[str] = None) -> Dict[str, Any]:

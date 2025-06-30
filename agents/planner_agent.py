@@ -8,10 +8,11 @@ import traceback
 from openai import AsyncOpenAI, OpenAIError
 from core.logging import log_event
 from agents.critic_agent import run_critics
+from utils.openai_client import create_openai_client
 
 # === Model Configuration ===
 MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")
-openai = AsyncOpenAI()
+openai = create_openai_client()
 
 # === System Prompt: Define role and structure for planner output ===
 SYSTEM_PROMPT = """

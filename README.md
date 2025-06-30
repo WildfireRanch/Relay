@@ -55,6 +55,8 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `FRONTEND_ORIGIN`        | Backend  | Comma-separated CORS origins. Must include your frontend domain (e.g. https://status.wildfireranch.us) |
 | `FRONTEND_ORIGIN_REGEX`  | Backend  | Regex pattern for allowed CORS origins if using wildcards |
 | `OPENAI_API_KEY`         | Backend  | For embeddings and agent chat/completions         |
+| `OPENAI_TIMEOUT`         | Backend  | Timeout (seconds) for OpenAI requests               |
+| `OPENAI_MAX_RETRIES`     | Backend  | Retry attempts for OpenAI calls                     |
 | `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)      |
 | `GOOGLE_TOKEN_JSON`      | Backend  | Optional OAuth token (Base64-encoded)             |
 | `GOOGLE_CLIENT_ID`       | Both     | Google OAuth client ID                            |
