@@ -53,6 +53,7 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `ENABLE_ADMIN_TOOLS`     | Backend  | Enables `/admin/*` endpoints                      |
 | `ENABLE_REFLECT_AND_PLAN` | Backend  | Run reflection step before answering |
 | `FRONTEND_ORIGIN`        | Backend  | CORS allowlist override                           |
+| `FRONTEND_ORIGIN_REGEX`  | Backend  | Regex pattern for allowed CORS origins |
 | `OPENAI_API_KEY`         | Backend  | For embeddings and agent chat/completions         |
 | `GOOGLE_CREDS_JSON`      | Backend  | Service account credentials (Base64-encoded)      |
 | `GOOGLE_TOKEN_JSON`      | Backend  | Optional OAuth token (Base64-encoded)             |
