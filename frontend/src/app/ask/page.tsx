@@ -18,7 +18,7 @@ type Message = {
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
-// --- Key fix: code renderer with runtime props cast ---
+// --- Custom renderer for code blocks and inline code ---
 const markdownComponents: Components = {
   code(props) {
     const { inline, className, children, ...rest } = props as {
@@ -38,7 +38,7 @@ const markdownComponents: Components = {
       </SyntaxHighlighter>
     ) : (
       <code className={className} {...rest}>
-        {children}
+        {String(children)}
       </code>
     );
   }
