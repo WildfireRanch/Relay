@@ -11,6 +11,7 @@ from typing import Optional
 from agents.codex_agent import handle as codex_agent
 from agents import planner_agent
 from openai import AsyncOpenAI, OpenAIError
+from utils.openai_client import create_openai_client
 from fastapi.responses import StreamingResponse
 from agents.codex_agent import stream as codex_stream
 
@@ -117,7 +118,7 @@ async def ask_codex_stream(
 @router.get("/test_openai")
 async def test_openai():
     try:
-        client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        client = create_openai_client()
         response = await client.chat.completions.create(
             model="gpt-4o",
             messages=[

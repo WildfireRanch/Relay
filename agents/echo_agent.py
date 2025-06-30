@@ -5,9 +5,10 @@
 import os
 from openai import AsyncOpenAI, OpenAIError
 from core.logging import log_event
+from utils.openai_client import create_openai_client
 
 MODEL = os.getenv("ECHO_MODEL", "gpt-4o")
-openai = AsyncOpenAI()
+openai = create_openai_client()
 
 SYSTEM_PROMPT = """
 You are Echo, the default AI agent in a multi-agent relay system.

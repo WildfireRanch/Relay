@@ -4,8 +4,9 @@
 
 import os
 from openai import AsyncOpenAI
+from utils.openai_client import create_openai_client
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = create_openai_client()
 
 async def summarize_memory_entry(question: str, response: str, context: str = "") -> str:
     prompt = f"""
