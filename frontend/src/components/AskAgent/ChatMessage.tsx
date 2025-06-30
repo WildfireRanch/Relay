@@ -12,7 +12,8 @@ type Props = {
 };
 
 export default function ChatMessage({ role, content }: Props) {
-  const alignClass = role === "user" ? "text-right text-blue-700" : "text-left text-green-700";
+  const alignClass =
+    role === "user" ? "text-right text-blue-700" : "text-left text-green-700";
 
   return (
     <div className={alignClass}>
@@ -35,8 +36,9 @@ export default function ChatMessage({ role, content }: Props) {
                 {String(children).replace(/\n$/, "")}
               </SyntaxHighlighter>
             ) : (
+              // Fix: always cast children to string!
               <code className={className} {...props}>
-                {children}
+                {String(children)}
               </code>
             );
           },
