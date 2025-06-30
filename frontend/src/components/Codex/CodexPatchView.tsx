@@ -4,6 +4,9 @@
 
 "use client";
 
+import SafeMarkdown from "@/components/SafeMarkdown";
+
+
 interface Props {
   patch: string;
   loading?: boolean; // Optionally show loading state (prop-driven)
@@ -15,7 +18,7 @@ export default function CodexPatchView({ patch, loading = false }: Props) {
       <label htmlFor="codex-patch" className="block text-sm font-medium mb-1">
         Generated Patch
       </label>
-      <pre
+      <div
         id="codex-patch"
         className="w-full max-h-[500px] overflow-auto bg-black text-green-400 p-4 rounded text-sm whitespace-pre-wrap"
         aria-busy={loading}
@@ -23,9 +26,10 @@ export default function CodexPatchView({ patch, loading = false }: Props) {
         {loading
           ? "⏳ Codex is generating your patch..."
           : patch?.trim()
-            ? patch
+            ? <SafeMarkdown>{patch}</SafeMarkdown>
             : "No patch yet."}
-      </pre>
+      </div>
     </div>
   );
 }
+
