@@ -3,6 +3,7 @@
 "use client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { API_ROOT } from "@/lib/api";
 
 // Explicitly type the Email shape
 type Email = {
@@ -20,7 +21,7 @@ export default function GmailOpsPanel() {
   const [emails, setEmails] = useState<Email[]>([]);
 
   async function send() {
-    const res = await fetch("/control/send_email", {
+    const res = await fetch(`${API_ROOT}/control/send_email`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" },
       body: JSON.stringify({ to_email: to, subject, body })
@@ -30,7 +31,7 @@ export default function GmailOpsPanel() {
   }
 
   async function list() {
-    const res = await fetch("/control/list_email", {
+    const res = await fetch(`${API_ROOT}/control/list_email`, {
       headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
     });
     const data = await res.json();

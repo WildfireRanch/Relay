@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { API_ROOT } from "@/lib/api";
 
 type ActionStatus = "pending" | "approved" | "denied";
 
@@ -52,7 +53,7 @@ export default function ActionQueuePanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/control/list_queue", {
+      const res = await fetch(`${API_ROOT}/control/list_queue`, {
         headers: {
           "X-API-Key": API_KEY,
           "X-User-Id": USER_ID
@@ -71,7 +72,7 @@ export default function ActionQueuePanel() {
   const updateStatus = async (id: string, action: "approve" | "deny") => {
     setProcessing(id + action);
     try {
-      const res = await fetch(`/control/${action}_action`, {
+      const res = await fetch(`${API_ROOT}/control/${action}_action`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
