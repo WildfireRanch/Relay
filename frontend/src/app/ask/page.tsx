@@ -1,10 +1,11 @@
 // File: app/ask/page.tsx
-// Purpose: Ask Echo interface with unified MCP backend and Markdown rendering
+// Purpose: Ask Echo chat UI with unified MCP backend and robust Markdown/code block rendering
 
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { API_ROOT } from "@/lib/api";
@@ -16,6 +17,32 @@ type Message = {
 
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
+
+// --- Key fix: code renderer with runtime props cast ---
+const markdownComponents: Components = {
+  code(props) {
+    const { inline, className, children, ...rest } = props as {
+      inline?: boolean;
+      className?: string;
+      children: ReactNode;
+    };
+    const match = /language-(\w+)/.exec(className || "");
+    return !inline && match ? (
+      <SyntaxHighlighter
+        style={vscDarkPlus}
+        language={match[1]}
+        PreTag="div"
+        {...rest}
+      >
+        {String(children).replace(/\n$/, "")}
+      </SyntaxHighlighter>
+    ) : (
+      <code className={className} {...rest}>
+        {children}
+      </code>
+    );
+  }
+};
 
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -37,7 +64,6 @@ export default function AskPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Unified send to /mcp/run (non-streaming for now)
   const sendMessage = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
@@ -48,7 +74,6 @@ export default function AskPage() {
     setInput("");
 
     try {
-      // MCP: can add files/topics/role here if needed
       const res = await fetch(`${API_ROOT}/mcp/run`, {
         method: "POST",
         headers: {
@@ -57,8 +82,6 @@ export default function AskPage() {
         },
         body: JSON.stringify({
           query: userMessage,
-          // files: [], // optional
-          // topics: [], // optional
           role: "planner",
           debug: true,
         }),
@@ -67,7 +90,6 @@ export default function AskPage() {
       const data = await res.json();
       const result = data?.result || data;
 
-      // Pick best available content from agent result
       const content =
         result?.plan?.objective ||
         result?.plan?.recommendation ||
@@ -101,27 +123,7 @@ export default function AskPage() {
             }
           >
             <span className="block whitespace-pre-wrap">
-              <ReactMarkdown
-                components={{
-                  code({ inline, className, children, ...props }: any) {
-                    const match = /language-(\w+)/.exec(className || "");
-                    return !inline && match ? (
-                      <SyntaxHighlighter
-                        style={vscDarkPlus}
-                        language={match[1]}
-                        PreTag="div"
-                        {...props}
-                      >
-                        {String(children).replace(/\n$/, "")}
-                      </SyntaxHighlighter>
-                    ) : (
-                      <code className={className} {...props}>
-                        {children}
-                      </code>
-                    );
-                  },
-                }}
-              >
+              <ReactMarkdown components={markdownComponents}>
                 {msg.content}
               </ReactMarkdown>
             </span>
