@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const res = await fetch(`${process.env.API_URL}/kb/search`, {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/kb/search`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
