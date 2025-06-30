@@ -61,8 +61,9 @@ async def ask_post(
     try:
         # Check if this looks like a Codex-style edit prompt
         codex_keywords = ("fix", "refactor", "add docstring", "make this async", "convert to class", "clean up")
-        if context and question.lower().startswith(codex_keywords):
-            return await codex_agent(question, context, user_id)
+        if context and any(kw in question.lower() for kw in codex_keywords):
+          return await codex_agent(question, context, user_id) 
+
 
         # Default planner agent
         return await planner_agent.handle_query(
