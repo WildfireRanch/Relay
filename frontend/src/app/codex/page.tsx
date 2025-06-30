@@ -6,6 +6,7 @@ import React from "react";
 import { useState } from "react";
 import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
 import { Button } from "@/components/ui/button";
+import { API_ROOT } from "@/lib/api";
 
 const CodexPage: React.FC = () => {
   const [code, setCode] = useState<string>("");
@@ -23,7 +24,7 @@ const CodexPage: React.FC = () => {
     setParsedPatch(null);
 
     try {
-      const res = await fetch("/ask/codex_stream", {
+      const res = await fetch(`${API_ROOT}/ask/codex_stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: prompt, context: code }),
@@ -62,7 +63,7 @@ const CodexPage: React.FC = () => {
     setStatus("⏳ Applying patch...");
 
     try {
-      const res = await fetch("/codex/apply_patch", {
+      const res = await fetch(`${API_ROOT}/codex/apply_patch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

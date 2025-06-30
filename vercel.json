@@ -1,0 +1,5 @@
+{
+  "env": {
+    "FRONTEND_ORIGIN": "https://status.wildfireranch.us"
+  }
+}

@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { API_ROOT } from "@/lib/api";
 
 // === Types ===
 type LogEntry = {
@@ -45,7 +46,7 @@ export default function AuditPanel() {
   // === Fetch audit logs from backend ===
   async function fetchLog() {
     try {
-      const res = await fetch("/control/list_log", {
+      const res = await fetch(`${API_ROOT}/control/list_log`, {
         headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
       });
       if (!res.ok) throw new Error("Bad response");
@@ -60,7 +61,7 @@ export default function AuditPanel() {
   // === Fetch related queue action by id ===
   async function fetchRelated(id: string) {
     try {
-      const res = await fetch("/control/list_queue", {
+      const res = await fetch(`${API_ROOT}/control/list_queue`, {
         headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
       });
       if (!res.ok) throw new Error("Bad response");
