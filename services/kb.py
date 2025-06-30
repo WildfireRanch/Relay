@@ -5,7 +5,7 @@
 #           - Tier-aware, content-boosted ranking
 #           - Context-rich node metadata for intelligent agent answers
 #           - CLI & debug
-# Updated: 2025-06-24 (Echo "go crazy" mode)
+# Updated: 2025-06-30 (Debug hardening for startup hangs)
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os
@@ -188,11 +188,22 @@ def embed_all(verbose: bool = False) -> None:
             seen.add(key)
             deduped_docs.append(d)
     docs = deduped_docs
-    if verbose:
-        logger.info(f"After deduplication: {len(docs)} unique documents")
 
-    # Chunk, embed, and index
-    nodes = INGEST_PIPELINE.run(documents=docs)
+    # ─── NEW: Debug output for document loading ───────────────
+    logger.info(f"[KB] Docs loaded for indexing: {len(docs)}")
+    for d in docs[:5]:
+        logger.info(f"[KB] Sample doc: {d.metadata.get('file_path')} ({len(d.text)} chars)")
+    if len(docs) == 0:
+        logger.error("[KB] No valid docs to index! Aborting index build to avoid hang.")
+        raise RuntimeError("No valid docs for KB index. Please check your docs/code directory population.")
+
+    # ─── NEW: Wrap embedding in try/except for logging ────────
+    try:
+        nodes = INGEST_PIPELINE.run(documents=docs)
+    except Exception as e:
+        logger.exception("[KB] Failed in INGEST_PIPELINE.run")
+        raise
+
     logger.info("Generated %d vector nodes", len(nodes))
     index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
