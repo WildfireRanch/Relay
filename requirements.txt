@@ -55,8 +55,9 @@ pydantic>=2.11.7
 # === Async Utilities ===
 anyio>=3.7
 
-# === Databases (optional, for SQLAlchemy/SQLite) ===
+# === Databases () ===
 sqlalchemy>=2.0
+neo4j>=5.16.0
 
 # === Testing ===
 pytest>=7.0
