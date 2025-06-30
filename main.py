@@ -46,16 +46,21 @@ cors_origins = ["*"]
 allow_creds = False  # '*' requires credentials = False
 
 override_origin = os.getenv("FRONTEND_ORIGIN")
+origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")
 if override_origin:
     cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
     allow_creds = True
     logging.info(f"🔒 CORS restricted to: {cors_origins}")
+elif origin_regex:
+    allow_creds = True
+    logging.info(f"🔒 CORS regex restriction: {origin_regex}")
 else:
     logging.warning("🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
+    allow_origin_regex=origin_regex,
     allow_credentials=allow_creds,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
