@@ -116,7 +116,12 @@ def _vector_dim_stored() -> int:
             return len(rec["embedding"])
     return -1
 
-EXPECTED_DIM = _vector_dim_current()
+EXPECTED_DIM = None  # placeholder
+
+def ensure_vector_dim_initialized():
+    global EXPECTED_DIM
+    if EXPECTED_DIM is None:
+        EXPECTED_DIM = _vector_dim_current()
 
 # ─── Public helpers ────────────────────────────────────────────────────────
 def index_is_valid() -> bool:
