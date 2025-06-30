@@ -12,6 +12,7 @@ env/
 # === OS Files ===
 .DS_Store
 Thumbs.db
+.next/
 
 # === IDEs ===
 .vscode/
