@@ -1,24 +1,26 @@
 // File: frontend/src/components/Codex/CodexPromptBar.tsx
+// Purpose: Prompt input bar for Codex code editing agent
+// Updated: 2025-06-30
 
 "use client";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
 
 interface Props {
-  prompt: string;
-  setPrompt: (val: string) => void;
-  onSubmit: () => void;
+  prompt: string;                 // Prompt/instruction for the code agent
+  setPrompt: (val: string) => void; // Handler to update prompt in parent state
+  onSubmit: () => void;           // Handler called when user submits
+  loading?: boolean;              // Show loading state, disable input (prop-driven)
 }
 
-export default function CodexPromptBar({ prompt, setPrompt, onSubmit }: Props) {
-  const [loading, setLoading] = useState(false);
-
-  const handleSubmit = async () => {
-    setLoading(true);
-    await onSubmit();
-    setLoading(false);
+export default function CodexPromptBar({ prompt, setPrompt, onSubmit, loading = false }: Props) {
+  // Handle Enter key to submit (unless Shift is held for multi-line, if ever needed)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && prompt.trim() && !loading) {
+      e.preventDefault();
+      onSubmit();
+    }
   };
 
   return (
@@ -26,11 +28,12 @@ export default function CodexPromptBar({ prompt, setPrompt, onSubmit }: Props) {
       <Input
         value={prompt}
         onChange={(e) => setPrompt(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-        placeholder="What should Codex do? e.g., Add docstrings"
+        onKeyDown={handleKeyDown}
+        placeholder="What should Codex do? (e.g., Add docstrings)"
         className="flex-1"
+        disabled={loading}
       />
-      <Button onClick={handleSubmit} disabled={loading}>
+      <Button onClick={onSubmit} disabled={loading || !prompt.trim()}>
         {loading ? "Running..." : "Run"}
       </Button>
     </div>

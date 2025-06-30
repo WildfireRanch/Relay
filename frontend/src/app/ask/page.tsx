@@ -1,7 +1,7 @@
-"use client";
-
 // File: app/ask/page.tsx
-// Purpose: Ask Echo interface with local history, Markdown rendering, and streaming support
+// Purpose: Ask Echo interface with unified MCP backend and Markdown rendering
+
+"use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
@@ -9,18 +9,15 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { API_ROOT } from "@/lib/api";
 
-// Message type for chat
 type Message = {
   role: "user" | "assistant";
   content: string;
 };
 
-// Temporary hardcoded user ID and localStorage key
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
 export default function AskPage() {
-  // Load chat history from localStorage if available
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -31,10 +28,8 @@ export default function AskPage() {
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [streaming, setStreaming] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Persist messages + auto-scroll to bottom on message update
   useEffect(() => {
     if (typeof window !== "undefined") {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
@@ -42,7 +37,7 @@ export default function AskPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Send query to backend and handle streaming or full response
+  // Unified send to /mcp/run (non-streaming for now)
   const sendMessage = useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
@@ -50,59 +45,51 @@ export default function AskPage() {
     const userMessage = input;
     setMessages(msgs => [...msgs, { role: "user", content: userMessage }]);
     setLoading(true);
-    setStreaming(true);
     setInput("");
 
-    let assistantContent = "";
-
     try {
-      const res = await fetch(`${API_ROOT}/ask`, {
+      // MCP: can add files/topics/role here if needed
+      const res = await fetch(`${API_ROOT}/mcp/run`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "X-User-Id": USER_ID,
         },
-        body: JSON.stringify({ question: userMessage }),
+        body: JSON.stringify({
+          query: userMessage,
+          // files: [], // optional
+          // topics: [], // optional
+          role: "planner",
+          debug: true,
+        }),
       });
 
-      // Streaming response via text/event-stream
-      if (res.body && res.headers.get("content-type")?.includes("text/event-stream")) {
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let done = false;
+      const data = await res.json();
+      const result = data?.result || data;
 
-        while (!done) {
-          const { value, done: streamDone } = await reader.read();
-          done = streamDone;
-          const chunk = decoder.decode(value);
-          assistantContent += chunk;
+      // Pick best available content from agent result
+      const content =
+        result?.plan?.objective ||
+        result?.plan?.recommendation ||
+        result?.recommendation ||
+        result?.response ||
+        data?.response ||
+        "[no answer]";
 
-          // Replace last assistant message with streaming content
-          setMessages(msgs =>
-            msgs
-              .filter(m => m.role !== "assistant")
-              .concat({ role: "assistant", content: assistantContent })
-          );
-        }
-      } else {
-        // Fallback to JSON response
-        const data = await res.json();
-        assistantContent = data.response || "[no response]";
-        setMessages(msgs => [...msgs, { role: "assistant", content: assistantContent }]);
-      }
+      setMessages(msgs => [...msgs, { role: "assistant", content }]);
     } catch {
-      setMessages(msgs => [...msgs, { role: "assistant", content: "[error] Unable to get response." }]);
+      setMessages(msgs => [
+        ...msgs,
+        { role: "assistant", content: "[error] Unable to get response." },
+      ]);
     }
 
     setLoading(false);
-    setStreaming(false);
   }, [input, loading]);
 
   return (
     <div className="w-full max-w-2xl mx-auto min-h-screen flex flex-col">
       <h1 className="text-3xl font-bold my-4">Ask Echo</h1>
-
-      {/* Chat history area */}
       <div className="flex-1 space-y-2 overflow-y-auto border rounded-xl p-4 bg-muted">
         {messages.map((msg, i) => (
           <div
@@ -116,8 +103,6 @@ export default function AskPage() {
             <span className="block whitespace-pre-wrap">
               <ReactMarkdown
                 components={{
-                  // Syntax highlighting for code blocks
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   code({ inline, className, children, ...props }: any) {
                     const match = /language-(\w+)/.exec(className || "");
                     return !inline && match ? (
@@ -149,8 +134,6 @@ export default function AskPage() {
         )}
         <div ref={bottomRef} />
       </div>
-
-      {/* Input bar */}
       <form
         onSubmit={sendMessage}
         className="flex items-center gap-2 mt-4"
@@ -177,10 +160,9 @@ export default function AskPage() {
           className="bg-blue-600 text-white rounded px-4 py-2"
           disabled={loading || !input.trim()}
         >
-          {loading || streaming ? "Sending…" : "Send"}
+          {loading ? "Sending…" : "Send"}
         </button>
       </form>
-
       <div className="text-xs text-gray-400 text-center mt-2">
         API root: <span className="font-mono">{API_ROOT}</span>
       </div>
