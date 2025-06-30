@@ -68,6 +68,11 @@ For details, see [`/docs/PROJECT_SUMMARY.md`](./docs/PROJECT_SUMMARY.md)
 | `NEXT_PUBLIC_API_KEY`    | Frontend | API key exposed to browser                        |
 | `NEXT_PUBLIC_API_URL`    | Frontend | Backend root for all API calls                    |
 
+### Vercel Deployment
+
+Set `NEXT_PUBLIC_API_URL` to your public backend URL when deploying the frontend to Vercel (e.g. `https://relay.wildfireranch.us`). Ensure the backend allows this origin by adding it to `FRONTEND_ORIGIN`.
+
+
 ---
 
 ## 🧠 Context & Memory Intelligence
