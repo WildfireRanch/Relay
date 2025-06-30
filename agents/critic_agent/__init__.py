@@ -1,5 +1,8 @@
-<<<<<<< HEAD
 # File: agents/critic_agent/__init__.py
+
+from .run import run_critics
+
+__all__ = ["run_critics"]
 
 async def run(query: str, plan: dict, context: str = "", user_id: str = "system") -> dict:
     """
@@ -10,8 +13,3 @@ async def run(query: str, plan: dict, context: str = "", user_id: str = "system"
         "critics": results,
         "passes": all(c["passes"] for c in results)
     }
-=======
-from .run import run_critics
-
-__all__ = ["run_critics"]
->>>>>>> 35e068f4e4ab81854ee7f4e9324f527514d5e4c2
