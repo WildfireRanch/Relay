@@ -7,8 +7,9 @@ import traceback
 from openai import AsyncOpenAI, OpenAIError
 from agents.critic_agent import run_critics
 from core.logging import log_event
+from utils.openai_client import create_openai_client
 
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = create_openai_client()
 
 # === System Prompt ===
 SYSTEM_PROMPT = """

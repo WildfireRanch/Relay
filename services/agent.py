@@ -11,9 +11,10 @@ from openai import AsyncOpenAI
 import services.kb as kb
 import httpx
 from services.context_engine import ContextEngine
+from utils.openai_client import create_openai_client
 
 # === Initialize OpenAI client ===
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = create_openai_client()
 
 # === Railway control endpoint for queueing actions/docs ===
 RAILWAY_KEY = os.getenv("API_KEY")
