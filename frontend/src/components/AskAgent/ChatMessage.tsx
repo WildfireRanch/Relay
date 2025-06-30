@@ -1,10 +1,7 @@
 // File: components/AskAgent/ChatMessage.tsx
 
 import React from "react";
-import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import type { ComponentPropsWithoutRef } from "react";
+import SafeMarkdown from "@/components/SafeMarkdown"; // Use the shared safe renderer
 
 type Props = {
   role: "user" | "assistant";
@@ -17,35 +14,7 @@ export default function ChatMessage({ role, content }: Props) {
 
   return (
     <div className={alignClass}>
-      <ReactMarkdown
-        components={{
-          code({
-            inline,
-            className,
-            children,
-            ...props
-          }: ComponentPropsWithoutRef<"code"> & { inline?: boolean }) {
-            const match = /language-(\w+)/.exec(className || "");
-            return !inline && match ? (
-              <SyntaxHighlighter
-                style={vscDarkPlus}
-                language={match[1]}
-                PreTag="div"
-                {...props}
-              >
-                {String(children).replace(/\n$/, "")}
-              </SyntaxHighlighter>
-            ) : (
-              // Fix: always cast children to string!
-              <code className={className} {...props}>
-                {String(children)}
-              </code>
-            );
-          },
-        }}
-      >
-        {content}
-      </ReactMarkdown>
+      <SafeMarkdown>{content}</SafeMarkdown>
     </div>
   );
 }
