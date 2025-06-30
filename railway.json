@@ -1,10 +1,13 @@
 {
   "services": [
     {
-      "name": "relay-agent",           
+      "name": "relay-agent",
       "startCommand": "python main.py",
-      "healthcheckPath": "/status",    
-      "port": 8000                     
+      "healthcheckPath": "/status",
+      "port": 8000,
+      "env": {
+        "FRONTEND_ORIGIN": "https://status.wildfireranch.us"
+      }
     }
   ]
 }
