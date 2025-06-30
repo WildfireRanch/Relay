@@ -1,23 +1,25 @@
 // File: components/AskAgent/InputBar.tsx
+// Purpose: Text input + send button for AskAgent chat UI
+// Updated: 2025-06-30
 
 import React from "react";
 
 type Props = {
-  value: string;
-  onChange: (val: string) => void;
-  onSend: () => void;
-  loading: boolean;
+  value: string;                 // Input value (controlled)
+  onChange: (val: string) => void; // Handle text changes
+  onSend: () => void;              // Called to send message
+  loading: boolean;                // Loading state (disables input/button)
 };
 
 const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
   return (
     <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        onSend();
-      }}
       className="flex items-center gap-2 mt-4"
       autoComplete="off"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!loading && value.trim()) onSend();
+      }}
     >
       <input
         type="text"
@@ -29,11 +31,12 @@ const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
         name="echo-message"
         id="echo-message"
         onKeyDown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
+          if (e.key === "Enter" && !e.shiftKey && value.trim() && !loading) {
             e.preventDefault();
             onSend();
           }
         }}
+        autoFocus
       />
       <button
         type="submit"
