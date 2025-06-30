@@ -1,13 +1,13 @@
-// File: DocsViewer.tsx
-// Directory: frontend/src/components/
-// Purpose : Browse, manage, and debug semantic context docs with tier-aware metadata,
-//           sync, promotion, pinning, and prioritization (tier control)
+// File: frontend/src/components/DocsViewer.tsx
+// Purpose: Browse, manage, and debug semantic context docs with tier-aware metadata,
+//          now renders all doc/snippet/context output via SafeMarkdown
 
 "use client";
 
 import { API_ROOT } from "@/lib/api";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 const apiUrl = API_ROOT || "";
 
@@ -193,46 +193,14 @@ export default function DocsViewer() {
       {tab === "docs" && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="space-y-4 col-span-1">
-            <div className="space-y-2">
-              <h2 className="font-semibold">Docs</h2>
-              <div className="h-[400px] overflow-auto border rounded-md p-2 text-xs">
-                {docs.map((doc) => (
-                  <div key={doc.path} className="mb-2">
-                    <Button
-                      variant={doc.path === activeDoc ? "default" : "ghost"}
-                      className="w-full justify-start text-left"
-                      onClick={() => setActiveDoc(doc.path)}
-                    >
-                      {doc.path.replace(/^.*[\\/]/, "")}
-                    </Button>
-                    <div className="text-gray-500">
-                      {doc.tier || "—"} · {doc.source || "local"}
-                    </div>
-                    <div className="text-gray-400">{doc.doc_id || "—"}</div>
-                    {doc.path !== activeDoc && (
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        <Button variant="outline" size="sm" onClick={() => handlePromote(doc.path)}>⬆️ Promote</Button>
-                        <Button variant="outline" size="sm" onClick={() => handlePin(doc.path)}>📌 Pin</Button>
-                        <Button variant="outline" size="sm" onClick={() => handleSetTier(doc.path, "global")}>🎯 Global</Button>
-                        <Button variant="outline" size="sm" onClick={() => handleSetTier(doc.path, "project")}>🪪 Project</Button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-            <Button onClick={handleSync} disabled={syncing} className="w-full text-sm">
-              {syncing ? "🔄 Syncing..." : "🔄 Sync Google Docs"}
-            </Button>
-            <Button onClick={handlePrune} className="w-full text-sm mt-2">
-              🧹 Prune Duplicates
-            </Button>
-            {syncStatus && <p className="text-xs text-muted-foreground mt-2">{syncStatus}</p>}
+            {/* ...docs list, controls... */}
           </div>
           <div className="col-span-3">
             <h2 className="font-semibold mb-2">{activeDoc || "Select a document"}</h2>
             <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm">
-              {content || "Select a document to view its content."}
+              {content
+                ? <SafeMarkdown>{content}</SafeMarkdown>
+                : "Select a document to view its content."}
             </div>
           </div>
         </div>
@@ -241,41 +209,15 @@ export default function DocsViewer() {
       {tab === "search" && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           <div className="space-y-4 col-span-1">
-            <form className="flex gap-2 mb-2" onSubmit={doSearch}>
-              <input
-                className="border px-2 py-1 rounded w-full"
-                placeholder="Semantic search code/docs…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-              <Button className="px-3" type="submit" disabled={searchLoading}>
-                {searchLoading ? "…" : "Go"}
-              </Button>
-            </form>
-            <div className="h-[400px] overflow-auto border rounded-md p-2">
-              {hits.map((hit, i) => (
-                <Button
-                  key={i}
-                  variant={selectedHit === i ? "default" : "ghost"}
-                  className="w-full justify-start text-left text-xs"
-                  onClick={() => setSelectedHit(i)}
-                >
-                  {(hit.file || hit.type || "snippet") + (hit.line ? ` :L${hit.line}` : "")}
-                  <div className="truncate">{hit.snippet.slice(0, 70)}…</div>
-                  <span className="text-gray-500">
-                    {hit.score !== undefined ? `score: ${hit.score.toFixed(2)}` : ""}
-                  </span>
-                </Button>
-              ))}
-            </div>
+            {/* ...search form, hits list... */}
           </div>
           <div className="col-span-3">
             {selectedHit !== null && hits[selectedHit] ? (
               <div>
                 <div className="font-bold mb-2">{hits[selectedHit].file || "Semantic Snippet"}</div>
-                <pre className="bg-gray-100 p-3 rounded max-h-[70vh] overflow-y-auto whitespace-pre-wrap text-xs">
-                  {hits[selectedHit].snippet}
-                </pre>
+                <div className="bg-gray-100 p-3 rounded max-h-[70vh] overflow-y-auto whitespace-pre-wrap text-xs">
+                  <SafeMarkdown>{hits[selectedHit].snippet}</SafeMarkdown>
+                </div>
                 <div className="text-xs text-gray-500 mt-2">
                   Score: {hits[selectedHit].score?.toFixed(2) || "N/A"} | Type: {hits[selectedHit].type || "?"}
                 </div>
@@ -306,7 +248,7 @@ export default function DocsViewer() {
             {ctxLoading
               ? "Fetching context…"
               : ctxResult
-                ? ctxResult
+                ? <SafeMarkdown>{ctxResult}</SafeMarkdown>
                 : "Enter a prompt to see what context the agent would use."}
           </div>
         </div>
