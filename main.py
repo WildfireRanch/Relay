@@ -73,6 +73,7 @@ from routes.kb import router as kb_router
 from routes.search import router as search_router
 from routes.admin import router as admin_router
 from routes.codex import router as codex_router
+from routes.mcp import router as mcp_router
 
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -83,6 +84,7 @@ app.include_router(debug_router)
 app.include_router(kb_router)
 app.include_router(search_router)
 app.include_router(codex_router)
+app.include_router(mcp_router)
 
 # Admin tools
 if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):

@@ -125,6 +125,19 @@ To run the optional reflection & planning step, set `ENABLE_REFLECT_AND_PLAN=1` 
 append `?reflect=1` to `/ask` requests.
 Set `KB_SCORE_THRESHOLD` or pass `?score_threshold=0.15` to filter low-scoring KB results.
 
+### MCP Run Example:
+
+```bash
+POST /mcp/run
+{
+  "query": "Add error handling",
+  "files": ["app/main.py"],
+  "role": "codex"
+}
+```
+
+The MCP orchestrates planner or codex roles with full context injection.
+
 ---
 
 ## 🔎 Key Endpoints
@@ -133,6 +146,8 @@ Set `KB_SCORE_THRESHOLD` or pass `?score_threshold=0.15` to filter low-scoring K
 | ------------------------------ | ---------------------------------------------- | ------------- |
 | `/ask`                         | GPT Q\&A with code+context                     | ✅             |
 | `/kb/search`                   | Semantic search over code/docs/context         | ✅             |
+| `/mcp/run`                     | Master Control Program orchestrator
+  | ✅             |
 | `/docs/sync`                   | Google Docs → Markdown/context sync            | ✅             |
 | `/admin/reindex`               | Manual rebuild of semantic index               | ✅             |
 | `/admin/generate_auto_context` | Regenerate auto global context from `/context` | ✅             |
