@@ -5,7 +5,7 @@
 import os
 import traceback
 from openai import AsyncOpenAI, OpenAIError
-from agents.critic_agent import run_all as run_critics
+from agents.critic_agent import run_critics
 from core.logging import log_event
 
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))

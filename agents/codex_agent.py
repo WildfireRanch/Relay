@@ -5,12 +5,12 @@
 # Dependencies: OpenAI (GPT-4), Relay config, project file context
 
 import os
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, AsyncGenerator
 from openai import AsyncOpenAI, OpenAIError
 from utils.patch_utils import validate_patch_format
 from core.logging import log_event
 from dotenv import load_dotenv
-from agents.critic_agent import run_all as run_critics
+from agents.critic_agent import run_critics
 
 load_dotenv()
 
@@ -85,6 +85,33 @@ async def handle(message: str, context: str, user_id: Optional[str] = None) -> D
         "response": response,
         "action": action
     }
+
+
+# === Streaming Variant ===
+async def stream(message: str, context: str, user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+    """Stream CodexAgent patch response line by line."""
+    if not message or not context:
+        yield "[Error] Missing message or context."
+        return
+
+    prompt = build_prompt(message, context)
+
+    try:
+        openai_stream = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "You are a senior software engineer generating code patches from user requests."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.3,
+            stream=True
+        )
+        async for chunk in openai_stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+    except Exception as e:
+        yield f"[Error] Codex stream failed: {str(e)}"
 
 
 # === Prompt Builder ===
