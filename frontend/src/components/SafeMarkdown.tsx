@@ -46,37 +46,38 @@ const markdownComponents: Components = {
       </code>
     );
   },
-  // Example expansion for custom tables, links, images:
-  // table({ children, ...props }) { ... },
-  // a({ href, children, ...props }) { ... },
-  // img({ src, alt, ...props }) { ... },
+  // You can expand here for tables, images, links if needed
 };
 
 export default function SafeMarkdown({ children, className }: SafeMarkdownProps) {
-  // Dev-only: warn if a non-string slips through (should never happen in production)
-  if (typeof children !== "string") {
-    if (process.env.NODE_ENV !== "production") {
-      console.warn(
-        "[SafeMarkdown] Expected children to be a string, got:",
-        typeof children,
-        children
-      );
-    }
+  // Dev-only: Warn if a non-string slips through (should never happen in production)
+  if (typeof children !== "string" && process.env.NODE_ENV !== "production") {
+    console.warn(
+      "[SafeMarkdown] Expected children to be a string, got:",
+      typeof children,
+      children
+    );
   }
 
-  // Always coerce to string
+  // Always coerce to string for React safety
   const strChildren =
     typeof children === "string" ? children : children ? String(children) : "";
 
-  // Escape anything that looks like raw HTML before parsing as markdown
+  // Debug: Log if somehow a non-string is still about to render (for final #418 hunting)
+  if (typeof strChildren !== "string") {
+    // This should never happen, but will catch #418 roots
+    // eslint-disable-next-line no-console
+    console.error("SAFE-MARKDOWN-418-DEBUG", typeof strChildren, strChildren);
+  }
+
+  // Ultra-safe: Escape anything that looks like raw HTML before markdown parsing
+  // (belt-and-suspenders, since skipHtml & disallowedElements are also set)
   const likelyRawHtml = /<\s*[a-zA-Z]+[^>]*>/.test(strChildren);
   const safeChildren = likelyRawHtml
     ? strChildren.replace(/</g, "&lt;").replace(/>/g, "&gt;")
     : strChildren;
 
   return (
-    {typeof safeChildren !== "string" &&
-      console.log("DEBUG 418:", typeof safeChildren, safeChildren)}
     <ReactMarkdown
       components={markdownComponents}
       // SECURITY: Never allow any HTML passthrough from markdown
