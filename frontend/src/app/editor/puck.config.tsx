@@ -59,6 +59,10 @@ type Props = {
 const MarkdownBlock: React.FC<{ title?: string, content: string, imageUrl?: string }> = ({ title, content, imageUrl }) => {
   // (Optionally, image upload UI - safe to omit if not implemented)
   // You could add upload support here with hooks if you need later.
+  if (typeof content !== "string") {
+    console.log("DEBUG 418:", typeof content, content);
+  }
+
   return (
     <div className="prose prose-neutral dark:prose-invert max-w-none border rounded-xl p-4 bg-background shadow mb-4">
       {title && <h2>{title}</h2>}
@@ -73,8 +77,6 @@ const MarkdownBlock: React.FC<{ title?: string, content: string, imageUrl?: stri
         />
       )}
       <div className="prose prose-neutral dark:prose-invert max-w-none">
-        {typeof content !== "string" &&
-          console.log("DEBUG 418:", typeof content, content)}
         <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
       </div>
     </div>

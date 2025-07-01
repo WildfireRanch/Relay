@@ -154,6 +154,76 @@ export default function AuditPanel() {
   }
 
   // === UI ===
+  const rows = filtered.map((entry, i) => {
+    if (entry.comment && typeof entry.comment !== "string") {
+      console.log("DEBUG 418:", typeof entry.comment, entry.comment);
+    }
+    return (
+      <tr
+        key={i}
+        className="border-t border-gray-300 cursor-pointer hover:bg-blue-50"
+        onClick={() => {
+          setSelected(entry);
+          fetchRelated(entry.id);
+        }}
+      >
+        <td className="px-2 py-1">{entry.timestamp}</td>
+        <td className="px-2 py-1">
+          <Badge
+            variant={
+              entry.status === "approved"
+                ? "success"
+                : entry.status === "denied"
+                ? "destructive"
+                : entry.status === "pending"
+                ? "secondary"
+                : "default"
+            }
+          >
+            {entry.status}
+          </Badge>
+        </td>
+        <td className="px-2 py-1">{entry.user || ""}</td>
+        <td className="px-2 py-1">{entry.type || ""}</td>
+        <td className="px-2 py-1 font-mono">{entry.path || ""}</td>
+        <td className="px-2 py-1 font-mono">{entry.id.slice(0, 8)}</td>
+        <td className="px-2 py-1">
+          {entry.comment ? (
+            <div className="prose prose-neutral dark:prose-invert max-w-none">
+              <SafeMarkdown>{entry.comment}</SafeMarkdown>
+            </div>
+          ) : (
+            ""
+          )}
+        </td>
+      </tr>
+    );
+  });
+
+  if (selected && typeof selected.comment !== "string") {
+    console.log("DEBUG 418:", typeof selected.comment, selected.comment);
+  }
+  if (relatedAction?.action?.context && typeof relatedAction.action.context !== "string") {
+    console.log("DEBUG 418:", typeof relatedAction.action.context, relatedAction.action.context);
+  }
+  if (relatedAction?.action?.rationale && typeof relatedAction.action.rationale !== "string") {
+    console.log(
+      "DEBUG 418:",
+      typeof relatedAction.action.rationale,
+      relatedAction.action.rationale
+    );
+  }
+  if (relatedAction?.action?.diff && typeof relatedAction.action.diff !== "string") {
+    console.log("DEBUG 418:", typeof relatedAction.action.diff, relatedAction.action.diff);
+  }
+  if (relatedAction?.history) {
+    for (const h of relatedAction.history) {
+      if (h.comment && typeof h.comment !== "string") {
+        console.log("DEBUG 418:", typeof h.comment, h.comment);
+      }
+    }
+  }
+
   return (
     <div className="max-w-5xl mx-auto py-8">
       <h2 className="font-bold text-xl mb-6">🛡️ Audit Log & Operator Panel</h2>
@@ -221,39 +291,7 @@ export default function AuditPanel() {
               <th className="px-2 py-1 text-left">Comment</th>
             </tr>
           </thead>
-          <tbody>
-            {filtered.map((entry, i) => (
-              <tr
-                key={i}
-                className="border-t border-gray-300 cursor-pointer hover:bg-blue-50"
-                onClick={() => { setSelected(entry); fetchRelated(entry.id); }}
-              >
-                <td className="px-2 py-1">{entry.timestamp}</td>
-                <td className="px-2 py-1">
-                  <Badge variant={
-                    entry.status === "approved" ? "success" :
-                    entry.status === "denied" ? "destructive" :
-                    entry.status === "pending" ? "secondary" : "default"
-                  }>
-                    {entry.status}
-                  </Badge>
-                </td>
-                <td className="px-2 py-1">{entry.user || ""}</td>
-                <td className="px-2 py-1">{entry.type || ""}</td>
-                <td className="px-2 py-1 font-mono">{entry.path || ""}</td>
-                <td className="px-2 py-1 font-mono">{entry.id.slice(0, 8)}</td>
-                <td className="px-2 py-1">
-                  {entry.comment ? (
-                    <div className="prose prose-neutral dark:prose-invert max-w-none">
-                      {typeof entry.comment !== "string" &&
-                        console.log("DEBUG 418:", typeof entry.comment, entry.comment)}
-                      <SafeMarkdown>{entry.comment}</SafeMarkdown>
-                    </div>
-                  ) : ""}
-                </td>
-              </tr>
-            ))}
-          </tbody>
+          <tbody>{rows}</tbody>
         </table>
       </div>
       <div className="text-xs text-gray-400 mt-3">
@@ -280,12 +318,6 @@ export default function AuditPanel() {
               <strong>Comment:</strong>{" "}
               {selected.comment ? (
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
-                  {typeof selected.comment !== "string" &&
-                    console.log(
-                      "DEBUG 418:",
-                      typeof selected.comment,
-                      selected.comment
-                    )}
                   <SafeMarkdown>{selected.comment}</SafeMarkdown>
                 </div>
               ) : ""}
@@ -297,12 +329,6 @@ export default function AuditPanel() {
                 <summary className="cursor-pointer text-blue-700 mb-2">View Agent Context</summary>
                 <div className="bg-gray-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
                   <div className="prose prose-neutral dark:prose-invert max-w-none">
-                    {typeof relatedAction.action.context !== "string" &&
-                      console.log(
-                        "DEBUG 418:",
-                        typeof relatedAction.action.context,
-                        relatedAction.action.context
-                      )}
                     <SafeMarkdown>{relatedAction.action.context}</SafeMarkdown>
                   </div>
                 </div>
@@ -312,12 +338,6 @@ export default function AuditPanel() {
               <div className="text-xs italic mb-2">
                 <strong>Agent rationale:</strong>{" "}
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
-                  {typeof relatedAction.action.rationale !== "string" &&
-                    console.log(
-                      "DEBUG 418:",
-                      typeof relatedAction.action.rationale,
-                      relatedAction.action.rationale
-                    )}
                   <SafeMarkdown>{relatedAction.action.rationale}</SafeMarkdown>
                 </div>
               </div>
@@ -327,12 +347,6 @@ export default function AuditPanel() {
                 <summary className="cursor-pointer text-blue-700 mb-2">View Diff</summary>
                 <div className="bg-yellow-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
                   <div className="prose prose-neutral dark:prose-invert max-w-none">
-                    {typeof relatedAction.action.diff !== "string" &&
-                      console.log(
-                        "DEBUG 418:",
-                        typeof relatedAction.action.diff,
-                        relatedAction.action.diff
-                      )}
                     <SafeMarkdown>{relatedAction.action.diff}</SafeMarkdown>
                   </div>
                 </div>
@@ -349,12 +363,6 @@ export default function AuditPanel() {
                       {h.comment && (
                         <span className="ml-2 italic">
                           <div className="prose prose-neutral dark:prose-invert max-w-none">
-                            {typeof h.comment !== "string" &&
-                              console.log(
-                                "DEBUG 418:",
-                                typeof h.comment,
-                                h.comment
-                              )}
                             <SafeMarkdown>{h.comment}</SafeMarkdown>
                           </div>
                         </span>

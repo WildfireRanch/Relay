@@ -13,6 +13,9 @@ interface Props {
 }
 
 export default function CodexPatchView({ patch, loading = false }: Props) {
+  if (typeof patch !== "string") {
+    console.log("DEBUG 418:", typeof patch, patch);
+  }
   return (
     <div className="mt-4">
       <label htmlFor="codex-patch" className="block text-sm font-medium mb-1">
@@ -28,8 +31,6 @@ export default function CodexPatchView({ patch, loading = false }: Props) {
           "⏳ Codex is generating your patch..."
         ) : patch?.trim() ? (
           <div className="prose prose-neutral dark:prose-invert max-w-none">
-            {typeof patch !== "string" &&
-              console.log("DEBUG 418:", typeof patch, patch)}
             <SafeMarkdown>{patch}</SafeMarkdown>
           </div>
         ) : (

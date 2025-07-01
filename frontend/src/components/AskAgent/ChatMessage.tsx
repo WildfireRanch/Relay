@@ -15,11 +15,13 @@ export default function ChatMessage({ role, content }: Props) {
   const alignClass =
     role === "user" ? "text-right text-blue-700" : "text-left text-green-700";
 
+  if (typeof content !== "string") {
+    console.log("DEBUG 418:", typeof content, content);
+  }
+
   return (
     <div className={alignClass}>
       <div className="prose prose-neutral dark:prose-invert max-w-none">
-        {typeof content !== "string" &&
-          console.log("DEBUG 418:", typeof content, content)}
         <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
       </div>
     </div>
