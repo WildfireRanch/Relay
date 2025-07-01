@@ -144,6 +144,8 @@ export default function SearchPanel() {
               </header>
               <div className="mb-1">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof r.snippet !== "string" &&
+                    console.log("DEBUG 418:", typeof r.snippet, r.snippet)}
                   <SafeMarkdown>{r.snippet}</SafeMarkdown>
                 </div>
               </div>

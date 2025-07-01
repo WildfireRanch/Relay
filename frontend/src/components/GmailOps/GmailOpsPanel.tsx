@@ -62,6 +62,8 @@ export default function GmailOpsPanel() {
         {msg && (
           <div className="text-xs mt-2">
             <div className="prose prose-neutral dark:prose-invert max-w-none">
+              {typeof msg !== "string" &&
+                console.log("DEBUG 418:", typeof msg, msg)}
               <SafeMarkdown>{msg}</SafeMarkdown>
             </div>
           </div>
@@ -78,6 +80,8 @@ export default function GmailOpsPanel() {
               <div><strong>Date:</strong> {em.date}</div>
               <div className="text-gray-500">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof em.snippet !== "string" &&
+                    console.log("DEBUG 418:", typeof em.snippet, em.snippet)}
                   <SafeMarkdown>{em.snippet}</SafeMarkdown>
                 </div>
               </div>

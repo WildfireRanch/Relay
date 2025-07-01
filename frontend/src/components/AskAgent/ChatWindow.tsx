@@ -28,7 +28,11 @@ export default function ChatWindow() {
       {/* Message List */}
       <div className="flex-1 space-y-2 overflow-y-auto border rounded-xl p-4 bg-muted">
         {messages.map((msg, i) => (
-          <ChatMessage key={i} role={msg.role} content={toMDString(msg.content)} />
+          <>
+            {typeof msg.content !== "string" &&
+              console.log("DEBUG 418:", typeof msg.content, msg.content)}
+            <ChatMessage key={i} role={msg.role} content={toMDString(msg.content)} />
+          </>
         ))}
         {loading && (
           <div className="text-left text-green-700 animate-pulse">

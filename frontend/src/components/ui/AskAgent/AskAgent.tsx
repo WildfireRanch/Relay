@@ -46,6 +46,8 @@ export default function AskAgent() {
       {response && (
         <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border">
           <div className="prose prose-neutral dark:prose-invert max-w-none">
+            {typeof response !== "string" &&
+              console.log("DEBUG 418:", typeof response, response)}
             <SafeMarkdown>{response}</SafeMarkdown>
           </div>
         </div>

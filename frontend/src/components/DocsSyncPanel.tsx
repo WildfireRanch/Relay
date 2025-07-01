@@ -103,6 +103,8 @@ export default function DocsSyncPanel() {
       {status && (
         <div className="mt-2 text-sm text-muted-foreground">
           <div className="prose prose-neutral dark:prose-invert max-w-none">
+            {typeof status !== "string" &&
+              console.log("DEBUG 418:", typeof status, status)}
             <SafeMarkdown>{status}</SafeMarkdown>
           </div>
         </div>
@@ -133,6 +135,8 @@ export default function DocsSyncPanel() {
         {reindexStatus && (
           <div className={`mt-1 text-sm ${reindexStatus.startsWith("✅") ? "text-green-600" : "text-red-500"}`}>
             <div className="prose prose-neutral dark:prose-invert max-w-none">
+              {typeof reindexStatus !== "string" &&
+                console.log("DEBUG 418:", typeof reindexStatus, reindexStatus)}
               <SafeMarkdown>{reindexStatus}</SafeMarkdown>
             </div>
           </div>

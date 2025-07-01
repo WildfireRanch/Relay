@@ -153,6 +153,12 @@ export default function ActionQueuePanel() {
               <div className="text-xs text-blue-800 mt-1 italic">
                 <strong>Why?</strong>{" "}
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof a.action.rationale !== "string" &&
+                    console.log(
+                      "DEBUG 418:",
+                      typeof a.action.rationale,
+                      a.action.rationale
+                    )}
                   <SafeMarkdown>{toMDString(a.action.rationale)}</SafeMarkdown>
                 </div>
               </div>
@@ -163,6 +169,12 @@ export default function ActionQueuePanel() {
                 <summary className="cursor-pointer text-xs text-blue-700">View Diff</summary>
                 <div className="bg-muted p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
                   <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    {typeof a.action.diff !== "string" &&
+                      console.log(
+                        "DEBUG 418:",
+                        typeof a.action.diff,
+                        a.action.diff
+                      )}
                     <SafeMarkdown>{toMDString(a.action.diff)}</SafeMarkdown>
                   </div>
                 </div>
@@ -170,6 +182,12 @@ export default function ActionQueuePanel() {
             ) : (
               <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof a.action.content !== "string" &&
+                    console.log(
+                      "DEBUG 418:",
+                      typeof a.action.content,
+                      a.action.content
+                    )}
                   <SafeMarkdown>{toMDString(a.action.content?.slice(0, 500) || "No content")}</SafeMarkdown>
                 </div>
               </div>
@@ -189,6 +207,12 @@ export default function ActionQueuePanel() {
             {showContext[a.id] && a.action.context && (
               <div className="bg-gray-100 p-2 rounded text-xs max-h-32 overflow-auto mt-2">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof a.action.context !== "string" &&
+                    console.log(
+                      "DEBUG 418:",
+                      typeof a.action.context,
+                      a.action.context
+                    )}
                   <SafeMarkdown>{toMDString(a.action.context)}</SafeMarkdown>
                 </div>
               </div>
@@ -243,6 +267,12 @@ export default function ActionQueuePanel() {
                     {h.comment && (
                       <span className="ml-2 italic">
                         <div className="prose prose-neutral dark:prose-invert max-w-none">
+                          {typeof h.comment !== "string" &&
+                            console.log(
+                              "DEBUG 418:",
+                              typeof h.comment,
+                              h.comment
+                            )}
                           <SafeMarkdown>{toMDString(h.comment)}</SafeMarkdown>
                         </div>
                       </span>

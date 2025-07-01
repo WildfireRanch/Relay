@@ -102,6 +102,8 @@ const CodexPage: React.FC = () => {
           {status && (
             <div className="text-sm text-muted-foreground">
               <div className="prose prose-neutral dark:prose-invert max-w-none">
+                {typeof status !== "string" &&
+                  console.log("DEBUG 418:", typeof status, status)}
                 <SafeMarkdown>{toMDString(status)}</SafeMarkdown>
               </div>
             </div>
