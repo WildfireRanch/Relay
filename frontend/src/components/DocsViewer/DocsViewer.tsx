@@ -124,8 +124,8 @@ export default function DocsViewer() {
       </div>
 
       {tab === "docs" && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="space-y-4 col-span-1">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
+          <div className="space-y-4 col-span-1 md:col-span-1">
             <div>
               <div className="font-semibold mb-2">Knowledge Base Files</div>
               <ul className="space-y-1 text-xs max-h-80 overflow-y-auto">
@@ -144,7 +144,7 @@ export default function DocsViewer() {
               </ul>
             </div>
           </div>
-          <div className="col-span-3">
+          <div className="col-span-5">
             <h2 className="font-semibold mb-2">{activeDoc || "Select a document"}</h2>
             <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm bg-background">
               {content ? (
@@ -160,7 +160,7 @@ export default function DocsViewer() {
       )}
 
       {tab === "search" && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
           <div className="space-y-4 col-span-1">
             <form className="flex gap-2 mb-2" onSubmit={doSearch}>
               <input
@@ -186,7 +186,7 @@ export default function DocsViewer() {
               ))}
             </ul>
           </div>
-          <div className="col-span-3">
+          <div className="col-span-5">
             {selectedHit !== null && hits[selectedHit] ? (
               <div>
                 <div className="font-bold mb-2">{hits[selectedHit].file || "Semantic Snippet"}</div>
