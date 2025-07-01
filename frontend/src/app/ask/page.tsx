@@ -24,7 +24,8 @@ function normalizeMessages(arr: unknown[]): Message[] {
             typeof msg === "object" &&
             msg !== null &&
             "content" in msg &&
-            typeof (msg as any).content === "string"
+            typeof (msg as { content?: unknown }).content === "string"
+
         )
         .map((msg) => ({
           role:
