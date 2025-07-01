@@ -1,3 +1,5 @@
+// File: src/components/SafeMarkdown.tsx
+
 import React from "react";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -35,12 +37,20 @@ const markdownComponents: Components = {
 };
 
 export default function SafeMarkdown({ children, className }: SafeMarkdownProps) {
+  // Final, ultimate fix: escape anything that looks like raw HTML
+  const likelyRawHtml = /<\s*[a-zA-Z]+[^>]*>/.test(children);
+  const safeChildren = likelyRawHtml
+    ? children.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : children;
+
   return (
     <ReactMarkdown
       components={markdownComponents}
+      skipHtml={true}
+      disallowedElements={["html", "head", "body", "style", "script", "iframe"]}
       {...(className ? { className } : {})}
     >
-      {children}
+      {safeChildren}
     </ReactMarkdown>
   );
 }
