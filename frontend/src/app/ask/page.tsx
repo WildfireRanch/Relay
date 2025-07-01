@@ -1,21 +1,43 @@
 // File: app/ask/page.tsx
-// Purpose: Bulletproof Ask Echo chat UI with safe, formatted Markdown, and type-safe state hydration.
-
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { API_ROOT } from "@/lib/api";
 
+// Message type
 type Message = {
   role: "user" | "assistant";
   content: string;
+  context?: string;
 };
 
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
-// Bulletproof stringifier for all markdown rendering
+// Helper to coerce any loaded array into Message[]
+function normalizeMessages(arr: unknown[]): Message[] {
+  return Array.isArray(arr)
+    ? arr
+        .filter(
+          (msg): msg is { role?: unknown; content?: unknown; context?: unknown } =>
+            typeof msg === "object" &&
+            msg !== null &&
+            "content" in msg &&
+            typeof (msg as any).content === "string"
+        )
+        .map((msg) => ({
+          role:
+            msg.role === "user" || msg.role === "assistant"
+              ? msg.role
+              : "assistant",
+          content: String(msg.content),
+          ...(typeof msg.context === "string" && { context: msg.context }),
+        }))
+    : [];
+}
+
+// Markdown stringifier (bulletproof)
 function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
@@ -28,36 +50,19 @@ function toMDString(val: unknown): string {
 }
 
 export default function AskPage() {
-const [messages, setMessages] = useState<Message[]>(() => {
-  if (typeof window !== "undefined") {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      try {
-        const arr = JSON.parse(raw);
-        return Array.isArray(arr)
-          ? arr
-              .filter(
-                (msg: unknown): msg is { role?: unknown; content: string } =>
-                  typeof msg === "object" &&
-                  msg !== null &&
-                  "content" in msg &&
-                  typeof (msg as { content?: unknown }).content === "string"
-              )
-              .map((msg) => {
-                const { role, content } = msg;
-                return {
-                  role: role === "user" || role === "assistant" ? role : "assistant",
-                  content: String(content),
-                };
-              })
-          : [];
-      } catch {
-        return [];
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        try {
+          return normalizeMessages(JSON.parse(raw));
+        } catch {
+          return [];
+        }
       }
     }
-  }
-  return [];
-});
+    return [];
+  });
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
