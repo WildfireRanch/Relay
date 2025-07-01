@@ -27,8 +27,11 @@ export default function AskPage() {
           // Map and coerce every object to type Message
           return Array.isArray(arr)
             ? arr
-                .filter((msg: any) => msg && typeof msg.content === "string")
-                .map((msg: any) => {
+                .filter(
+                  (msg: unknown): msg is { content: unknown; role?: unknown } =>
+                    !!msg && typeof (msg as any).content === "string"
+                )
+                .map((msg: { content: unknown; role?: unknown }) => {
                   // Always assign a valid role
                   let role: "user" | "assistant" = "assistant";
                   if (msg.role === "user" || msg.role === "assistant") {
