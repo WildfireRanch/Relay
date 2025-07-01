@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
+import { toMDString } from "@/lib/toMDString";
 
 // Explicitly type the Email shape
 type Email = {
@@ -29,7 +30,11 @@ export default function GmailOpsPanel() {
       body: JSON.stringify({ to_email: to, subject, body })
     });
     const data = await res.json();
-    setMsg(data.status === "sent" ? "Email sent!" : `Failed: ${data.detail}`);
+    setMsg(
+      toMDString(
+        data.status === "sent" ? "Email sent!" : `Failed: ${data.detail}`
+      )
+    );
   }
 
   async function list() {
@@ -37,7 +42,13 @@ export default function GmailOpsPanel() {
       headers: { "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || "" }
     });
     const data = await res.json();
-    setEmails((data.emails as Email[]) || []);
+    const mapped = Array.isArray(data.emails)
+      ? (data.emails as Email[]).map((em) => ({
+          ...em,
+          snippet: toMDString(em.snippet),
+        }))
+      : [];
+    setEmails(mapped);
   }
 
   return (

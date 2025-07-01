@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
+import { toMDString } from "@/lib/toMDString";
 
 interface LogEntry {
   id: string;
