@@ -4,6 +4,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import Image from 'next/image'
 import { Render } from '@measured/puck'
 import '@measured/puck/puck.css'
 import config from '@/app/editor/puck.config'
@@ -24,9 +25,11 @@ export default function Home() {
       {/* Echo - Strategist (top-right corner) */}
       <div className="absolute top-4 right-4 bg-black/90 text-white rounded-xl shadow-2xl p-4 max-w-xs z-50 backdrop-blur-sm">
         <div className="flex items-center gap-4">
-          <img
+          <Image
             src="/Echo.png"
             alt="Echo"
+            width={48}
+            height={48}
             className="w-12 h-12 rounded-md border border-white shadow-md"
           />
           <div className="text-sm leading-snug">

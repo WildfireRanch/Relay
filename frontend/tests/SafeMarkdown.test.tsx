@@ -15,7 +15,7 @@ describe('SafeMarkdown', () => {
   it('warns when non-string is provided', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const html = renderToStaticMarkup(
-      <SafeMarkdown>{123 as any}</SafeMarkdown>
+      <SafeMarkdown>{123 as unknown as string}</SafeMarkdown>
     );
     expect(html).toContain('123');
     expect(warn).toHaveBeenCalled();

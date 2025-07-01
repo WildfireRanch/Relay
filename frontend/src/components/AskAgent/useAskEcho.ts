@@ -41,9 +41,9 @@ export function useAskEcho() {
           if (Array.isArray(parsed)) {
             setMessages(
               parsed.map(m => ({
-                ...m,
-                content: toMDString((m as any).content),
-                context: toMDString((m as any).context)
+                ...m as Record<string, unknown>,
+                content: toMDString((m as Record<string, unknown>).content),
+                context: toMDString((m as Record<string, unknown>).context)
               }))
             );
           }

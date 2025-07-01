@@ -24,9 +24,9 @@ export default function AskPage() {
         try {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
-            return parsed.map((m: any) => ({
-              ...m,
-              content: toMDString(m.content)
+            return parsed.map((m: unknown) => ({
+              ...(m as Record<string, unknown>),
+              content: toMDString((m as Record<string, unknown>).content)
             }));
           }
         } catch {

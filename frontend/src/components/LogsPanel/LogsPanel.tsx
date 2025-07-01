@@ -35,7 +35,7 @@ export default function LogsPanel() {
     const data = await res.json();
     const mapped = (data.log || []).map((entry: LogEntry) => ({
       ...entry,
-      result: toMDString(entry.result as any)
+      result: toMDString(entry.result)
     }));
     setLog(mapped);
   }
