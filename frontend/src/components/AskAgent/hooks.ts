@@ -35,7 +35,7 @@ export function useAskAgent(userId: string) {
     if (!query.trim()) return;
 
     // Add user message
-    setMessages((prev) => [...prev, { user: query, agent: "" }]);
+    setMessages((prev) => [...prev, { user: toMDString(query), agent: "" }]);
     setLoading(true);
 
     try {
@@ -84,7 +84,7 @@ export function useAskAgent(userId: string) {
     } catch {
       setMessages((prev) => [
         ...prev.slice(0, -1),
-        { user: query, agent: "Error contacting Relay." },
+        { user: toMDString(query), agent: toMDString("Error contacting Relay.") },
       ]);
     } finally {
       setLoading(false);

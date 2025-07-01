@@ -52,7 +52,12 @@ export default function AuditPanel() {
       });
       if (!res.ok) throw new Error("Bad response");
       const data = await res.json();
-      setLogs(data.log || []);
+      const mapped = (data.log || []).map((l: LogEntry) => ({
+        ...l,
+        comment: toMDString((l as any).comment),
+        result: toMDString((l as any).result)
+      }));
+      setLogs(mapped);
     } catch (err) {
       console.error("[AuditPanel] Failed to fetch logs:", err);
       setLogs([]);
@@ -68,7 +73,24 @@ export default function AuditPanel() {
       if (!res.ok) throw new Error("Bad response");
       const data = await res.json();
       const action: ActionDetail | undefined = (data.actions as ActionDetail[] | undefined)?.find(a => a.id === id);
-      setRelatedAction(action || null);
+      const mapped = action
+        ? {
+            ...action,
+            action: {
+              ...action.action,
+              context: toMDString(action.action?.context),
+              rationale: toMDString(action.action?.rationale),
+              diff: toMDString(action.action?.diff)
+            },
+            history: Array.isArray(action.history)
+              ? action.history.map(h => ({
+                  ...h,
+                  comment: toMDString(h.comment)
+                }))
+              : action.history
+          }
+        : null;
+      setRelatedAction(mapped);
     } catch (err) {
       console.error("[AuditPanel] Failed to fetch related action:", err);
       setRelatedAction(null);

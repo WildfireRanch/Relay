@@ -64,7 +64,23 @@ export default function ActionQueuePanel() {
       });
       if (!res.ok) throw new Error("Bad response");
       const data = await res.json();
-      setActions(data.actions || []);
+      const mapped = (data.actions || []).map((a: Action) => ({
+        ...a,
+        action: {
+          ...a.action,
+          rationale: toMDString(a.action?.rationale),
+          diff: toMDString(a.action?.diff),
+          context: toMDString(a.action?.context),
+          content: toMDString(a.action?.content)
+        },
+        history: Array.isArray(a.history)
+          ? a.history.map(h => ({
+              ...h,
+              comment: toMDString(h.comment)
+            }))
+          : a.history
+      }));
+      setActions(mapped);
     } catch (err) {
       console.error("Queue fetch failed", err);
       setError("Failed to fetch action queue.");
