@@ -10,7 +10,7 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 // Props for the SafeMarkdown component
 type SafeMarkdownProps = {
-  /** Markdown text to render */
+  /** Markdown text to render (always a string) */
   children: string;
   /** Optional CSS className for wrapper */
   className?: string;
@@ -46,25 +46,29 @@ const markdownComponents: Components = {
       </code>
     );
   },
-  // You can expand this for tables, links, images, etc if needed
+  // Example expansion for custom tables, links, images:
+  // table({ children, ...props }) { ... },
+  // a({ href, children, ...props }) { ... },
+  // img({ src, alt, ...props }) { ... },
 };
 
 export default function SafeMarkdown({ children, className }: SafeMarkdownProps) {
-  // Warn if something other than a string is passed. This helps catch mistakes
-  // where a React element or other type might slip through and break rendering.
+  // Dev-only: warn if a non-string slips through (should never happen in production)
   if (typeof children !== "string") {
-    console.warn(
-      "SafeMarkdown expected string, got",
-      typeof children,
-      children
-    );
+    if (process.env.NODE_ENV !== "production") {
+      console.warn(
+        "[SafeMarkdown] Expected children to be a string, got:",
+        typeof children,
+        children
+      );
+    }
   }
 
+  // Always coerce to string
   const strChildren =
     typeof children === "string" ? children : children ? String(children) : "";
 
-  // Ultra-safe: Escape anything that looks like raw HTML, even before markdown parsing
-  // This is a belt-and-suspenders approach since skipHtml and disallowedElements are also set
+  // Escape anything that looks like raw HTML before parsing as markdown
   const likelyRawHtml = /<\s*[a-zA-Z]+[^>]*>/.test(strChildren);
   const safeChildren = likelyRawHtml
     ? strChildren.replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -76,7 +80,7 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
       // SECURITY: Never allow any HTML passthrough from markdown
       skipHtml={true}
       disallowedElements={["html", "head", "body", "style", "script", "iframe"]}
-      // If you want to support tables, images, math, etc, add more custom renderers above
+      // Add more custom renderers above as needed (tables, math, images)
       {...(className ? { className } : {})}
     >
       {safeChildren}
@@ -90,4 +94,5 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
  *
  * - NEVER use ReactMarkdown directly in any other file.
  * - All markdown content (LLM, docs, search, context, etc) MUST be rendered via SafeMarkdown.
+ * - Always ensure children is a string (coerce using toMDString or similar as needed).
  */

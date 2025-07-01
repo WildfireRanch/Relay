@@ -6,7 +6,6 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { API_ROOT } from "@/lib/api";
-import { toMDString } from "@/lib/toMDString";
 
 type Message = {
   role: "user" | "assistant";
@@ -16,6 +15,17 @@ type Message = {
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
+// Bulletproof stringifier for all markdown rendering
+function toMDString(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) return val.map(toMDString).join("\n\n");
+  try {
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
+}
 
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -27,11 +37,8 @@ export default function AskPage() {
           // Map and coerce every object to type Message
           return Array.isArray(arr)
             ? arr
-                .filter(
-                  (msg: unknown): msg is { content: unknown; role?: unknown } =>
-                    !!msg && typeof (msg as any).content === "string"
-                )
-                .map((msg: { content: unknown; role?: unknown }) => {
+                .filter((msg: any) => msg && typeof msg.content === "string")
+                .map((msg: any) => {
                   // Always assign a valid role
                   let role: "user" | "assistant" = "assistant";
                   if (msg.role === "user" || msg.role === "assistant") {
