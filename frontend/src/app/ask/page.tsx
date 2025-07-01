@@ -20,13 +20,13 @@ function normalizeMessages(arr: unknown[]): Message[] {
   return Array.isArray(arr)
     ? arr
         .filter(
-          (msg): msg is { role?: unknown; content?: unknown; context?: unknown } =>
-            typeof msg === "object" &&
-            msg !== null &&
-            "content" in msg &&
-            typeof (msg as { content?: unknown }).content === "string"
+  (msg: unknown): msg is { role?: unknown; content?: unknown; context?: unknown } =>
+    typeof msg === "object" &&
+    msg !== null &&
+    "content" in msg &&
+    typeof (msg as { content?: unknown }).content === "string"
+)
 
-        )
         .map((msg) => ({
           role:
             msg.role === "user" || msg.role === "assistant"
