@@ -6,6 +6,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { API_ROOT } from "@/lib/api";
+import { toMDString } from "@/lib/toMDString";
 
 type Message = {
   role: "user" | "assistant";
@@ -14,17 +15,6 @@ type Message = {
 
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
-
-// Helper: Always provide a string for markdown rendering
-function toMDString(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try {
-    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-  } catch {
-    return String(val);
-  }
-}
 
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {

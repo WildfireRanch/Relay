@@ -7,17 +7,7 @@
 import ChatMessage from "./ChatMessage";
 import InputBar from "./InputBar";
 import { useAskEcho } from "./useAskEcho";
-
-// Helper: ensure safe string for markdown content
-function toMDString(val: unknown) {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try {
-    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-  } catch {
-    return String(val);
-  }
-}
+import { toMDString } from "@/lib/toMDString";
 
 export default function ChatWindow() {
   // Unified chat state and actions from the custom hook

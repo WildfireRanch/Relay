@@ -22,14 +22,9 @@ import { Textarea } from '../../components/ui/textarea'
 
 import SafeMarkdown from "@/components/SafeMarkdown";
 import React from "react";
+import { toMDString } from "@/lib/toMDString";
 
-// Helper for markdown rendering
-function toMDString(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try { return "```json\n" + JSON.stringify(val, null, 2) + "\n```"; }
-  catch { return String(val); }
-}
+// use shared markdown helper
 
 type Props = {
   AskAgent: object

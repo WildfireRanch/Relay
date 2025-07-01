@@ -3,22 +3,13 @@
 
 import React from "react";
 import SafeMarkdown from "@/components/SafeMarkdown"; // Use the shared safe renderer
+import { toMDString } from "@/lib/toMDString";
 
 type Props = {
   role: "user" | "assistant";
   content: unknown; // Accept anything, always coerce to string for safety
 };
 
-// Defensive: always return a string for SafeMarkdown
-function toMDString(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try {
-    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-  } catch {
-    return String(val);
-  }
-}
 
 export default function ChatMessage({ role, content }: Props) {
   const alignClass =

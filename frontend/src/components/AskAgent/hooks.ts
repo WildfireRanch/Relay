@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { API_ROOT } from "@/lib/api";
+import { toMDString } from "@/lib/toMDString";
 
 // Message interface for chat history
 export interface Message {
@@ -16,17 +17,6 @@ export interface Message {
   status?: "pending" | "approved" | "denied";
 }
 
-// Helper: Always return a string (markdown/code-safe) for display
-function toMDString(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try {
-    // Show objects/arrays as JSON code block for markdown safety
-    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-  } catch {
-    return String(val);
-  }
-}
 
 // Main hook for agent chat
 export function useAskAgent(userId: string) {
