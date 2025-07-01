@@ -1,8 +1,11 @@
+// File: src/components/ui/AskAgent/AskAgent.tsx
+
 "use client"
 
 import { useState } from "react"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
+import SafeMarkdown from "@/components/SafeMarkdown"
 
 export default function AskAgent() {
   const [query, setQuery] = useState("")
@@ -21,7 +24,11 @@ export default function AskAgent() {
     })
 
     const data = await res.json()
-    setResponse(data.answer || data.function_call?.arguments || "No answer.")
+    setResponse(
+      data.answer ||
+      data.function_call?.arguments ||
+      "No answer."
+    )
     setLoading(false)
   }
 
@@ -38,7 +45,7 @@ export default function AskAgent() {
       </Button>
       {response && (
         <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border">
-          {response}
+          <SafeMarkdown>{response}</SafeMarkdown>
         </div>
       )}
     </div>
