@@ -138,7 +138,9 @@ export default function SearchPanel() {
                 <strong>{r.title}</strong> ({r.similarity.toFixed(2)})
               </header>
               <div className="mb-1">
-                <SafeMarkdown>{r.snippet}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{r.snippet}</SafeMarkdown>
+                </div>
               </div>
               <footer className="text-xs text-muted-foreground">
                 Updated: {r.updated || "—"}

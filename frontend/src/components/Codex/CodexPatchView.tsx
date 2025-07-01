@@ -27,7 +27,9 @@ export default function CodexPatchView({ patch, loading = false }: Props) {
         {loading ? (
           "⏳ Codex is generating your patch..."
         ) : patch?.trim() ? (
-          <SafeMarkdown>{patch}</SafeMarkdown>
+          <div className="prose prose-neutral dark:prose-invert max-w-none">
+            <SafeMarkdown>{patch}</SafeMarkdown>
+          </div>
         ) : (
           "No patch yet."
         )}

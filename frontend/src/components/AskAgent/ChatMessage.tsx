@@ -17,7 +17,9 @@ export default function ChatMessage({ role, content }: Props) {
 
   return (
     <div className={alignClass}>
-      <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
+      <div className="prose prose-neutral dark:prose-invert max-w-none">
+        <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
+      </div>
     </div>
   );
 }

@@ -136,7 +136,9 @@ export default function ActionQueuePanel() {
             {a.action.rationale && (
               <div className="text-xs text-blue-800 mt-1 italic">
                 <strong>Why?</strong>{" "}
-                <SafeMarkdown>{toMDString(a.action.rationale)}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{toMDString(a.action.rationale)}</SafeMarkdown>
+                </div>
               </div>
             )}
 
@@ -144,12 +146,16 @@ export default function ActionQueuePanel() {
               <details>
                 <summary className="cursor-pointer text-xs text-blue-700">View Diff</summary>
                 <div className="bg-muted p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
-                  <SafeMarkdown>{toMDString(a.action.diff)}</SafeMarkdown>
+                  <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    <SafeMarkdown>{toMDString(a.action.diff)}</SafeMarkdown>
+                  </div>
                 </div>
               </details>
             ) : (
               <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
-                <SafeMarkdown>{toMDString(a.action.content?.slice(0, 500) || "No content")}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{toMDString(a.action.content?.slice(0, 500) || "No content")}</SafeMarkdown>
+                </div>
               </div>
             )}
 
@@ -166,7 +172,9 @@ export default function ActionQueuePanel() {
 
             {showContext[a.id] && a.action.context && (
               <div className="bg-gray-100 p-2 rounded text-xs max-h-32 overflow-auto mt-2">
-                <SafeMarkdown>{toMDString(a.action.context)}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{toMDString(a.action.context)}</SafeMarkdown>
+                </div>
               </div>
             )}
 
@@ -189,11 +197,13 @@ export default function ActionQueuePanel() {
                 <details>
                   <summary className="cursor-pointer text-xs text-blue-700 mt-1">Show Context Diff</summary>
                   <div className="bg-yellow-100 p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
-                    <SafeMarkdown>
-                      {toMDString(
-                        diffContext(a.action.context, getActionById(compareContextId)?.action.context || "")
-                      )}
-                    </SafeMarkdown>
+                    <div className="prose prose-neutral dark:prose-invert max-w-none">
+                      <SafeMarkdown>
+                        {toMDString(
+                          diffContext(a.action.context, getActionById(compareContextId)?.action.context || "")
+                        )}
+                      </SafeMarkdown>
+                    </div>
                   </div>
                 </details>
               )}
@@ -216,7 +226,9 @@ export default function ActionQueuePanel() {
                     {h.user && <span className="ml-2 text-blue-700">{h.user}</span>}
                     {h.comment && (
                       <span className="ml-2 italic">
-                        <SafeMarkdown>{toMDString(h.comment)}</SafeMarkdown>
+                        <div className="prose prose-neutral dark:prose-invert max-w-none">
+                          <SafeMarkdown>{toMDString(h.comment)}</SafeMarkdown>
+                        </div>
                       </span>
                     )}
                   </li>

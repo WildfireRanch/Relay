@@ -247,9 +247,13 @@ export default function DocsViewer() {
           <div className="col-span-3">
             <h2 className="font-semibold mb-2">{activeDoc || "Select a document"}</h2>
             <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm bg-background">
-              {content
-                ? <SafeMarkdown>{content}</SafeMarkdown>
-                : "Select a document to view its content."}
+              {content ? (
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{content}</SafeMarkdown>
+                </div>
+              ) : (
+                "Select a document to view its content."
+              )}
             </div>
           </div>
         </div>
@@ -290,7 +294,9 @@ export default function DocsViewer() {
               <div>
                 <div className="font-bold mb-2">{hits[selectedHit].file || "Semantic Snippet"}</div>
                 <div className="bg-gray-100 p-3 rounded max-h-[70vh] overflow-y-auto whitespace-pre-wrap text-xs">
-                  <SafeMarkdown>{hits[selectedHit].snippet}</SafeMarkdown>
+                  <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    <SafeMarkdown>{hits[selectedHit].snippet}</SafeMarkdown>
+                  </div>
                 </div>
                 <div className="text-xs text-gray-500 mt-2">
                   Score: {hits[selectedHit].score?.toFixed(2) || "N/A"} | Type: {hits[selectedHit].type || "?"}
@@ -323,7 +329,11 @@ export default function DocsViewer() {
             {ctxLoading
               ? "Fetching context…"
               : ctxResult
-                ? <SafeMarkdown>{ctxResult}</SafeMarkdown>
+                ? (
+                    <div className="prose prose-neutral dark:prose-invert max-w-none">
+                      <SafeMarkdown>{ctxResult}</SafeMarkdown>
+                    </div>
+                  )
                 : "Enter a prompt to see what context the agent would use."}
           </div>
         </div>

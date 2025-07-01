@@ -101,7 +101,9 @@ const CodexPage: React.FC = () => {
           <Button onClick={applyPatch}>✅ Approve & Apply Patch</Button>
           {status && (
             <div className="text-sm text-muted-foreground">
-              <SafeMarkdown>{toMDString(status)}</SafeMarkdown>
+              <div className="prose prose-neutral dark:prose-invert max-w-none">
+                <SafeMarkdown>{toMDString(status)}</SafeMarkdown>
+              </div>
             </div>
           )}
         </div>

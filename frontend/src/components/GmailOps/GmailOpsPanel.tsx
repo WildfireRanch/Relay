@@ -50,7 +50,9 @@ export default function GmailOpsPanel() {
         <Button onClick={send}>Send Email</Button>
         {msg && (
           <div className="text-xs mt-2">
-            <SafeMarkdown>{msg}</SafeMarkdown>
+            <div className="prose prose-neutral dark:prose-invert max-w-none">
+              <SafeMarkdown>{msg}</SafeMarkdown>
+            </div>
           </div>
         )}
       </div>
@@ -64,7 +66,9 @@ export default function GmailOpsPanel() {
               <div><strong>Subject:</strong> {em.subject}</div>
               <div><strong>Date:</strong> {em.date}</div>
               <div className="text-gray-500">
-                <SafeMarkdown>{em.snippet}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{em.snippet}</SafeMarkdown>
+                </div>
               </div>
             </li>
           ))}

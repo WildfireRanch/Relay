@@ -95,7 +95,9 @@ export default function AskPage() {
             }
           >
             <span className="block whitespace-pre-wrap">
-              <SafeMarkdown>{toMDString(msg.content)}</SafeMarkdown>
+              <div className="prose prose-neutral dark:prose-invert max-w-none">
+                <SafeMarkdown>{toMDString(msg.content)}</SafeMarkdown>
+              </div>
             </span>
           </div>
         ))}
