@@ -28,32 +28,36 @@ function toMDString(val: unknown): string {
 }
 
 export default function AskPage() {
-  const [messages, setMessages] = useState<Message[]>(() => {
-    if (typeof window !== "undefined") {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        try {
-          const arr = JSON.parse(raw);
-          // Map and coerce every object to type Message
-          return Array.isArray(arr)
-            ? arr
-                .filter((msg: any) => msg && typeof msg.content === "string")
-                .map((msg: any) => {
-                  // Always assign a valid role
-                  let role: "user" | "assistant" = "assistant";
-                  if (msg.role === "user" || msg.role === "assistant") {
-                    role = msg.role;
-                  }
-                  return { content: String(msg.content), role };
-                })
-            : [];
-        } catch {
-          return [];
-        }
+const [messages, setMessages] = useState<Message[]>(() => {
+  if (typeof window !== "undefined") {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      try {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr)
+          ? arr
+              .filter(
+                (msg: unknown): msg is { role?: unknown; content: string } =>
+                  typeof msg === "object" &&
+                  msg !== null &&
+                  "content" in msg &&
+                  typeof (msg as { content?: unknown }).content === "string"
+              )
+              .map((msg) => {
+                const { role, content } = msg;
+                return {
+                  role: role === "user" || role === "assistant" ? role : "assistant",
+                  content: String(content),
+                };
+              })
+          : [];
+      } catch {
+        return [];
       }
     }
-    return [];
-  });
+  }
+  return [];
+});
 
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
