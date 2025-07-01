@@ -140,6 +140,8 @@ export default function AskPage() {
             }
           >
             <div className="prose prose-neutral dark:prose-invert max-w-none">
+              {typeof msg.content !== "string" &&
+                console.log("DEBUG 418:", typeof msg.content, msg.content)}
               <SafeMarkdown>{msg.content}</SafeMarkdown>
             </div>
           </div>

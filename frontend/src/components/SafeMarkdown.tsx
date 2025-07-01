@@ -75,6 +75,8 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
     : strChildren;
 
   return (
+    {typeof safeChildren !== "string" &&
+      console.log("DEBUG 418:", typeof safeChildren, safeChildren)}
     <ReactMarkdown
       components={markdownComponents}
       // SECURITY: Never allow any HTML passthrough from markdown

@@ -146,6 +146,8 @@ export default function LogsPanel() {
             {typeof entry.result === "string" ? (
               <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof entry.result !== "string" &&
+                    console.log("DEBUG 418:", typeof entry.result, entry.result)}
                   <SafeMarkdown>{entry.result}</SafeMarkdown>
                 </div>
               </div>

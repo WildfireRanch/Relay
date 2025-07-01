@@ -73,6 +73,8 @@ const MarkdownBlock: React.FC<{ title?: string, content: string, imageUrl?: stri
         />
       )}
       <div className="prose prose-neutral dark:prose-invert max-w-none">
+        {typeof content !== "string" &&
+          console.log("DEBUG 418:", typeof content, content)}
         <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
       </div>
     </div>

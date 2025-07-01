@@ -249,6 +249,8 @@ export default function DocsViewer() {
             <div className="h-[400px] overflow-auto border rounded-md p-4 whitespace-pre-wrap text-sm bg-background">
               {content ? (
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof content !== "string" &&
+                    console.log("DEBUG 418:", typeof content, content)}
                   <SafeMarkdown>{content}</SafeMarkdown>
                 </div>
               ) : (
@@ -295,6 +297,12 @@ export default function DocsViewer() {
                 <div className="font-bold mb-2">{hits[selectedHit].file || "Semantic Snippet"}</div>
                 <div className="bg-gray-100 p-3 rounded max-h-[70vh] overflow-y-auto whitespace-pre-wrap text-xs">
                   <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    {typeof hits[selectedHit].snippet !== "string" &&
+                      console.log(
+                        "DEBUG 418:",
+                        typeof hits[selectedHit].snippet,
+                        hits[selectedHit].snippet
+                      )}
                     <SafeMarkdown>{hits[selectedHit].snippet}</SafeMarkdown>
                   </div>
                 </div>
@@ -331,7 +339,9 @@ export default function DocsViewer() {
               : ctxResult
                 ? (
                     <div className="prose prose-neutral dark:prose-invert max-w-none">
-                      <SafeMarkdown>{ctxResult}</SafeMarkdown>
+                    {typeof ctxResult !== "string" &&
+                      console.log("DEBUG 418:", typeof ctxResult, ctxResult)}
+                    <SafeMarkdown>{ctxResult}</SafeMarkdown>
                     </div>
                   )
                 : "Enter a prompt to see what context the agent would use."}

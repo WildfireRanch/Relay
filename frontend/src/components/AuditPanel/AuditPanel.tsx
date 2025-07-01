@@ -245,6 +245,8 @@ export default function AuditPanel() {
                 <td className="px-2 py-1">
                   {entry.comment ? (
                     <div className="prose prose-neutral dark:prose-invert max-w-none">
+                      {typeof entry.comment !== "string" &&
+                        console.log("DEBUG 418:", typeof entry.comment, entry.comment)}
                       <SafeMarkdown>{entry.comment}</SafeMarkdown>
                     </div>
                   ) : ""}
@@ -278,6 +280,12 @@ export default function AuditPanel() {
               <strong>Comment:</strong>{" "}
               {selected.comment ? (
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof selected.comment !== "string" &&
+                    console.log(
+                      "DEBUG 418:",
+                      typeof selected.comment,
+                      selected.comment
+                    )}
                   <SafeMarkdown>{selected.comment}</SafeMarkdown>
                 </div>
               ) : ""}
@@ -289,6 +297,12 @@ export default function AuditPanel() {
                 <summary className="cursor-pointer text-blue-700 mb-2">View Agent Context</summary>
                 <div className="bg-gray-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
                   <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    {typeof relatedAction.action.context !== "string" &&
+                      console.log(
+                        "DEBUG 418:",
+                        typeof relatedAction.action.context,
+                        relatedAction.action.context
+                      )}
                     <SafeMarkdown>{relatedAction.action.context}</SafeMarkdown>
                   </div>
                 </div>
@@ -298,6 +312,12 @@ export default function AuditPanel() {
               <div className="text-xs italic mb-2">
                 <strong>Agent rationale:</strong>{" "}
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  {typeof relatedAction.action.rationale !== "string" &&
+                    console.log(
+                      "DEBUG 418:",
+                      typeof relatedAction.action.rationale,
+                      relatedAction.action.rationale
+                    )}
                   <SafeMarkdown>{relatedAction.action.rationale}</SafeMarkdown>
                 </div>
               </div>
@@ -307,6 +327,12 @@ export default function AuditPanel() {
                 <summary className="cursor-pointer text-blue-700 mb-2">View Diff</summary>
                 <div className="bg-yellow-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
                   <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    {typeof relatedAction.action.diff !== "string" &&
+                      console.log(
+                        "DEBUG 418:",
+                        typeof relatedAction.action.diff,
+                        relatedAction.action.diff
+                      )}
                     <SafeMarkdown>{relatedAction.action.diff}</SafeMarkdown>
                   </div>
                 </div>
@@ -323,6 +349,12 @@ export default function AuditPanel() {
                       {h.comment && (
                         <span className="ml-2 italic">
                           <div className="prose prose-neutral dark:prose-invert max-w-none">
+                            {typeof h.comment !== "string" &&
+                              console.log(
+                                "DEBUG 418:",
+                                typeof h.comment,
+                                h.comment
+                              )}
                             <SafeMarkdown>{h.comment}</SafeMarkdown>
                           </div>
                         </span>

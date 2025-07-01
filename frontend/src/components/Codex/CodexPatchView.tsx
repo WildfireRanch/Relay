@@ -28,6 +28,8 @@ export default function CodexPatchView({ patch, loading = false }: Props) {
           "⏳ Codex is generating your patch..."
         ) : patch?.trim() ? (
           <div className="prose prose-neutral dark:prose-invert max-w-none">
+            {typeof patch !== "string" &&
+              console.log("DEBUG 418:", typeof patch, patch)}
             <SafeMarkdown>{patch}</SafeMarkdown>
           </div>
         ) : (
