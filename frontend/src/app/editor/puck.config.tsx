@@ -21,7 +21,7 @@ import { Progress } from '../../components/ui/progress'
 import { Textarea } from '../../components/ui/textarea'
 
 import SafeMarkdown from "@/components/SafeMarkdown";
-import React, { useRef } from "react";
+import React from "react";
 
 // Helper for markdown rendering
 function toMDString(val: unknown): string {
