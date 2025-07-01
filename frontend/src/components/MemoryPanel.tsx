@@ -71,11 +71,14 @@ export default function MemoryPanel() {
       })
       if (!res.ok) throw new Error(`Status ${res.status}`)
       const data = await res.json()
-      const mapped = (data.entries || []).map((m: any) => ({
-        ...m,
-        summary: toMDString(m.summary),
-        agent_response: toMDString(m.agent_response),
-      }))
+      const mapped = (data.entries || []).map((m: unknown) => {
+        const entry = m as Partial<MemoryEntry>
+        return {
+          ...entry,
+          summary: toMDString(entry.summary),
+          agent_response: toMDString(entry.agent_response),
+        }
+      })
       setMemory(mapped)
       setFetchInfo({ status: "success", time: Date.now() - start, error: "" })
     } catch (e: unknown) {
