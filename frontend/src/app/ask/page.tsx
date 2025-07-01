@@ -130,22 +130,26 @@ export default function AskPage() {
     <div className="w-full max-w-2xl mx-auto min-h-screen flex flex-col">
       <h1 className="text-3xl font-bold my-4">Ask Echo</h1>
       <div className="flex-1 space-y-2 overflow-y-auto border rounded-xl p-4 bg-muted">
-        {messages.map((msg, i) => (
-          <div
-            key={i}
-            className={
-              msg.role === "user"
-                ? "text-right text-blue-700"
-                : "text-left text-green-700"
-            }
-          >
-            <div className="prose prose-neutral dark:prose-invert max-w-none">
-              {typeof msg.content !== "string" &&
-                console.log("DEBUG 418:", typeof msg.content, msg.content)}
-              <SafeMarkdown>{msg.content}</SafeMarkdown>
-            </div>
-          </div>
-        ))}
+        {messages.map((msg, i) => {
+  if (typeof msg.content !== "string") {
+    console.log("DEBUG 418:", typeof msg.content, msg.content);
+  }
+  return (
+    <div
+      key={i}
+      className={
+        msg.role === "user"
+          ? "text-right text-blue-700"
+          : "text-left text-green-700"
+      }
+    >
+      <div className="prose prose-neutral dark:prose-invert max-w-none">
+        <SafeMarkdown>{msg.content}</SafeMarkdown>
+      </div>
+    </div>
+  );
+})}
+
         {loading && (
           <div className="text-left text-green-700 animate-pulse">
             <span className="block whitespace-pre-wrap">Echo is thinking…</span>
