@@ -1,5 +1,6 @@
 // File: frontend/src/components/MemoryPanel.tsx
-// Purpose: Robust, scalable, tier-aware memory inspector with pagination, user filtering, tag/save, date filtering, and replay support
+// Purpose: Robust, scalable, tier-aware memory inspector with pagination, user filtering, tag/save, date filtering, and replay support.
+//          Now supports Markdown/code in summary, agent response, and context modals via SafeMarkdown.
 
 "use client"
 
@@ -7,6 +8,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { API_ROOT } from "@/lib/api"
+import SafeMarkdown from "@/components/SafeMarkdown"
 
 interface ContextSource {
   type: string
@@ -243,15 +245,25 @@ export default function MemoryPanel() {
               <span className="inline-block px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded">Fallback</span>
             )}
 
-           {Array.isArray(m.tags) && m.tags.length > 0 && (
-           <div className="text-xs text-blue-600">
-           <strong>Tags:</strong> {m.tags.join(", ")}
-           </div>
-           
+            {Array.isArray(m.tags) && m.tags.length > 0 && (
+              <div className="text-xs text-blue-600">
+                <strong>Tags:</strong> {m.tags.join(", ")}
+              </div>
             )}
 
-            {m.summary && (
-              <pre className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">{m.summary}</pre>
+            {/* Markdown/code for memory summary */}
+            {typeof m.summary === "string" && !!m.summary.trim() && (
+              <div className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">
+                <SafeMarkdown>{m.summary}</SafeMarkdown>
+              </div>
+            )}
+
+            {/* Markdown/code for agent response */}
+            {typeof m.agent_response === "string" && !!m.agent_response.trim() && (
+              <div className="bg-muted p-2 rounded text-xs whitespace-pre-wrap mt-2">
+                <strong>Agent Response:</strong>
+                <SafeMarkdown>{m.agent_response}</SafeMarkdown>
+              </div>
             )}
 
             <div className="flex gap-2 flex-wrap text-xs mt-2">
@@ -308,12 +320,14 @@ export default function MemoryPanel() {
         </div>
       )}
 
-      {/* Modal viewer for context file contents */}
+      {/* Modal viewer for context file contents (markdown/code-friendly) */}
       {modalContext && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-40">
           <div className="bg-white rounded shadow-lg max-w-2xl w-full p-6 relative">
             <div className="text-sm mb-2 font-bold">Context File: <code>{modalContext.path}</code></div>
-            <pre className="bg-gray-100 p-4 rounded max-h-[400px] overflow-auto text-xs">{modalContext.content}</pre>
+            <div className="bg-gray-100 p-4 rounded max-h-[400px] overflow-auto text-xs">
+              <SafeMarkdown>{modalContext.content}</SafeMarkdown>
+            </div>
             <Button variant="secondary" onClick={() => setModalContext(null)} className="absolute top-2 right-2">
               Close
             </Button>

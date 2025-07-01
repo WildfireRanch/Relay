@@ -1,11 +1,11 @@
 // File: frontend/src/components/Codex/CodexPatchView.tsx
-// Purpose: Displays the generated code patch/result from the Codex agent
-// Updated: 2025-06-30
+// Purpose: Displays the generated code patch/result from the Codex agent.
+//          All Markdown/code rendering MUST go through SafeMarkdown.
+// Updated: 2025-07-01
 
 "use client";
 
 import SafeMarkdown from "@/components/SafeMarkdown";
-
 
 interface Props {
   patch: string;
@@ -23,13 +23,15 @@ export default function CodexPatchView({ patch, loading = false }: Props) {
         className="w-full max-h-[500px] overflow-auto bg-black text-green-400 p-4 rounded text-sm whitespace-pre-wrap"
         aria-busy={loading}
       >
-        {loading
-          ? "⏳ Codex is generating your patch..."
-          : patch?.trim()
-            ? <SafeMarkdown>{patch}</SafeMarkdown>
-            : "No patch yet."}
+        {/* DO NOT render markdown/code any other way—SafeMarkdown only */}
+        {loading ? (
+          "⏳ Codex is generating your patch..."
+        ) : patch?.trim() ? (
+          <SafeMarkdown>{patch}</SafeMarkdown>
+        ) : (
+          "No patch yet."
+        )}
       </div>
     </div>
   );
 }
-

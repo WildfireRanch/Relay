@@ -1,6 +1,6 @@
-// File: AuditPanel.tsx
-// Directory: frontend/src/components
-// Purpose: Unified agent audit dashboard with drilldown into agent actions/patches and related context
+// File: frontend/src/components/AuditPanel.tsx
+// Purpose: Unified agent audit dashboard with drilldown into agent actions/patches and related context.
+//          All comments, context, rationales, and diffs now render via SafeMarkdown for clarity and security.
 
 "use client";
 
@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { API_ROOT } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 // === Types ===
 type LogEntry = {
@@ -206,7 +207,9 @@ export default function AuditPanel() {
                 <td className="px-2 py-1">{entry.type || ""}</td>
                 <td className="px-2 py-1 font-mono">{entry.path || ""}</td>
                 <td className="px-2 py-1 font-mono">{entry.id.slice(0, 8)}</td>
-                <td className="px-2 py-1">{entry.comment || ""}</td>
+                <td className="px-2 py-1">
+                  {entry.comment ? <SafeMarkdown>{entry.comment}</SafeMarkdown> : ""}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -233,22 +236,30 @@ export default function AuditPanel() {
               <strong>User:</strong> {selected.user}<br />
               <strong>Type:</strong> {selected.type}<br />
               <strong>Path:</strong> {selected.path}<br />
-              <strong>Comment:</strong> {selected.comment}<br />
+              <strong>Comment:</strong>{" "}
+              {selected.comment ? <SafeMarkdown>{selected.comment}</SafeMarkdown> : ""}<br />
               <strong>Timestamp:</strong> {selected.timestamp}
             </div>
             {relatedAction?.action?.context && (
               <details>
                 <summary className="cursor-pointer text-blue-700 mb-2">View Agent Context</summary>
-                <pre className="bg-gray-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">{relatedAction.action.context}</pre>
+                <div className="bg-gray-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
+                  <SafeMarkdown>{relatedAction.action.context}</SafeMarkdown>
+                </div>
               </details>
             )}
             {relatedAction?.action?.rationale && (
-              <div className="text-xs italic mb-2"><strong>Agent rationale:</strong> {relatedAction.action.rationale}</div>
+              <div className="text-xs italic mb-2">
+                <strong>Agent rationale:</strong>{" "}
+                <SafeMarkdown>{relatedAction.action.rationale}</SafeMarkdown>
+              </div>
             )}
             {relatedAction?.action?.diff && (
               <details>
                 <summary className="cursor-pointer text-blue-700 mb-2">View Diff</summary>
-                <pre className="bg-yellow-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">{relatedAction.action.diff}</pre>
+                <div className="bg-yellow-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
+                  <SafeMarkdown>{relatedAction.action.diff}</SafeMarkdown>
+                </div>
               </details>
             )}
             {relatedAction?.history && (
@@ -256,7 +267,15 @@ export default function AuditPanel() {
                 <h4 className="font-semibold mt-2 mb-1 text-sm">Timeline</h4>
                 <ul className="bg-gray-100 p-2 rounded text-xs max-h-32 overflow-auto border">
                   {relatedAction.history.map((h, i) => (
-                    <li key={i}><span className="font-mono">{h.timestamp}</span> • <Badge>{h.status}</Badge> {h.user && <span className="ml-2 text-blue-700">{h.user}</span>} {h.comment && <span className="ml-2 italic">{h.comment}</span>}</li>
+                    <li key={i}>
+                      <span className="font-mono">{h.timestamp}</span> • <Badge>{h.status}</Badge>
+                      {h.user && <span className="ml-2 text-blue-700">{h.user}</span>}
+                      {h.comment && (
+                        <span className="ml-2 italic">
+                          <SafeMarkdown>{h.comment}</SafeMarkdown>
+                        </span>
+                      )}
+                    </li>
                   ))}
                 </ul>
               </div>

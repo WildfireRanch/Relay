@@ -1,6 +1,6 @@
-// File: LogsPanel.tsx
-// Directory: frontend/src/components
-// Purpose: Displays the system action log with results, file paths, timestamps, auto-refresh, action-type filtering, text-based search, and JSON/CSV download
+// File: frontend/src/components/LogsPanel.tsx
+// Purpose: Displays the system action log with results, file paths, timestamps, auto-refresh, action-type filtering, text-based search, and JSON/CSV download.
+//          Result output is rendered with SafeMarkdown when string; otherwise, pretty JSON.
 
 "use client";
 
@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 interface LogEntry {
   id: string;
@@ -15,7 +16,7 @@ interface LogEntry {
   type: string;
   path?: string;
   status: string;
-  result?: Record<string, unknown>;
+  result?: unknown; // Can be string (markdown), object, or null
 }
 
 export default function LogsPanel() {
@@ -54,7 +55,7 @@ export default function LogsPanel() {
         entry.type,
         entry.path || "",
         entry.status
-      ].map(field => `"${field.replace(/"/g, '""')}"`);
+      ].map(field => `"${String(field).replace(/"/g, '""')}"`);
       csvRows.push(row.join(","));
     });
     const csvContent = csvRows.join("\n");
@@ -81,16 +82,21 @@ export default function LogsPanel() {
     return matchType && matchSearch;
   });
 
-  if (!filteredLog.length) return <p className="text-muted-foreground">No log entries{filterType ? ` of type '${filterType}'` : ""} found.</p>;
+  if (!filteredLog.length)
+    return (
+      <p className="text-muted-foreground">
+        No log entries{filterType ? ` of type '${filterType}'` : ""} found.
+      </p>
+    );
 
   return (
     <div className="space-y-4">
+      {/* Controls */}
       <div className="flex flex-wrap gap-4 mb-4 items-center">
         <Button variant={autoRefresh ? "default" : "outline"} onClick={() => setAutoRefresh(!autoRefresh)}>
           {autoRefresh ? "Auto-Refresh ON" : "Auto-Refresh OFF"}
         </Button>
         <div className="text-sm text-gray-500">Log updates every 15s</div>
-
         <select
           className="border rounded px-2 py-1 text-sm"
           value={filterType}
@@ -101,7 +107,6 @@ export default function LogsPanel() {
             <option key={type} value={type}>{type}</option>
           ))}
         </select>
-
         <input
           type="text"
           placeholder="Search logs..."
@@ -109,7 +114,6 @@ export default function LogsPanel() {
           onChange={e => setSearchText(e.target.value)}
           className="border rounded px-2 py-1 text-sm w-60"
         />
-
         <Button onClick={downloadJSON} variant="secondary">
           Download JSON
         </Button>
@@ -118,6 +122,7 @@ export default function LogsPanel() {
         </Button>
       </div>
 
+      {/* Log entries */}
       {filteredLog.map((entry) => (
         <Card key={entry.id}>
           <CardContent className="p-4 space-y-2">
@@ -131,9 +136,17 @@ export default function LogsPanel() {
               )}
               <span className="ml-2"><strong>Status:</strong> {entry.status}</span>
             </div>
-            <pre className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
-              {JSON.stringify(entry.result, null, 2)}
-            </pre>
+            {/* If the result is a markdown string, render as markdown.
+                Otherwise, pretty-print as JSON. */}
+            {typeof entry.result === "string" ? (
+              <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
+                <SafeMarkdown>{entry.result}</SafeMarkdown>
+              </div>
+            ) : entry.result ? (
+              <pre className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
+                {JSON.stringify(entry.result, null, 2)}
+              </pre>
+            ) : null}
           </CardContent>
         </Card>
       ))}

@@ -1,6 +1,5 @@
 import type { Config } from '@measured/puck'
 
-// 🧩 Full Panel Components
 import ActionQueue from '../../components/ActionQueue/ActionQueuePanel'
 import AskAgent from '../../components/AskAgent/ChatWindow'
 import DocsSyncPanel from '../../components/DocsSyncPanel'
@@ -13,7 +12,6 @@ import Sidebar from '../../components/Sidebar/Sidebar'
 import StatusPanel from '../../components/StatusPanel'
 import MetricsChart from '../../components/MetricsCharts/MetricsCharts'
 
-// 🪄 UI Primitives (shadcn)
 import { Badge } from '../../components/ui/badge'
 import { Button } from '../../components/ui/button'
 import { Card } from '../../components/ui/card'
@@ -21,6 +19,17 @@ import { Input } from '../../components/ui/input'
 import { Label } from '../../components/ui/label'
 import { Progress } from '../../components/ui/progress'
 import { Textarea } from '../../components/ui/textarea'
+
+import SafeMarkdown from "@/components/SafeMarkdown";
+import { useRef } from "react";
+
+// Helper for markdown rendering
+function toMDString(val: any): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  try { return "```json\n" + JSON.stringify(val, null, 2) + "\n```"; }
+  catch { return String(val); }
+}
 
 type Props = {
   AskAgent: object
@@ -42,6 +51,12 @@ type Props = {
   Label: { text: string }
   Progress: { value: number }
   Textarea: { placeholder?: string }
+
+  Markdown: {
+    title?: string
+    content: string
+    imageUrl?: string
+  }
 }
 
 const config: Config<Props> = {
@@ -58,7 +73,59 @@ const config: Config<Props> = {
     DocsSyncPanel: { fields: {}, render: () => <DocsSyncPanel /> },
     MetricsChart: { fields: {}, render: () => <MetricsChart /> },
 
-    // 🧩 UI Elements
+    // --- ADVANCED MARKDOWN BLOCK ---
+    Markdown: {
+      label: "Markdown/Content Block",
+      fields: {
+        title: { type: "text", label: "Title (optional)" },
+        content: { type: "textarea", label: "Markdown content" },
+        imageUrl: { type: "text", label: "Image URL (optional)" }
+      },
+      render: ({ title, content, imageUrl }) => {
+        // Optional image uploader (for markdown paste-ins)
+        const fileInput = useRef<HTMLInputElement>(null);
+        const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          // For real app, you'd POST to your backend or S3, then paste URL into markdown.
+          alert("You selected: " + file.name + "\nUpload handler is not implemented in this block.");
+        };
+        return (
+          <div className="prose prose-neutral dark:prose-invert max-w-none border rounded-xl p-4 bg-background shadow mb-4">
+            {title && <h2>{title}</h2>}
+            {imageUrl && (
+              <img
+                src={imageUrl}
+                alt={title || "Markdown image"}
+                className="rounded-lg my-4 max-w-full"
+                style={{ maxHeight: "320px", objectFit: "contain" }}
+              />
+            )}
+            <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
+            {/* Example image upload button, not wired to real backend */}
+            <div className="not-prose mt-4">
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInput}
+                style={{ display: "none" }}
+                onChange={handleImageUpload}
+              />
+              <button
+                className="border px-3 py-1 rounded text-xs bg-muted hover:bg-accent"
+                onClick={() => fileInput.current?.click()}
+                type="button"
+              >
+                Upload Image (not yet wired)
+              </button>
+              <span className="ml-2 text-gray-400 text-xs">(Paste uploaded image URL in Image URL field)</span>
+            </div>
+          </div>
+        );
+      }
+    },
+
+    // --- UI Primitives ---
     Badge: {
       fields: {
         text: { type: 'text', label: 'Text' },
@@ -117,5 +184,6 @@ const config: Config<Props> = {
       ),
     },
   },
-}
-export default config 
+};
+
+export default config;

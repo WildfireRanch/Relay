@@ -1,5 +1,5 @@
 // File: app/ask/page.tsx
-// Purpose: Ask Echo chat UI with unified MCP backend and robust Markdown/code block rendering
+// Purpose: Ask Echo chat UI with unified MCP backend and robust Markdown/code block rendering. Prevents React #418 by always stringifying content.
 
 "use client";
 
@@ -14,6 +14,17 @@ type Message = {
 
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
+
+// Helper: Always provide a string for markdown rendering
+function toMDString(val: any): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  try {
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
+}
 
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -40,7 +51,7 @@ export default function AskPage() {
     if (!input.trim() || loading) return;
 
     const userMessage = input;
-    setMessages(msgs => [...msgs, { role: "user", content: userMessage }]);
+    setMessages(msgs => [...msgs, { role: "user", content: toMDString(userMessage) }]);
     setLoading(true);
     setInput("");
 
@@ -69,11 +80,11 @@ export default function AskPage() {
         data?.response ||
         "[no answer]";
 
-      setMessages(msgs => [...msgs, { role: "assistant", content }]);
+      setMessages(msgs => [...msgs, { role: "assistant", content: toMDString(content) }]);
     } catch {
       setMessages(msgs => [
         ...msgs,
-        { role: "assistant", content: "[error] Unable to get response." },
+        { role: "assistant", content: toMDString("[error] Unable to get response.") },
       ]);
     }
 
@@ -94,7 +105,7 @@ export default function AskPage() {
             }
           >
             <span className="block whitespace-pre-wrap">
-              <SafeMarkdown>{msg.content}</SafeMarkdown>
+              <SafeMarkdown>{toMDString(msg.content)}</SafeMarkdown>
             </span>
           </div>
         ))}

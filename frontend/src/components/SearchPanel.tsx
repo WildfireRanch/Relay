@@ -1,13 +1,7 @@
-// File: SearchPanel.tsx
-// Directory: frontend/src/components
+// File: frontend/src/components/SearchPanel.tsx
 // Purpose: Robust, debounced UI panel for semantic KB search (GET /kb/search).
-// Notes:
-//   • Uses `query` param (canonical) to avoid 422 mismatch.
-//   • Debounces keystrokes (400 ms) & cancels stale fetches via AbortController.
-//   • Pulls API root/key from @/lib/api; shows config error prominently.
-//   • Accessible: form with <label>, aria‑busy, keyboard submit.
-//   • Staging/prod ready: handles 401/403 specifically.
-// Last Updated: 2025‑06‑13
+//          Now renders result snippets with SafeMarkdown for readable markdown/code.
+// Notes: 2025‑07‑01 – All features preserved; only result snippet rendering is upgraded.
 
 "use client";
 
@@ -15,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { API_ROOT, API_KEY } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 export type KBResult = {
   path: string;
@@ -142,7 +137,9 @@ export default function SearchPanel() {
               <header className="text-muted-foreground">
                 <strong>{r.title}</strong> ({r.similarity.toFixed(2)})
               </header>
-              <pre className="whitespace-pre-wrap">{r.snippet}</pre>
+              <div className="mb-1">
+                <SafeMarkdown>{r.snippet}</SafeMarkdown>
+              </div>
               <footer className="text-xs text-muted-foreground">
                 Updated: {r.updated || "—"}
               </footer>

@@ -1,6 +1,6 @@
-// File: ActionQueuePanel.tsx
-// Directory: frontend/src/components
-// Purpose: Superpanel for agent patch/action queue with approve/deny, context diff, and deep audit
+// File: frontend/src/components/ActionQueuePanel.tsx
+// Purpose: Superpanel for agent patch/action queue with approve/deny, context diff, and deep audit.
+//          All rationale, diff, content, and context fields are rendered with SafeMarkdown for bulletproof safety.
 
 "use client";
 
@@ -10,6 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { API_ROOT } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 type ActionStatus = "pending" | "approved" | "denied";
 
@@ -34,6 +35,17 @@ type Action = {
   };
   history?: HistoryEntry[];
 };
+
+// Defensive stringifier for all agent outputs
+function toMDString(val: any): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  try {
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
+}
 
 export default function ActionQueuePanel() {
   const [actions, setActions] = useState<Action[]>([]);
@@ -132,21 +144,22 @@ export default function ActionQueuePanel() {
 
             {a.action.rationale && (
               <div className="text-xs text-blue-800 mt-1 italic">
-                <strong>Why?</strong> {a.action.rationale}
+                <strong>Why?</strong>{" "}
+                <SafeMarkdown>{toMDString(a.action.rationale)}</SafeMarkdown>
               </div>
             )}
 
             {a.action.diff ? (
               <details>
                 <summary className="cursor-pointer text-xs text-blue-700">View Diff</summary>
-                <pre className="bg-muted p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
-                  {a.action.diff}
-                </pre>
+                <div className="bg-muted p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
+                  <SafeMarkdown>{toMDString(a.action.diff)}</SafeMarkdown>
+                </div>
               </details>
             ) : (
-              <pre className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
-                {a.action.content?.slice(0, 500) || "No content"}
-              </pre>
+              <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
+                <SafeMarkdown>{toMDString(a.action.content?.slice(0, 500) || "No content")}</SafeMarkdown>
+              </div>
             )}
 
             {a.action.context && (
@@ -161,9 +174,9 @@ export default function ActionQueuePanel() {
             )}
 
             {showContext[a.id] && a.action.context && (
-              <pre className="bg-gray-100 p-2 rounded text-xs max-h-32 overflow-auto mt-2">
-                {a.action.context}
-              </pre>
+              <div className="bg-gray-100 p-2 rounded text-xs max-h-32 overflow-auto mt-2">
+                <SafeMarkdown>{toMDString(a.action.context)}</SafeMarkdown>
+              </div>
             )}
 
             {/* Context diff compare */}
@@ -184,9 +197,13 @@ export default function ActionQueuePanel() {
               {compareContextId && getActionById(compareContextId) && a.action.context && (
                 <details>
                   <summary className="cursor-pointer text-xs text-blue-700 mt-1">Show Context Diff</summary>
-                  <pre className="bg-yellow-100 p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
-                    {diffContext(a.action.context, getActionById(compareContextId)?.action.context || "")}
-                  </pre>
+                  <div className="bg-yellow-100 p-2 rounded text-xs overflow-auto whitespace-pre-wrap">
+                    <SafeMarkdown>
+                      {toMDString(
+                        diffContext(a.action.context, getActionById(compareContextId)?.action.context || "")
+                      )}
+                    </SafeMarkdown>
+                  </div>
                 </details>
               )}
             </div>
@@ -206,7 +223,11 @@ export default function ActionQueuePanel() {
                   <li key={i}>
                     <span className="font-mono">{h.timestamp}</span> • <Badge>{h.status}</Badge>
                     {h.user && <span className="ml-2 text-blue-700">{h.user}</span>}
-                    {h.comment && <span className="ml-2 italic">{h.comment}</span>}
+                    {h.comment && (
+                      <span className="ml-2 italic">
+                        <SafeMarkdown>{toMDString(h.comment)}</SafeMarkdown>
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -1,12 +1,24 @@
+// File: src/app/codex/page.tsx
+// Purpose: Codex agent page with robust markdown/code output; status and patch display is bulletproofed.
+
 "use client";
 
-// File: src/app/codex/page.tsx
-
-import React from "react";
-import { useState } from "react";
+import React, { useState } from "react";
 import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
+
+// Helper: Always output a string for markdown rendering
+function toMDString(val: any): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  try {
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
+}
 
 const CodexPage: React.FC = () => {
   const [code, setCode] = useState<string>("");
@@ -95,7 +107,11 @@ const CodexPage: React.FC = () => {
       {parsedPatch && (
         <div className="space-y-2">
           <Button onClick={applyPatch}>✅ Approve & Apply Patch</Button>
-          {status && <div className="text-sm text-muted-foreground">{status}</div>}
+          {status && (
+            <div className="text-sm text-muted-foreground">
+              <SafeMarkdown>{toMDString(status)}</SafeMarkdown>
+            </div>
+          )}
         </div>
       )}
     </div>

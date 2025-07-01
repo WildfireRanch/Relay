@@ -1,6 +1,7 @@
-// File: components/AskAgent/hooks.ts
+// File: frontend/src/components/AskAgent/hooks.ts
 // Purpose: Reusable React hook for AskAgent chat—now wired to /mcp/run for agent/critic orchestration
-// Updated: 2025-06-30
+//          Ensures ALL message fields for markdown rendering are always strings (prevents React #418).
+// Updated: 2025-07-01
 
 import { useState } from "react";
 import { API_ROOT } from "@/lib/api";
@@ -8,11 +9,23 @@ import { API_ROOT } from "@/lib/api";
 // Message interface for chat history
 export interface Message {
   user: string;   // User's input
-  agent: string;  // Agent's reply
-  context?: string;
+  agent: string;  // Agent's reply (ALWAYS stringified)
+  context?: string; // (ALWAYS stringified if present)
   action?: { type: string; payload: unknown };
   id?: string;
   status?: "pending" | "approved" | "denied";
+}
+
+// Helper: Always return a string (markdown/code-safe) for display
+function toMDString(val: any): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  try {
+    // Show objects/arrays as JSON code block for markdown safety
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
 }
 
 // Main hook for agent chat
@@ -31,6 +44,7 @@ export function useAskAgent(userId: string) {
   ) => {
     if (!query.trim()) return;
 
+    // Add user message
     setMessages((prev) => [...prev, { user: query, agent: "" }]);
     setLoading(true);
 
@@ -56,19 +70,20 @@ export function useAskAgent(userId: string) {
       const data = await res.json();
       const result = data?.result || data;
 
-      // Choose best available agent reply string
+      // Coerce all markdown-displayed fields to strings for safety
       setMessages((prev) => [
         ...prev.slice(0, -1),
         {
           user: query,
-          agent:
+          agent: toMDString(
             result?.plan?.objective ||
             result?.plan?.recommendation ||
             result?.recommendation ||
             result?.response ||
             data?.response ||
-            "[no answer]",
-          context: result?.context || data?.context,
+            "[no answer]"
+          ),
+          context: toMDString(result?.context || data?.context),
           action: result?.action,
           id: result?.id,
           status: result?.id ? "pending" : undefined,

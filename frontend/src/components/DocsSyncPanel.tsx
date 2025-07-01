@@ -1,9 +1,13 @@
 // File: components/DocsSyncPanel.tsx
+// Purpose: UI panel for syncing, refreshing, and reindexing knowledge base docs. 
+//          All status and result messages are rendered with SafeMarkdown for rich, safe output.
+
 "use client";
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 export default function DocsSyncPanel() {
   const [status, setStatus] = useState<string | null>(null);
@@ -94,7 +98,12 @@ export default function DocsSyncPanel() {
         </Button>
       </div>
 
-      {status && <div className="mt-2 text-sm text-muted-foreground">{status}</div>}
+      {/* Status messages rendered as markdown */}
+      {status && (
+        <div className="mt-2 text-sm text-muted-foreground">
+          <SafeMarkdown>{status}</SafeMarkdown>
+        </div>
+      )}
 
       {files.length > 0 && (
         <ul className="mt-2 list-disc list-inside">
@@ -120,7 +129,7 @@ export default function DocsSyncPanel() {
         </Button>
         {reindexStatus && (
           <div className={`mt-1 text-sm ${reindexStatus.startsWith("✅") ? "text-green-600" : "text-red-500"}`}>
-            {reindexStatus}
+            <SafeMarkdown>{reindexStatus}</SafeMarkdown>
           </div>
         )}
       </div>

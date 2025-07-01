@@ -113,23 +113,37 @@ export function useAskEcho() {
 
       // Compose assistant's reply (try multiple possible keys)
       const result = data?.result || data;
+        // Helper: always coerce to string for SafeMarkdown
+      function toMDString(val: any) {
+        if (val == null) return "";
+        if (typeof val === "string") return val;
+        try {
+          return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+        } catch {
+          return String(val);
+        }
+      }
+
       setMessages((msgs) => [
         ...msgs,
         {
           role: "assistant",
           content:
-            result?.plan?.objective ||
-            result?.plan?.recommendation ||
-            result?.recommendation ||
-            result?.response ||
-            data?.response ||
-            "[no answer]",
-          context: result?.context || data?.context,
+            toMDString(
+              result?.plan?.objective ||
+              result?.plan?.recommendation ||
+              result?.recommendation ||
+              result?.response ||
+              data?.response ||
+              "[no answer]"
+            ),
+          context: toMDString(result?.context || data?.context),
           action: result?.action,
           id: result?.id,
           status: result?.id ? "pending" : undefined,
         },
       ]);
+
     } catch {
       setMessages((msgs) => [
         ...msgs,

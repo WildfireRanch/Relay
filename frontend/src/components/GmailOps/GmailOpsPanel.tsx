@@ -1,9 +1,11 @@
 // File: components/GmailOps/GmailOpsPanel.tsx
+// Purpose: Panel to send and view emails, now with SafeMarkdown rendering for messages and snippets.
 
 "use client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
+import SafeMarkdown from "@/components/SafeMarkdown";
 
 // Explicitly type the Email shape
 type Email = {
@@ -46,7 +48,11 @@ export default function GmailOpsPanel() {
         <input className="border rounded px-2 py-1 w-full mb-1" placeholder="Subject" value={subject} onChange={e => setSubject(e.target.value)} />
         <textarea className="border rounded px-2 py-1 w-full mb-2" placeholder="Body" rows={4} value={body} onChange={e => setBody(e.target.value)} />
         <Button onClick={send}>Send Email</Button>
-        {msg && <div className="text-xs mt-2">{msg}</div>}
+        {msg && (
+          <div className="text-xs mt-2">
+            <SafeMarkdown>{msg}</SafeMarkdown>
+          </div>
+        )}
       </div>
       <div>
         <h3 className="font-bold mb-2">List Recent Emails</h3>
@@ -57,7 +63,9 @@ export default function GmailOpsPanel() {
               <div><strong>From:</strong> {em.from}</div>
               <div><strong>Subject:</strong> {em.subject}</div>
               <div><strong>Date:</strong> {em.date}</div>
-              <div className="text-gray-500">{em.snippet}</div>
+              <div className="text-gray-500">
+                <SafeMarkdown>{em.snippet}</SafeMarkdown>
+              </div>
             </li>
           ))}
         </ul>
