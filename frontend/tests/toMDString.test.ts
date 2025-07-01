@@ -10,8 +10,8 @@ describe('toMDString', () => {
     expect(toMDString(undefined)).toBe('');
   });
 
-  it('joins arrays with newlines', () => {
-    expect(toMDString(['a', 1, false])).toBe('a\n1\nfalse');
+  it('joins arrays with blank lines', () => {
+    expect(toMDString(['a', 1, false])).toBe('a\n\n1\n\nfalse');
   });
 
   it('formats objects as fenced JSON', () => {

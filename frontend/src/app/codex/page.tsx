@@ -64,7 +64,7 @@ const CodexPage: React.FC = () => {
 
   const applyPatch = async (): Promise<void> => {
     if (!parsedPatch) return;
-    setStatus("⏳ Applying patch...");
+    setStatus(toMDString("⏳ Applying patch..."));
 
     try {
       const res = await fetch(`${API_ROOT}/codex/apply_patch`, {
@@ -78,13 +78,13 @@ const CodexPage: React.FC = () => {
       });
 
       if (res.ok) {
-        setStatus("✅ Patch applied successfully.");
+        setStatus(toMDString("✅ Patch applied successfully."));
       } else {
         const err = await res.text();
-        setStatus("❌ Failed to apply patch: " + err);
+        setStatus(toMDString("❌ Failed to apply patch: " + err));
       }
     } catch (err) {
-      setStatus("❌ Patch request failed: " + String(err));
+      setStatus(toMDString("❌ Patch request failed: " + String(err)));
     }
   };
 

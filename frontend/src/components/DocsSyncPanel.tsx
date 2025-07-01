@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
+import { toMDString } from "@/lib/toMDString";
 
 export default function DocsSyncPanel() {
   const [status, setStatus] = useState<string | null>(null);
@@ -24,10 +25,10 @@ export default function DocsSyncPanel() {
    */
   const triggerSync = async (endpoint: string) => {
     if (!API_ROOT) {
-      setStatus("❌ API URL not configured");
+      setStatus(toMDString("❌ API URL not configured"));
       return;
     }
-    setStatus("⏳ Running...");
+    setStatus(toMDString("⏳ Running..."));
     setFiles([]);
     setLoading(true);
     try {
@@ -38,15 +39,15 @@ export default function DocsSyncPanel() {
       const data = await res.json();
       if (Array.isArray(data.synced_docs)) {
         setFiles(data.synced_docs);
-        setStatus(`✅ Synced ${data.synced_docs.length} docs.`);
+        setStatus(toMDString(`✅ Synced ${data.synced_docs.length} docs.`));
       } else if (data.message) {
-        setStatus(`✅ ${data.message}`);
+        setStatus(toMDString(`✅ ${data.message}`));
       } else {
-        setStatus("✅ Operation completed.");
+        setStatus(toMDString("✅ Operation completed."));
       }
     } catch (err) {
       console.error("DocsSync error:", err);
-      setStatus("❌ Failed to sync. See console for details.");
+      setStatus(toMDString("❌ Failed to sync. See console for details."));
     } finally {
       setLoading(false);
     }
@@ -55,10 +56,10 @@ export default function DocsSyncPanel() {
   // --- NEW: Trigger a KB reindex (admin only) ---
   const triggerReindex = async () => {
     if (!API_ROOT) {
-      setReindexStatus("❌ API URL not configured");
+      setReindexStatus(toMDString("❌ API URL not configured"));
       return;
     }
-    setReindexStatus("⏳ Reindexing...");
+    setReindexStatus(toMDString("⏳ Reindexing..."));
     setReindexLoading(true);
     try {
       const res = await fetch(`${API_ROOT}/admin/trigger_reindex`, {
@@ -71,13 +72,13 @@ export default function DocsSyncPanel() {
       });
       const data = await res.json();
       if (res.ok) {
-        setReindexStatus(`✅ ${data.message || "Reindex complete."}`);
+        setReindexStatus(toMDString(`✅ ${data.message || "Reindex complete."}`));
       } else {
-        setReindexStatus(`❌ ${data.detail || "Reindex failed."}`);
+        setReindexStatus(toMDString(`❌ ${data.detail || "Reindex failed."}`));
       }
     } catch (err) {
       console.error("Reindex error:", err);
-      setReindexStatus("❌ Failed to reindex. See console for details.");
+      setReindexStatus(toMDString("❌ Failed to reindex. See console for details."));
     } finally {
       setReindexLoading(false);
     }
