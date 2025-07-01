@@ -10,6 +10,19 @@ import { Badge } from "@/components/ui/badge";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
 
+// Bulletproof Markdown stringifier for all content/comments/diffs/rationales/etc.
+function toMDString(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) return val.map(toMDString).join("\n\n");
+  try {
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
+}
+
+
 // === Types ===
 type LogEntry = {
   id: string;
