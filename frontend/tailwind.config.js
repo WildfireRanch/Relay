@@ -19,12 +19,17 @@ module.exports = {
         lg: "var(--radius)",
         xl: "calc(var(--radius) + 4px)",
       },
-      // You can add color/theme extensions here if needed
+      colors: {
+        border: "var(--border)",
+        // You can add more mappings if using other CSS vars as Tailwind colors
+        // foreground: "var(--foreground)",
+        // background: "var(--background)",
+      },
     },
   },
   plugins: [
     require('@tailwindcss/typography'),
-    // Add more plugins here as needed
+    // other plugins...
   ],
-  darkMode: "class", // Uses .dark class for dark mode
+  darkMode: "class",
 };
