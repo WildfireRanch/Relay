@@ -1,41 +1,50 @@
 {
   "compilerOptions": {
-    "target": "esnext",
-    "lib": ["dom", "dom.iterable", "esnext"],
-    "allowJs": true,
-    "skipLibCheck": true,
-    "strict": true,
-    "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
-    "esModuleInterop": true,
-    "module": "esnext",
-    "moduleResolution": "bundler",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "jsx": "preserve",
-    "incremental": true,
+    // ========= ECMAScript Target & Modules =========
+    "target": "esnext",                      // Use the latest JS features
+    "module": "esnext",                      // Modern ES modules
+    "lib": ["dom", "dom.iterable", "esnext"],// Browser + latest ES features
 
-    // 🔗 ALIASES
-    "baseUrl": ".", 
+    // ========= TypeScript Core Behavior =========
+    "strict": true,                          // All strict type-checking options
+    "forceConsistentCasingInFileNames": true,// Catch case issues on import
+    "noEmit": true,                          // Don't output .js files
+    "incremental": true,                     // Speed up repeated builds
+    "skipLibCheck": true,                    // Faster builds, disables type-checking node_modules
+
+    // ========= Module Resolution & Interop =========
+    "esModuleInterop": true,                  // Allow default imports from CJS modules
+    "moduleResolution": "bundler",            // (Next.js 13+ best practice)
+    "resolveJsonModule": true,                // Allows importing JSON files
+    "isolatedModules": true,                  // Required by Next.js
+
+    // ========= JS/TS Interop =========
+    "allowJs": true,                          // Allow JavaScript files
+
+    // ========= JSX Behavior =========
+    "jsx": "preserve",                        // JSX remains for Next.js to handle
+
+    // ========= Path Aliases =========
+    "baseUrl": ".",                           // Root for path mappings
     "paths": {
-      "@/*": ["src/*"],                           // ✅ @/lib/api → src/lib/api
-      "@components/*": ["src/components/*"],      // ✅ Optional shortcut
-      "@puck": ["src/app/editor/puck.config.tsx"] // ✅ For config import
+      "@/*": ["src/*"],                       // ✅ @/lib/api → src/lib/api
+      "@components/*": ["src/components/*"],  // Optional: import from @components/...
+      "@puck": ["src/app/editor/puck.config.tsx"] // Shortcut for Puck config
     },
 
-    // 📦 Plugins (picked up by Next.js automatically)
+    // ========= Next.js Plugins =========
     "plugins": [
-      {
-        "name": "next"
-      }
+      { "name": "next" }
     ]
   },
   "include": [
-    "next-env.d.ts",
-    "**/*.ts",
-    "**/*.tsx",
-    ".next/types/**/*.ts",
-    "types/**/*.d.ts"
+    "next-env.d.ts",         // Next.js auto-generated types
+    "**/*.ts",               // All TypeScript files
+    "**/*.tsx",              // All TSX (React) files
+    ".next/types/**/*.ts",   // Next.js build artifacts (for type safety)
+    "types/**/*.d.ts"        // Any global/custom type definitions
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"           // Never include node_modules
+  ]
 }
