@@ -32,7 +32,11 @@ export default function LogsPanel() {
       }
     });
     const data = await res.json();
-    setLog(data.log || []);
+    const mapped = (data.log || []).map((entry: LogEntry) => ({
+      ...entry,
+      result: toMDString(entry.result as any)
+    }));
+    setLog(mapped);
   }
 
   function downloadJSON() {

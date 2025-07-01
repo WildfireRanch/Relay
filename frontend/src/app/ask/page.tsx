@@ -20,7 +20,19 @@ export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : [];
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            return parsed.map((m: any) => ({
+              ...m,
+              content: toMDString(m.content)
+            }));
+          }
+        } catch {
+          return [];
+        }
+      }
     }
     return [];
   });

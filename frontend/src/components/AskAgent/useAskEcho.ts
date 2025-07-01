@@ -35,7 +35,22 @@ export function useAskEcho() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) setMessages(JSON.parse(raw));
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setMessages(
+              parsed.map(m => ({
+                ...m,
+                content: toMDString((m as any).content),
+                context: toMDString((m as any).context)
+              }))
+            );
+          }
+        } catch {
+          setMessages([]);
+        }
+      }
     }
   }, []);
 
@@ -87,7 +102,7 @@ export function useAskEcho() {
     if (!input.trim() || loading) return;
 
     const userMessage = input;
-    setMessages((msgs) => [...msgs, { role: "user", content: userMessage }]);
+    setMessages((msgs) => [...msgs, { role: "user", content: toMDString(userMessage) }]);
     setInput("");
     setLoading(true);
 
@@ -139,7 +154,7 @@ export function useAskEcho() {
     } catch {
       setMessages((msgs) => [
         ...msgs,
-        { role: "assistant", content: "[error] Unable to get response." },
+        { role: "assistant", content: toMDString("[error] Unable to get response.") },
       ]);
     }
 
