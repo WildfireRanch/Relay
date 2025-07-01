@@ -26,7 +26,6 @@ function normalizeMessages(arr: unknown[]): Message[] {
     "content" in msg &&
     typeof (msg as { content?: unknown }).content === "string"
 )
-
         .map((msg) => ({
           role:
             msg.role === "user" || msg.role === "assistant"
