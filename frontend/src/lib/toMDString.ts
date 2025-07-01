@@ -2,7 +2,7 @@ export function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   if (Array.isArray(val)) {
-    return val.map(v => toMDString(v)).join("\n");
+    return val.map((v) => toMDString(v)).join("\n\n");
   }
   if (typeof val === "object") {
     try {

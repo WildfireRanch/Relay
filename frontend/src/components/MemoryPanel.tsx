@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { API_ROOT } from "@/lib/api"
 import SafeMarkdown from "@/components/SafeMarkdown"
+import { toMDString } from "@/lib/toMDString"
 
 interface ContextSource {
   type: string
@@ -70,7 +71,12 @@ export default function MemoryPanel() {
       })
       if (!res.ok) throw new Error(`Status ${res.status}`)
       const data = await res.json()
-      setMemory(data.entries || [])
+      const mapped = (data.entries || []).map((m: any) => ({
+        ...m,
+        summary: toMDString(m.summary),
+        agent_response: toMDString(m.agent_response),
+      }))
+      setMemory(mapped)
       setFetchInfo({ status: "success", time: Date.now() - start, error: "" })
     } catch (e: unknown) {
       const errorMsg = e instanceof Error ? e.message : String(e)
