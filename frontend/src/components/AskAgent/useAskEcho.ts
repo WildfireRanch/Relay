@@ -4,6 +4,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { API_ROOT } from "@/lib/api";
+import { toMDString } from "@/lib/toMDString";
 
 // Message type for chat history
 export type Message = {
@@ -114,15 +115,6 @@ export function useAskEcho() {
       // Compose assistant's reply (try multiple possible keys)
       const result = data?.result || data;
         // Helper: always coerce to string for SafeMarkdown
-      function toMDString(val: unknown) {
-        if (val == null) return "";
-        if (typeof val === "string") return val;
-        try {
-          return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-        } catch {
-          return String(val);
-        }
-      }
 
       setMessages((msgs) => [
         ...msgs,

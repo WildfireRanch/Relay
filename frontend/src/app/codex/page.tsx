@@ -8,17 +8,9 @@ import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex"
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
+import { toMDString } from "@/lib/toMDString";
 
-// Helper: Always output a string for markdown rendering
-function toMDString(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try {
-    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-  } catch {
-    return String(val);
-  }
-}
+// Helper replaced by shared utility
 
 const CodexPage: React.FC = () => {
   const [code, setCode] = useState<string>("");

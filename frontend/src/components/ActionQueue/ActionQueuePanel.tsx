@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
+import { toMDString } from "@/lib/toMDString";
 
 type ActionStatus = "pending" | "approved" | "denied";
 
@@ -36,16 +37,6 @@ type Action = {
   history?: HistoryEntry[];
 };
 
-// Defensive stringifier for all agent outputs
-function toMDString(val: unknown): string {
-  if (val == null) return "";
-  if (typeof val === "string") return val;
-  try {
-    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
-  } catch {
-    return String(val);
-  }
-}
 
 export default function ActionQueuePanel() {
   const [actions, setActions] = useState<Action[]>([]);
