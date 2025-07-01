@@ -40,11 +40,22 @@ export function useAskEcho() {
           const parsed = JSON.parse(raw);
           if (Array.isArray(parsed)) {
             setMessages(
-              parsed.map(m => ({
-                ...m as Record<string, unknown>,
-                content: toMDString((m as Record<string, unknown>).content),
-                context: toMDString((m as Record<string, unknown>).context)
-              }))
+             parsed
+  .filter(
+    (m: unknown): m is { role?: unknown; content?: unknown; context?: unknown } =>
+      typeof m === "object" &&
+      m !== null &&
+      "content" in m
+  )
+  .map((m) => ({
+    role:
+      m.role === "user" || m.role === "assistant"
+        ? m.role
+        : "assistant", // Fallback if missing
+    content: toMDString(m.content),
+    ...(typeof m.context === "string" && { context: toMDString(m.context) }),
+  }))
+
             );
           }
         } catch {
