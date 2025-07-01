@@ -50,12 +50,25 @@ const markdownComponents: Components = {
 };
 
 export default function SafeMarkdown({ children, className }: SafeMarkdownProps) {
+  // Warn if something other than a string is passed. This helps catch mistakes
+  // where a React element or other type might slip through and break rendering.
+  if (typeof children !== "string") {
+    console.warn(
+      "SafeMarkdown expected string, got",
+      typeof children,
+      children
+    );
+  }
+
+  const strChildren =
+    typeof children === "string" ? children : children ? String(children) : "";
+
   // Ultra-safe: Escape anything that looks like raw HTML, even before markdown parsing
   // This is a belt-and-suspenders approach since skipHtml and disallowedElements are also set
-  const likelyRawHtml = /<\s*[a-zA-Z]+[^>]*>/.test(children);
+  const likelyRawHtml = /<\s*[a-zA-Z]+[^>]*>/.test(strChildren);
   const safeChildren = likelyRawHtml
-    ? children.replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    : children;
+    ? strChildren.replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    : strChildren;
 
   return (
     <ReactMarkdown
