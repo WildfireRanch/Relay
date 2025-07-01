@@ -1,12 +1,11 @@
 // File: app/ask/page.tsx
-// Purpose: Ask Echo chat UI with unified MCP backend and robust Markdown/code block rendering. Prevents React #418 by always stringifying content.
+// Purpose: Bulletproof Ask Echo chat UI with safe, formatted Markdown, and type-safe state hydration.
 
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { API_ROOT } from "@/lib/api";
-import { toMDString } from "@/lib/toMDString";
 
 type Message = {
   role: "user" | "assistant";
@@ -16,19 +15,38 @@ type Message = {
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
+// Bulletproof stringifier for all markdown rendering
+function toMDString(val: unknown): string {
+  if (val == null) return "";
+  if (typeof val === "string") return val;
+  if (Array.isArray(val)) return val.map(toMDString).join("\n\n");
+  try {
+    return "```json\n" + JSON.stringify(val, null, 2) + "\n```";
+  } catch {
+    return String(val);
+  }
+}
+
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         try {
-          const parsed = JSON.parse(raw);
-          if (Array.isArray(parsed)) {
-            return parsed.map((m: unknown) => ({
-              ...(m as Record<string, unknown>),
-              content: toMDString((m as Record<string, unknown>).content)
-            }));
-          }
+          const arr = JSON.parse(raw);
+          // Map and coerce every object to type Message
+          return Array.isArray(arr)
+            ? arr
+                .filter((msg: any) => msg && typeof msg.content === "string")
+                .map((msg: any) => {
+                  // Always assign a valid role
+                  let role: "user" | "assistant" = "assistant";
+                  if (msg.role === "user" || msg.role === "assistant") {
+                    role = msg.role;
+                  }
+                  return { content: String(msg.content), role };
+                })
+            : [];
         } catch {
           return [];
         }
@@ -53,7 +71,10 @@ export default function AskPage() {
     if (!input.trim() || loading) return;
 
     const userMessage = input;
-    setMessages(msgs => [...msgs, { role: "user", content: toMDString(userMessage) }]);
+    setMessages(msgs => [
+      ...msgs,
+      { role: "user", content: toMDString(userMessage) }
+    ]);
     setLoading(true);
     setInput("");
 
@@ -82,11 +103,14 @@ export default function AskPage() {
         data?.response ||
         "[no answer]";
 
-      setMessages(msgs => [...msgs, { role: "assistant", content: toMDString(content) }]);
+      setMessages(msgs => [
+        ...msgs,
+        { role: "assistant", content: toMDString(content) }
+      ]);
     } catch {
       setMessages(msgs => [
         ...msgs,
-        { role: "assistant", content: toMDString("[error] Unable to get response.") },
+        { role: "assistant", content: toMDString("[error] Unable to get response.") }
       ]);
     }
 
@@ -106,11 +130,9 @@ export default function AskPage() {
                 : "text-left text-green-700"
             }
           >
-            <span className="block whitespace-pre-wrap">
-              <div className="prose prose-neutral dark:prose-invert max-w-none">
-                <SafeMarkdown>{toMDString(msg.content)}</SafeMarkdown>
-              </div>
-            </span>
+            <div className="prose prose-neutral dark:prose-invert max-w-none">
+              <SafeMarkdown>{msg.content}</SafeMarkdown>
+            </div>
           </div>
         ))}
         {loading && (
