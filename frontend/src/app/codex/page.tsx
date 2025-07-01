@@ -88,6 +88,10 @@ const CodexPage: React.FC = () => {
     }
   };
 
+  if (typeof status !== "string") {
+    console.log("DEBUG 418:", typeof status, status);
+  }
+
   return (
     <div className="p-6 space-y-4">
       <h1 className="text-2xl font-bold">🧠 Codex — Code Editing Agent</h1>
@@ -102,8 +106,6 @@ const CodexPage: React.FC = () => {
           {status && (
             <div className="text-sm text-muted-foreground">
               <div className="prose prose-neutral dark:prose-invert max-w-none">
-                {typeof status !== "string" &&
-                  console.log("DEBUG 418:", typeof status, status)}
                 <SafeMarkdown>{toMDString(status)}</SafeMarkdown>
               </div>
             </div>

@@ -116,6 +116,12 @@ export default function SearchPanel() {
     fetchResults(query.trim());
   };
 
+  for (const r of results) {
+    if (typeof r.snippet !== "string") {
+      console.log("DEBUG 418:", typeof r.snippet, r.snippet);
+    }
+  }
+
   return (
     <div className="space-y-4" aria-busy={loading}>
       <form onSubmit={onSubmit} className="flex gap-2">
@@ -144,8 +150,6 @@ export default function SearchPanel() {
               </header>
               <div className="mb-1">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
-                  {typeof r.snippet !== "string" &&
-                    console.log("DEBUG 418:", typeof r.snippet, r.snippet)}
                   <SafeMarkdown>{r.snippet}</SafeMarkdown>
                 </div>
               </div>

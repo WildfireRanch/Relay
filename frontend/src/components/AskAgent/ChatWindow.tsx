@@ -20,6 +20,17 @@ export default function ChatWindow() {
     bottomRef,
   } = useAskEcho();
 
+  const renderedMessages = messages.map((msg, i) => {
+    if (typeof msg.content !== "string") {
+      console.log("DEBUG 418:", typeof msg.content, msg.content);
+    }
+    return (
+      <>
+        <ChatMessage key={i} role={msg.role} content={toMDString(msg.content)} />
+      </>
+    );
+  });
+
   return (
     <div className="w-full max-w-2xl mx-auto min-h-screen flex flex-col">
       {/* Header */}
@@ -27,13 +38,7 @@ export default function ChatWindow() {
 
       {/* Message List */}
       <div className="flex-1 space-y-2 overflow-y-auto border rounded-xl p-4 bg-muted">
-        {messages.map((msg, i) => (
-          <>
-            {typeof msg.content !== "string" &&
-              console.log("DEBUG 418:", typeof msg.content, msg.content)}
-            <ChatMessage key={i} role={msg.role} content={toMDString(msg.content)} />
-          </>
-        ))}
+        {renderedMessages}
         {loading && (
           <div className="text-left text-green-700 animate-pulse">
             Echo is thinking…

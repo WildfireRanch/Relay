@@ -158,6 +158,18 @@ export default function MemoryPanel() {
     window.open(`/ask?question=${encodeURIComponent(query)}`, "_blank")
   }
 
+  for (const m of paginated) {
+    if (m.summary && typeof m.summary !== "string") {
+      console.log("DEBUG 418:", typeof m.summary, m.summary)
+    }
+    if (m.agent_response && typeof m.agent_response !== "string") {
+      console.log("DEBUG 418:", typeof m.agent_response, m.agent_response)
+    }
+  }
+  if (modalContext && typeof modalContext.content !== "string") {
+    console.log("DEBUG 418:", typeof modalContext.content, modalContext.content)
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-4 text-xs text-gray-500 mb-2 items-center">
@@ -264,8 +276,6 @@ export default function MemoryPanel() {
             {typeof m.summary === "string" && !!m.summary.trim() && (
               <div className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
-                  {typeof m.summary !== "string" &&
-                    console.log("DEBUG 418:", typeof m.summary, m.summary)}
                   <SafeMarkdown>{m.summary}</SafeMarkdown>
                 </div>
               </div>
@@ -276,8 +286,6 @@ export default function MemoryPanel() {
               <div className="bg-muted p-2 rounded text-xs whitespace-pre-wrap mt-2">
                 <strong>Agent Response:</strong>
                 <div className="prose prose-neutral dark:prose-invert max-w-none">
-                  {typeof m.agent_response !== "string" &&
-                    console.log("DEBUG 418:", typeof m.agent_response, m.agent_response)}
                   <SafeMarkdown>{m.agent_response}</SafeMarkdown>
                 </div>
               </div>
@@ -344,12 +352,6 @@ export default function MemoryPanel() {
             <div className="text-sm mb-2 font-bold">Context File: <code>{modalContext.path}</code></div>
             <div className="bg-gray-100 p-4 rounded max-h-[400px] overflow-auto text-xs">
               <div className="prose prose-neutral dark:prose-invert max-w-none">
-                {typeof modalContext.content !== "string" &&
-                  console.log(
-                    "DEBUG 418:",
-                    typeof modalContext.content,
-                    modalContext.content
-                  )}
                 <SafeMarkdown>{modalContext.content}</SafeMarkdown>
               </div>
             </div>
