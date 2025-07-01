@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { API_ROOT, API_KEY } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
+import { toMDString } from "@/lib/toMDString";
 
 export type KBResult = {
   path: string;
@@ -77,7 +78,11 @@ export default function SearchPanel() {
       }
 
       const data: KBResult[] = await res.json();
-      setResults(data);
+      const mapped = data.map((r) => ({
+        ...r,
+        snippet: toMDString(r.snippet),
+      }));
+      setResults(mapped);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
         return; // request was cancelled
