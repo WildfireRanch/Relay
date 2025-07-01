@@ -22,6 +22,7 @@ import { Textarea } from '../../components/ui/textarea'
 
 import SafeMarkdown from "@/components/SafeMarkdown";
 import React from "react";
+import Image from "next/image";
 import { toMDString } from "@/lib/toMDString";
 
 // use shared markdown helper
@@ -62,10 +63,11 @@ const MarkdownBlock: React.FC<{ title?: string, content: string, imageUrl?: stri
     <div className="prose prose-neutral dark:prose-invert max-w-none border rounded-xl p-4 bg-background shadow mb-4">
       {title && <h2>{title}</h2>}
       {imageUrl && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <Image
           src={imageUrl}
           alt={title || "Markdown image"}
+          width={320}
+          height={320}
           className="rounded-lg my-4 max-w-full"
           style={{ maxHeight: "320px", objectFit: "contain" }}
         />

@@ -54,8 +54,8 @@ export default function AuditPanel() {
       const data = await res.json();
       const mapped = (data.log || []).map((l: LogEntry) => ({
         ...l,
-        comment: toMDString((l as any).comment),
-        result: toMDString((l as any).result)
+        comment: toMDString(l.comment),
+        result: toMDString(l.result)
       }));
       setLogs(mapped);
     } catch (err) {
