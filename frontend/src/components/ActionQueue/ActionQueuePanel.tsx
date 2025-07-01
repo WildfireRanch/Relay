@@ -37,7 +37,7 @@ type Action = {
 };
 
 // Defensive stringifier for all agent outputs
-function toMDString(val: any): string {
+function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try {

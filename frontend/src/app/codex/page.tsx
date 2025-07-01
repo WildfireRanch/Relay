@@ -10,7 +10,7 @@ import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
 
 // Helper: Always output a string for markdown rendering
-function toMDString(val: any): string {
+function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try {

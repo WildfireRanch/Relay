@@ -16,7 +16,7 @@ const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
 
 // Helper: Always provide a string for markdown rendering
-function toMDString(val: any): string {
+function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try {

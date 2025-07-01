@@ -114,7 +114,7 @@ export function useAskEcho() {
       // Compose assistant's reply (try multiple possible keys)
       const result = data?.result || data;
         // Helper: always coerce to string for SafeMarkdown
-      function toMDString(val: any) {
+      function toMDString(val: unknown) {
         if (val == null) return "";
         if (typeof val === "string") return val;
         try {

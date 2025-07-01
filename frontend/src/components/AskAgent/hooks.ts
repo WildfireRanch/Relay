@@ -17,7 +17,7 @@ export interface Message {
 }
 
 // Helper: Always return a string (markdown/code-safe) for display
-function toMDString(val: any): string {
+function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try {

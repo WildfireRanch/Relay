@@ -6,11 +6,11 @@ import SafeMarkdown from "@/components/SafeMarkdown"; // Use the shared safe ren
 
 type Props = {
   role: "user" | "assistant";
-  content: any; // Accept anything, always coerce to string for safety
+  content: unknown; // Accept anything, always coerce to string for safety
 };
 
 // Defensive: always return a string for SafeMarkdown
-function toMDString(val: any): string {
+function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try {

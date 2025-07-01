@@ -24,7 +24,7 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 import { useRef } from "react";
 
 // Helper for markdown rendering
-function toMDString(val: any): string {
+function toMDString(val: unknown): string {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try { return "```json\n" + JSON.stringify(val, null, 2) + "\n```"; }

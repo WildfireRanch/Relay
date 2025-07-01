@@ -9,7 +9,7 @@ import InputBar from "./InputBar";
 import { useAskEcho } from "./useAskEcho";
 
 // Helper: ensure safe string for markdown content
-function toMDString(val: any) {
+function toMDString(val: unknown) {
   if (val == null) return "";
   if (typeof val === "string") return val;
   try {
