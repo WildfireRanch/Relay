@@ -140,7 +140,9 @@ export default function LogsPanel() {
                 Otherwise, pretty-print as JSON. */}
             {typeof entry.result === "string" ? (
               <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
-                <SafeMarkdown>{entry.result}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{entry.result}</SafeMarkdown>
+                </div>
               </div>
             ) : entry.result ? (
               <pre className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">

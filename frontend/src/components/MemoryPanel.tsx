@@ -254,7 +254,9 @@ export default function MemoryPanel() {
             {/* Markdown/code for memory summary */}
             {typeof m.summary === "string" && !!m.summary.trim() && (
               <div className="bg-muted p-2 rounded text-xs whitespace-pre-wrap">
-                <SafeMarkdown>{m.summary}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{m.summary}</SafeMarkdown>
+                </div>
               </div>
             )}
 
@@ -262,7 +264,9 @@ export default function MemoryPanel() {
             {typeof m.agent_response === "string" && !!m.agent_response.trim() && (
               <div className="bg-muted p-2 rounded text-xs whitespace-pre-wrap mt-2">
                 <strong>Agent Response:</strong>
-                <SafeMarkdown>{m.agent_response}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{m.agent_response}</SafeMarkdown>
+                </div>
               </div>
             )}
 
@@ -326,7 +330,9 @@ export default function MemoryPanel() {
           <div className="bg-white rounded shadow-lg max-w-2xl w-full p-6 relative">
             <div className="text-sm mb-2 font-bold">Context File: <code>{modalContext.path}</code></div>
             <div className="bg-gray-100 p-4 rounded max-h-[400px] overflow-auto text-xs">
-              <SafeMarkdown>{modalContext.content}</SafeMarkdown>
+              <div className="prose prose-neutral dark:prose-invert max-w-none">
+                <SafeMarkdown>{modalContext.content}</SafeMarkdown>
+              </div>
             </div>
             <Button variant="secondary" onClick={() => setModalContext(null)} className="absolute top-2 right-2">
               Close

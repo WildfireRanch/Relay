@@ -208,7 +208,11 @@ export default function AuditPanel() {
                 <td className="px-2 py-1 font-mono">{entry.path || ""}</td>
                 <td className="px-2 py-1 font-mono">{entry.id.slice(0, 8)}</td>
                 <td className="px-2 py-1">
-                  {entry.comment ? <SafeMarkdown>{entry.comment}</SafeMarkdown> : ""}
+                  {entry.comment ? (
+                    <div className="prose prose-neutral dark:prose-invert max-w-none">
+                      <SafeMarkdown>{entry.comment}</SafeMarkdown>
+                    </div>
+                  ) : ""}
                 </td>
               </tr>
             ))}
@@ -237,28 +241,39 @@ export default function AuditPanel() {
               <strong>Type:</strong> {selected.type}<br />
               <strong>Path:</strong> {selected.path}<br />
               <strong>Comment:</strong>{" "}
-              {selected.comment ? <SafeMarkdown>{selected.comment}</SafeMarkdown> : ""}<br />
+              {selected.comment ? (
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{selected.comment}</SafeMarkdown>
+                </div>
+              ) : ""}
+              <br />
               <strong>Timestamp:</strong> {selected.timestamp}
             </div>
             {relatedAction?.action?.context && (
               <details>
                 <summary className="cursor-pointer text-blue-700 mb-2">View Agent Context</summary>
                 <div className="bg-gray-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
-                  <SafeMarkdown>{relatedAction.action.context}</SafeMarkdown>
+                  <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    <SafeMarkdown>{relatedAction.action.context}</SafeMarkdown>
+                  </div>
                 </div>
               </details>
             )}
             {relatedAction?.action?.rationale && (
               <div className="text-xs italic mb-2">
                 <strong>Agent rationale:</strong>{" "}
-                <SafeMarkdown>{relatedAction.action.rationale}</SafeMarkdown>
+                <div className="prose prose-neutral dark:prose-invert max-w-none">
+                  <SafeMarkdown>{relatedAction.action.rationale}</SafeMarkdown>
+                </div>
               </div>
             )}
             {relatedAction?.action?.diff && (
               <details>
                 <summary className="cursor-pointer text-blue-700 mb-2">View Diff</summary>
                 <div className="bg-yellow-50 p-2 rounded text-xs max-h-40 overflow-auto whitespace-pre-wrap">
-                  <SafeMarkdown>{relatedAction.action.diff}</SafeMarkdown>
+                  <div className="prose prose-neutral dark:prose-invert max-w-none">
+                    <SafeMarkdown>{relatedAction.action.diff}</SafeMarkdown>
+                  </div>
                 </div>
               </details>
             )}
@@ -272,7 +287,9 @@ export default function AuditPanel() {
                       {h.user && <span className="ml-2 text-blue-700">{h.user}</span>}
                       {h.comment && (
                         <span className="ml-2 italic">
-                          <SafeMarkdown>{h.comment}</SafeMarkdown>
+                          <div className="prose prose-neutral dark:prose-invert max-w-none">
+                            <SafeMarkdown>{h.comment}</SafeMarkdown>
+                          </div>
                         </span>
                       )}
                     </li>

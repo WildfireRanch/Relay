@@ -70,7 +70,9 @@ const MarkdownBlock: React.FC<{ title?: string, content: string, imageUrl?: stri
           style={{ maxHeight: "320px", objectFit: "contain" }}
         />
       )}
-      <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
+      <div className="prose prose-neutral dark:prose-invert max-w-none">
+        <SafeMarkdown>{toMDString(content)}</SafeMarkdown>
+      </div>
     </div>
   );
 };

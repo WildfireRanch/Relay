@@ -45,7 +45,9 @@ export default function AskAgent() {
       </Button>
       {response && (
         <div className="bg-muted p-4 rounded text-sm whitespace-pre-wrap border">
-          <SafeMarkdown>{response}</SafeMarkdown>
+          <div className="prose prose-neutral dark:prose-invert max-w-none">
+            <SafeMarkdown>{response}</SafeMarkdown>
+          </div>
         </div>
       )}
     </div>
