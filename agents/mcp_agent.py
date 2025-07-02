@@ -156,7 +156,7 @@ async def run_mcp(
             handler = ROUTING_TABLE[role]
             log_event("mcp_dispatch", {"role": role})
             try:
-                routed_result = await handler(message=query, context=context, user_id=user_id)
+                await handler(query=query, context=context, user_id=user_id)
             except Exception as agent_exc:
                 log_event("mcp_agent_handler_error", {
                     "role": role,
