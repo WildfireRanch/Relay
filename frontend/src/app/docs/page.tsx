@@ -1,7 +1,7 @@
 // File: src/app/layout.tsx
 // Purpose: Global layout using the styled pixel-art sidebar from the new frontend
 
-import './globals.css'
+import '@/globals.css'
 import { ReactNode } from 'react'
 import Sidebar from '@/components/Sidebar/Sidebar'
 
