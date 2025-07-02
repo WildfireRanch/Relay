@@ -26,12 +26,12 @@ class CodexAgent:
     """
 
     async def handle(
-        self, message: str, context: str, user_id: Optional[str] = None
+        self, query: str, context: str, user_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Handles a code-editing request. Generates a patch using GPT-4o, validates, then critiques it.
         Args:
-            message: User's natural language request
+            query: User's natural language request
             context: Relevant code context (usually file contents)
             user_id: (optional) User ID for logging
         Returns:
@@ -39,10 +39,10 @@ class CodexAgent:
                 - response: summary of patch
                 - action: patch dict with critic scores
         """
-        if not message or not context:
-            raise ValueError("Both 'message' and 'context' must be provided.")
+        if not query or not context:
+            raise ValueError("Both 'query' and 'context' must be provided.")
 
-        prompt = self._build_prompt(message, context)
+        prompt = self._build_prompt(query, context)
 
         try:
             completion = await client.chat.completions.create(
@@ -96,22 +96,22 @@ class CodexAgent:
         }
 
     async def stream(
-        self, message: str, context: str, user_id: Optional[str] = None
+        self, query: str, context: str, user_id: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Streams the patch generation output from the LLM (line by line).
         Args:
-            message: User's code-edit request
+            query: User's code-edit request
             context: Relevant code context
             user_id: (optional) User ID
         Yields:
             str: The next output chunk from the model or error.
         """
-        if not message or not context:
-            yield "[Error] Missing message or context."
+        if not query or not context:
+            yield "[Error] Missing query or context."
             return
 
-        prompt = self._build_prompt(message, context)
+        prompt = self._build_prompt(query, context)
 
         try:
             openai_stream = await client.chat.completions.create(
@@ -130,13 +130,13 @@ class CodexAgent:
         except Exception as e:
             yield f"[Error] Codex stream failed: {str(e)}"
 
-    def _build_prompt(self, message: str, context: str) -> str:
+    def _build_prompt(self, query: str, context: str) -> str:
         """
         Builds a system prompt for the LLM including task and code context.
         """
         return (
             "You will receive a code editing request from a user, along with the relevant code context.\n\n"
-            f"Task: {message}\n\n"
+            f"Task: {query}\n\n"
             "Code Context:\n"
             "```python\n"
             f"{context}\n"
