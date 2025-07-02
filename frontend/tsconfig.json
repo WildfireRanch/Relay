@@ -29,7 +29,6 @@
     "paths": {
       "@/*": ["src/*"],                       // ✅ @/lib/api → src/lib/api
       "@components/*": ["src/components/*"],  // Optional: import from @components/...
-      "@puck": ["src/app/editor/puck.config.tsx"] // Shortcut for Puck config
     },
 
     // ========= Next.js Plugins =========
