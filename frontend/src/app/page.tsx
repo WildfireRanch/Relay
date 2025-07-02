@@ -1,12 +1,12 @@
 // File: src/app/page.tsx
-// Purpose: Homepage + dynamic layout rendering from saved file (layout.json)
+// Purpose: Homepage — Puck rendering temporarily disabled
 
 'use client'
 
 import { useEffect, useState } from 'react'
 import Image from 'next/image'
-import { Render } from '@measured/puck'
-import '@measured/puck/puck.css'
+// import { Render } from '@measured/puck' // ⛔️ disabled for now
+// import '@measured/puck/puck.css'
 import config from '@/app/editor/puck.config'
 import { API_ROOT } from '@/lib/api'
 
@@ -14,6 +14,7 @@ export default function Home() {
   const [layout, setLayout] = useState({})
 
   useEffect(() => {
+    // still fetch the layout in case we re-enable Puck
     fetch('/layout.json')
       .then(res => res.json())
       .then(data => setLayout(data))
@@ -48,8 +49,8 @@ export default function Home() {
       <h1 className="text-3xl font-bold">WildfireRanch Command Center</h1>
       <p className="text-muted-foreground">Relay is ready for action.</p>
 
-      {/* Dynamic layout from Puck */}
-      <Render config={config} data={layout} />
+      {/* Dynamic layout from Puck — disabled */}
+      {/* <Render config={config} data={layout} /> */}
 
       {/* API root in footer for debugging */}
       <div className="text-xs text-gray-400 text-center mt-6">
