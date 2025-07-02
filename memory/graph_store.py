@@ -1,8 +1,14 @@
-# memory/graph_store.py
+# File: memory/graph_store.py
+# Purpose: Unified interface and Neo4j-backed implementation for storing and querying graph-based memory in Relay.
+# Notes:
+# - Supports adding nodes/edges, fetching connected nodes, running Cypher queries
+# - Now includes `get_all()` for full graph introspection
 
 from neo4j import GraphDatabase
 from typing import Any, Dict, List, Optional
 
+
+# Abstract base class for graph memory backends
 class GraphMemoryStore:
     def add_node(self, label: str, id: str, properties: Dict[str, Any]) -> None:
         raise NotImplementedError
@@ -16,7 +22,11 @@ class GraphMemoryStore:
     def query(self, cypher: str, parameters: Dict[str, Any] = {}) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
+    def get_all(self) -> Dict[str, List[Dict[str, Any]]]:
+        raise NotImplementedError
 
+
+# Concrete Neo4j implementation
 class Neo4jGraphMemoryStore(GraphMemoryStore):
     def __init__(self, uri: str, user: str, password: str):
         self.driver = GraphDatabase.driver(uri, auth=(user, password))
@@ -64,3 +74,24 @@ class Neo4jGraphMemoryStore(GraphMemoryStore):
         with self.driver.session() as session:
             result = session.run(cypher, **parameters)
             return [record.data() for record in result]
+
+    def get_all(self) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Returns:
+            - All nodes in the graph with label, ID, and properties
+            - All edges with from → to IDs, type, and edge properties
+        """
+        with self.driver.session() as session:
+            node_results = session.run("""
+                MATCH (n)
+                RETURN labels(n) AS labels, n.id AS id, properties(n) AS props
+            """)
+            edge_results = session.run("""
+                MATCH (a)-[r]->(b)
+                RETURN a.id AS from_id, type(r) AS type, b.id AS to_id, properties(r) AS props
+            """)
+
+            nodes = [dict(record) for record in node_results]
+            edges = [dict(record) for record in edge_results]
+
+            return {"nodes": nodes, "edges": edges}
