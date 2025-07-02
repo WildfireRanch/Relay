@@ -1,11 +1,11 @@
 # File: services/context_injector.py
-# Purpose: Inject rich, multi-domain context into GPT agent prompts (code + external projects + Google-synced global context)
+# Purpose: Inject rich, multi-domain context into GPT agent prompts (code + external projects + Google-synced global context + graph memory)
 
 import os
 from pathlib import Path
-# Lightweight helpers for reading code files and KB search
 from services.indexer import collect_code_context
 from services.kb import query_index
+from services.graph import summarize_recent_context  # ⬅️ NEW
 
 # -- Extract function/class names from files --
 def extract_functions(files, base_dir="./"):
@@ -45,8 +45,8 @@ def load_global_context(path="./docs/generated/global_context.md"):
             return f.read()
     return "Global project context not available."
 
-# -- Main context builder --
-def build_context(query: str, files: list[str], topics: list[str] = [], debug: bool = False):
+# -- ✅ MAIN CONTEXT BUILDER --
+async def build_context(query: str, files: list[str], topics: list[str] = [], debug: bool = False):
     """
     Generates a multi-layered context block to inject into GPT queries.
     Returns:
@@ -84,11 +84,16 @@ def build_context(query: str, files: list[str], topics: list[str] = [], debug: b
     semantic_sources = []
     for line in semantic_docs.splitlines():
         if line.startswith("# "):
-            # Try to extract source titles from chunk headers
             semantic_sources.append(line.lstrip("# ").strip())
-
     for title in set(semantic_sources):
         files_used.append({"type": "semantic", "title": title})
+
+    # --- ✅ NEW: Graph memory context ---
+    graph_context = await summarize_recent_context(query)
+    if graph_context.strip():
+        files_used.append({"type": "graph", "source": "neo4j"})
+    else:
+        graph_context = "No graph memory matches found."
 
     # --- Assemble final context ---
     full_context = f"""
@@ -109,6 +114,9 @@ def build_context(query: str, files: list[str], topics: list[str] = [], debug: b
 
 ## 🔍 Relevant Knowledge Base Excerpts:
 {semantic_docs}
+
+## 🧠 Graph Memory Summary:
+{graph_context}
 """.strip()
 
     if debug:
