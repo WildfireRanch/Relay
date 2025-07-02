@@ -22,7 +22,8 @@ neo4j_driver = _driver
 # === Async context manager to open sessions ===
 @asynccontextmanager
 async def get_session():
-    async with _driver.session(database="neo4j") as session:
+    # ✅ Removed explicit `database="neo4j"` — required for Neo4j Aura to work
+    async with _driver.session() as session:
         yield session
 
 # === Execute a read-only query ===
