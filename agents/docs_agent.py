@@ -43,8 +43,8 @@ class DocsAgent:
 
             raw = completion.choices[0].message.content.strip()
             log_event("docs_agent_raw", {"query": query, "output": raw[:500]})
-            summary = eval(raw)  # assumes valid JSON, should be replaced with json.loads if format varies
-
+            summary = json.loads(raw)
+            
             critics = await run_critics(summary, context)
             summary["critics"] = critics
 
@@ -65,6 +65,8 @@ class DocsAgent:
             log_event("docs_agent_exception", {"trace": traceback.format_exc()})
             return {"error": "Unexpected error in docs agent."}
 
-
+import json
 # Exported instance
 docs_agent = DocsAgent()
+analyze = docs_agent.analyze
+
