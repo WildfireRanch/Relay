@@ -1,15 +1,30 @@
-# services/indexer.py
+# File: services/indexer.py
 # Purpose: Recursively index code and docs with tier metadata for prioritized semantic search.
 # Stack: LlamaIndex, OpenAI, Python 3.12+
-# Usage: Call index_directories() to scan, split, and embed all target files.
+# Usage:
+#   - For dev, run: WIPE_INDEX=true python services/indexer.py
+#   - For prod, run WITHOUT WIPE_INDEX, and only if you intend to update the index.
 
 import os
 import glob
+import sys
 from pathlib import Path
 from llama_index.core import SimpleDirectoryReader, VectorStoreIndex, Document
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.core.node_parser import CodeSplitter, SentenceSplitter
 from services.config import INDEX_DIR
+
+import shutil
+
+# --- Guard: WIPE_INDEX only deletes if explicitly set ---
+WIPE_INDEX = os.getenv("WIPE_INDEX", "false").lower() == "true"
+if WIPE_INDEX:
+    if os.path.exists(INDEX_DIR):
+        print("WARNING: WIPE_INDEX is set—deleting and recreating index directory.")
+        shutil.rmtree(INDEX_DIR)
+    os.makedirs(INDEX_DIR, exist_ok=True)
+else:
+    print("WIPE_INDEX not set—existing index will be updated or extended if run.")
 
 # ---- 1. Define priority tiers and associated paths ----
 PRIORITY_INDEX_PATHS = [
@@ -95,6 +110,7 @@ def collect_code_context(files: list[str], base_dir: str = "./") -> str:
 def index_directories():
     """Scans all PRIORITY_INDEX_PATHS, splits, tags with tier, and embeds for semantic search."""
     documents = []
+    print(f"[Indexer] Starting directory scan for priority tiers...")
     for tier, paths in PRIORITY_INDEX_PATHS:
         for path in paths:
             if path.endswith("/"):
@@ -118,6 +134,7 @@ def index_directories():
                             metadata={"tier": tier, "file_path": f}
                         )
                         documents.append(doc)
+    print(f"[Indexer] Total documents collected: {len(documents)}")
 
     # --- 5. Chunking: Get nodes (split text/code), flatten for indexing ---
     all_chunked_nodes = []
@@ -132,9 +149,13 @@ def index_directories():
         else:
             nodes = text_splitter.get_nodes_from_documents([doc])
             all_chunked_nodes.extend(nodes)
+    print(f"[Indexer] Total nodes to index: {len(all_chunked_nodes)}")
+
+    if not all_chunked_nodes:
+        print("[ERROR] No nodes to index! Aborting persist step.")
+        sys.exit(1)
 
     # --- 6. Index & Persist ---
-    print(f"Total nodes to index: {len(all_chunked_nodes)}")
     index = VectorStoreIndex(
         nodes=all_chunked_nodes,
         embed_model=embed_model,
@@ -142,7 +163,7 @@ def index_directories():
     )
     index.storage_context.persist(persist_dir="./data/index")
     index.storage_context.persist(persist_dir=str(INDEX_DIR))
-    print("Indexing complete! Prioritized tiers saved.")
+    print("[Indexer] Indexing complete! Prioritized tiers saved to ./data/index.")
 
 if __name__ == "__main__":
     index_directories()
