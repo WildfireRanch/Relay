@@ -2,7 +2,7 @@
 # Purpose: Central orchestrator for Relay — planner-based routing, MetaPlanner override, critic validation, and Trainer logging to Neo4j.
 
 import traceback
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 from agents.planner_agent import planner_agent
 from agents.control_agent import control_agent
@@ -34,16 +34,34 @@ ROUTING_TABLE = {
     "janitor":   janitor_agent.run,
 }
 
+def extract_plan_for_critics(route: str, routed_result: dict) -> dict:
+    """
+    Extract the correct plan/patch/analysis to be critiqued for each agent route.
+    Fallback: returns the routed_result and logs a warning if shape is unknown.
+    """
+    if route == "codex" and "action" in routed_result:
+        return routed_result["action"]
+    elif route == "docs" and "analysis" in routed_result:
+        return routed_result["analysis"]
+    elif route == "planner" and "plan" in routed_result:
+        return routed_result["plan"]
+    # Add more route keys as needed for other agent types
+    else:
+        log_event("mcp_critic_warning", {
+            "route": route,
+            "routed_result_keys": list(routed_result.keys())
+        })
+        return routed_result
 
 # === MCP Main Loop ===
 async def run_mcp(
     query: str,
-    files: Optional[list[str]] = None,
-    topics: Optional[list[str]] = None,
+    files: Optional[List[str]] = None,
+    topics: Optional[List[str]] = None,
     role: str = "planner",
     user_id: str = "anonymous",
     debug: bool = False,
-):
+) -> Dict[str, Any]:
     """
     Main MCP entry point.
 
@@ -74,7 +92,11 @@ async def run_mcp(
             route = suggested if suggested and suggested != plan.get("route") else plan.get("route")
             plan["meta_override"] = route if route != plan.get("route") else None
 
-            log_event("mcp_dispatch", {"role": role, "routed_to": route})
+            log_event("mcp_dispatch", {
+                "role": role,
+                "planner_route": plan.get("route"),
+                "meta_override": plan.get("meta_override")
+            })
 
             handler = ROUTING_TABLE.get(route)
             if handler:
@@ -82,7 +104,9 @@ async def run_mcp(
             else:
                 routed_result = {"response": f"No agent found for route: {route}"}
 
-            critics = await run_critics(routed_result, query)
+            # --- Critic Validation: always pass the extracted plan/patch, and user query (not context!) ---
+            plan_to_critique = extract_plan_for_critics(route, routed_result)
+            critics = run_critics(plan_to_critique, query)
 
             await trainer_agent.ingest_results(
                 query=query,
@@ -97,6 +121,8 @@ async def run_mcp(
                 "plan": plan,
                 "routed_result": routed_result,
                 "critics": critics,
+                "context": context,
+                "files_used": files_used,
             }
 
         # === EXPLICIT ROLE MODE ===
@@ -104,7 +130,13 @@ async def run_mcp(
             handler = ROUTING_TABLE[role]
             log_event("mcp_dispatch", {"role": role})
             routed_result = await handler(message=query, context=context, user_id=user_id)
-            result = {"result": routed_result}
+            result = {
+                "plan": None,
+                "routed_result": routed_result,
+                "critics": None,
+                "context": context,
+                "files_used": files_used,
+            }
 
         # === UNKNOWN ROLE ===
         else:
