@@ -1,5 +1,7 @@
 # File: agents/mcp_agent.py
-# Purpose: Central orchestrator for Relay — planner-based routing, MetaPlanner override, critic validation, and Trainer logging to Neo4j.
+# Purpose: Central orchestrator for Relay — planner-based routing, MetaPlanner override,
+#          critic validation, and Trainer logging to Neo4j.
+#          Echo is primary and fallback agent.
 
 import traceback
 from typing import Optional, List, Dict, Any
@@ -8,7 +10,7 @@ from agents.planner_agent import planner_agent
 from agents.control_agent import control_agent
 from agents.docs_agent import docs_agent
 from agents.codex_agent import codex_agent
-from agents.echo_agent import echo_agent
+from agents.echo_agent import run as echo_agent_run
 from agents.simulation_agent import run as simulate_runner
 from agents.trainer_agent import trainer_agent
 from agents.metaplanner_agent import suggest_route, run as meta_runner
@@ -25,7 +27,7 @@ ROUTING_TABLE = {
     "codex":     codex_agent.handle,
     "docs":      docs_agent.analyze,
     "control":   control_agent.run,
-    "echo":      echo_agent.run,
+    "echo":      echo_agent_run,
     "train":     trainer_agent.run,
     "meta":      meta_runner,
     "critic":    critic_runner,
@@ -67,6 +69,9 @@ async def run_mcp(
 
     Builds context → generates plan (or routes directly) → optionally overrides via MetaPlanner →
     runs routed agent → validates result via critics → logs to graph via TrainerAgent.
+
+    Echo is the primary and fallback agent: if no other handler is routed or errors,
+    Echo will always handle the request.
     """
     files = files or []
     topics = topics or []
@@ -78,7 +83,16 @@ async def run_mcp(
 
     except Exception as e:
         log_event("mcp_context_error", {"error": str(e), "trace": traceback.format_exc()})
-        return {"error": "Failed to build context."}
+        # Echo always as fallback, even if context build fails
+        fallback = await echo_agent_run(message=query, context="", user_id=user_id)
+        return {
+            "plan": None,
+            "routed_result": fallback,
+            "critics": None,
+            "context": "",
+            "files_used": [],
+            "error": "Failed to build context."
+        }
 
     log_event("mcp_context_loaded", {"user": user_id, "files": files_used})
 
@@ -99,10 +113,21 @@ async def run_mcp(
             })
 
             handler = ROUTING_TABLE.get(route)
-            if handler:
-                routed_result = await handler(message=query, context=context, user_id=user_id)
-            else:
-                routed_result = {"response": f"No agent found for route: {route}"}
+            routed_result = None
+            try:
+                if handler:
+                    routed_result = await handler(message=query, context=context, user_id=user_id)
+                else:
+                    log_event("mcp_fallback_echo", {"reason": f"No handler for route '{route}'"})
+                    routed_result = await echo_agent_run(message=query, context=context, user_id=user_id)
+            except Exception as agent_exc:
+                log_event("mcp_agent_handler_error", {
+                    "role": role,
+                    "route": route,
+                    "error": str(agent_exc),
+                    "trace": traceback.format_exc()
+                })
+                routed_result = await echo_agent_run(message=query, context=context, user_id=user_id)
 
             # --- Critic Validation: always pass the extracted plan/patch, and user query (not context!) ---
             plan_to_critique = extract_plan_for_critics(route, routed_result)
@@ -129,7 +154,16 @@ async def run_mcp(
         elif role in ROUTING_TABLE:
             handler = ROUTING_TABLE[role]
             log_event("mcp_dispatch", {"role": role})
-            routed_result = await handler(message=query, context=context, user_id=user_id)
+            try:
+                routed_result = await handler(message=query, context=context, user_id=user_id)
+            except Exception as agent_exc:
+                log_event("mcp_agent_handler_error", {
+                    "role": role,
+                    "route": role,
+                    "error": str(agent_exc),
+                    "trace": traceback.format_exc()
+                })
+                routed_result = await echo_agent_run(message=query, context=context, user_id=user_id)
             result = {
                 "plan": None,
                 "routed_result": routed_result,
@@ -140,7 +174,17 @@ async def run_mcp(
 
         # === UNKNOWN ROLE ===
         else:
-            result = {"error": f"Unknown role: {role}"}
+            # Unknown role: always fallback to Echo
+            log_event("mcp_fallback_echo", {"reason": f"Unknown role '{role}'"})
+            routed_result = await echo_agent_run(message=query, context=context, user_id=user_id)
+            result = {
+                "plan": None,
+                "routed_result": routed_result,
+                "critics": None,
+                "context": context,
+                "files_used": files_used,
+                "error": f"Unknown role: {role}"
+            }
 
         log_event("mcp_result", {"user": user_id, "role": role, "result": result})
 
@@ -150,4 +194,13 @@ async def run_mcp(
 
     except Exception as e:
         log_event("mcp_agent_error", {"role": role, "error": str(e), "trace": traceback.format_exc()})
-        return {"error": f"Failed to execute {role} agent."}
+        # Echo as final fallback if MCP main loop itself errors
+        routed_result = await echo_agent_run(message=query, context=context, user_id=user_id)
+        return {
+            "plan": None,
+            "routed_result": routed_result,
+            "critics": None,
+            "context": context,
+            "files_used": files_used,
+            "error": f"Failed to execute {role} agent."
+        }
