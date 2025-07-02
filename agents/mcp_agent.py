@@ -16,7 +16,8 @@ from agents.trainer_agent import trainer_agent
 from agents.metaplanner_agent import suggest_route, run as meta_runner
 from agents.critic_agent.run import run_critics, run as critic_runner
 from agents.memory_agent import run as memory_runner
-from agents.janitor_agent import janitor_agent
+from agents.janitor_agent import run as janitor_agent
+
 
 from services.context_injector import build_context
 from services.queue import queue_action
@@ -33,7 +34,7 @@ ROUTING_TABLE = {
     "critic":    critic_runner,
     "memory":    memory_runner,
     "simulate":  simulate_runner,
-    "janitor":   janitor_agent.run,
+    "janitor":   janitor_agent
 }
 
 def extract_plan_for_critics(route: str, routed_result: dict) -> dict:
