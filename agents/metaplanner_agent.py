@@ -46,3 +46,31 @@ async def suggest_route(query: str, plan: dict, user_id: str = "anonymous") -> s
 
     # Default to planner route
     return original_route
+
+# === Agent-standard route handler ===
+async def run(message: str, context: str, user_id: str = "anonymous") -> dict:
+    """
+    Standard Relay agent handler for 'meta' route.
+    This allows you to run the MetaPlanner as a standalone agent.
+
+    Returns:
+        {
+            "suggested_route": "docs",
+            "used_fallback": true,
+            ...
+        }
+    """
+    try:
+        plan = {
+            "route": "planner",
+            "objective": message,
+        }
+        suggested = await suggest_route(message, plan, user_id=user_id)
+        used_fallback = suggested == plan["route"]
+        return {
+            "suggested_route": suggested,
+            "used_fallback": used_fallback
+        }
+    except Exception as e:
+        log_event("metaplanner_run_fail", {"error": str(e)})
+        return {"error": str(e)}

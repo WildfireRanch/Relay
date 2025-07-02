@@ -1,26 +1,66 @@
 # File: agents/trainer_agent.py
-# Purpose: Observational learner that improves system logic over time based on plan outcomes, critic responses, and user feedback
-# Role: Reflective observer (not judge); writes outcomes to graph for MetaPlanner use
+# Purpose: Observational learner that improves system logic over time based on plan outcomes, critic responses, and user feedback.
+# Role: Reflective observer (not judge); writes outcomes to graph for MetaPlanner use and summarizes training patterns via `run()`.
 
 from typing import List, Dict, Optional, Any
 from datetime import datetime
 from core.logging import log_event
-from services.neo4j_driver import execute_write
+from services.neo4j_driver import execute_write, execute_read
 
 class TrainerAgent:
     def __init__(self):
         self.name = "TrainerAgent"
-        self.version = "0.2"
+        self.version = "0.3"
         self.logs = []
 
     async def run(self, query: str, context: str = "", user_id: str = "system") -> dict:
         """
-        Entry point for manual introspection or dashboard calls.
+        Returns aggregate insights about plan routing and critic performance.
+        Can be called via `/train` or `role: train` to inspect recent system behavior.
         """
-        return {
-            "message": "TrainerAgent is passive. Use ingest_results() to write learning events.",
-            "status": "ok"
-        }
+        try:
+            cypher = """
+            MATCH (p:Plan)-[:RAN_ON]->(a:Agent)
+            OPTIONAL MATCH (p)-[:VALIDATED_BY]->(c:Critic)
+            RETURN a.name AS route,
+                   COUNT(DISTINCT p) AS plan_count,
+                   COUNT(c) AS total_critic_checks,
+                   SUM(CASE WHEN c.passes THEN 1 ELSE 0 END) AS passed_critics
+            ORDER BY plan_count DESC
+            LIMIT 10
+            """
+
+            results = await execute_read(cypher)
+            summary = {}
+            total_plans = 0
+            total_critics = 0
+            total_passed = 0
+
+            for r in results:
+                route = r["route"]
+                plans = r["plan_count"]
+                critic_checks = r["total_critic_checks"]
+                passed = r["passed_critics"]
+                summary[route] = {
+                    "plans": plans,
+                    "critic_pass_rate": round(passed / critic_checks, 3) if critic_checks else None
+                }
+                total_plans += plans
+                total_critics += critic_checks
+                total_passed += passed
+
+            return {
+                "trainer_summary": summary,
+                "global_stats": {
+                    "total_plans": total_plans,
+                    "total_critic_checks": total_critics,
+                    "overall_pass_rate": round(total_passed / total_critics, 3) if total_critics else None
+                }
+            }
+
+        except Exception as e:
+            log_event("trainer_summary_fail", {"error": str(e)})
+            return {"error": f"Failed to generate summary: {str(e)}"}
 
     async def ingest_results(
         self,
@@ -34,7 +74,7 @@ class TrainerAgent:
         """
         Main logging + graph write interface. Records full structure:
         (:Query)-[:PLANNED_WITH]->(:Plan)-[:RAN_ON]->(:Agent)-[:GOT]->(:Result)
-                                     \_[:VALIDATED_BY]->(:Critic)
+                                         \_[:VALIDATED_BY]->(:Critic)
         """
         try:
             plan_id = plan.get("plan_id", f"plan_{datetime.utcnow().timestamp()}")

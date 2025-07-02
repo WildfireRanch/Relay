@@ -77,3 +77,27 @@ def run_critics(plan: Dict, query: str = "", prior_plans: List[Dict] = None) -> 
     results = [impact_enricher.enrich(result) for result in results]
 
     return results
+import json
+from core.logging import log_event
+
+# === Relay-compatible runner ===
+async def run(message: str, context: str, user_id: str = "system") -> List[Dict]:
+    """
+    Handles relay requests to 'critic' role.
+    Expects context to be a JSON-encoded plan object.
+    """
+    try:
+        plan = json.loads(context)
+        results = run_critics(plan, query=message)
+
+        log_event("critic_agent_result", {
+            "user": user_id,
+            "passes": all(r.get("passes", False) for r in results),
+            "critics": results
+        })
+
+        return results
+
+    except Exception as e:
+        log_event("critic_agent_fail", {"error": str(e)})
+        return [{"name": "CriticAgent", "passes": False, "issues": [f"Failed to run: {str(e)}"]}]
