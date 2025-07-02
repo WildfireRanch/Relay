@@ -1,4 +1,6 @@
-// File: app/ask/page.tsx
+// File: src/app/ask/page.tsx
+// Purpose: Ask Echo — bulletproof LLM chat interface with markdown rendering, local history, and safe input handling
+
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
@@ -14,23 +16,26 @@ type Message = {
 
 const USER_ID = "bret-demo";
 const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
+const INPUT_KEY = `echo-chat-input-${USER_ID}`;
 
-// Helper to coerce any loaded array into Message[]
+// Type guard for stored messages
+function isMessage(val: unknown): val is Message {
+  return (
+    typeof val === "object" &&
+    val !== null &&
+    (val as Message).role &&
+    typeof (val as Message).content === "string" &&
+    ((val as Message).role === "user" || (val as Message).role === "assistant")
+  );
+}
+
+// Normalize unknown array into safe Message[]
 function normalizeMessages(arr: unknown[]): Message[] {
   return Array.isArray(arr)
     ? arr
-        .filter(
-  (msg: unknown): msg is { role?: unknown; content?: unknown; context?: unknown } =>
-    typeof msg === "object" &&
-    msg !== null &&
-    "content" in msg &&
-    typeof (msg as { content?: unknown }).content === "string"
-)
+        .filter(isMessage)
         .map((msg) => ({
-          role:
-            msg.role === "user" || msg.role === "assistant"
-              ? msg.role
-              : "assistant",
+          role: msg.role,
           content: String(msg.content),
           ...(typeof msg.context === "string" && { context: msg.context }),
         }))
@@ -39,7 +44,7 @@ function normalizeMessages(arr: unknown[]): Message[] {
 
 // Markdown stringifier (bulletproof)
 function toMDString(val: unknown): string {
-  if (val == null) return "";
+  if (val == null) return "_(no content)_";
   if (typeof val === "string") return val;
   if (Array.isArray(val)) return val.map(toMDString).join("\n\n");
   try {
@@ -64,25 +69,35 @@ export default function AskPage() {
     return [];
   });
 
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Load cached input on mount
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-    }
+    const cached = localStorage.getItem(INPUT_KEY);
+    if (cached) setInput(cached);
+  }, []);
+
+  // Persist messages + scroll to bottom
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const sendMessage = useCallback(async (e?: React.FormEvent) => {
+  // Persist input while typing
+  useEffect(() => {
+    localStorage.setItem(INPUT_KEY, input);
+  }, [input]);
+
+  const sendMessage = useCallback(async (e?: React.FormEvent): Promise<void> => {
     if (e) e.preventDefault();
     if (!input.trim() || loading) return;
 
     const userMessage = input;
-    setMessages(msgs => [
+    setMessages((msgs) => [
       ...msgs,
-      { role: "user", content: toMDString(userMessage) }
+      { role: "user", content: toMDString(userMessage) },
     ]);
     setLoading(true);
     setInput("");
@@ -112,14 +127,18 @@ export default function AskPage() {
         data?.response ||
         "[no answer]";
 
-      setMessages(msgs => [
+      setMessages((msgs) => [
         ...msgs,
-        { role: "assistant", content: toMDString(content) }
+        { role: "assistant", content: toMDString(content) },
       ]);
-    } catch {
-      setMessages(msgs => [
+    } catch (err) {
+      console.error("⚠️ Fetch error:", err);
+      setMessages((msgs) => [
         ...msgs,
-        { role: "assistant", content: toMDString("[error] Unable to get response.") }
+        {
+          role: "assistant",
+          content: toMDString("[error] Unable to get response."),
+        },
       ]);
     }
 
@@ -134,7 +153,9 @@ export default function AskPage() {
       <div
         key={i}
         className={
-          msg.role === "user" ? "text-right text-blue-700" : "text-left text-green-700"
+          msg.role === "user"
+            ? "text-right text-blue-700"
+            : "text-left text-green-700"
         }
       >
         <div className="prose prose-neutral dark:prose-invert max-w-none">
@@ -151,9 +172,7 @@ export default function AskPage() {
         {renderedMessages}
 
         {loading && (
-          <div className="text-left text-green-700 animate-pulse">
-            <span className="block whitespace-pre-wrap">Echo is thinking…</span>
-          </div>
+          <div className="text-left text-green-600 italic">Thinking…</div>
         )}
         <div ref={bottomRef} />
       </div>
@@ -167,11 +186,11 @@ export default function AskPage() {
           className="flex-1 rounded border px-3 py-2"
           placeholder="Type your question…"
           value={input}
-          onChange={e => setInput(e.target.value)}
+          onChange={(e) => setInput(e.target.value)}
           disabled={loading}
           name="echo-message"
           id="echo-message"
-          onKeyDown={e => {
+          onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               sendMessage();
