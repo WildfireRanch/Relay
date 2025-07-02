@@ -27,7 +27,7 @@ async def test_ask_stream_rejects_bad_input():
 
 @pytest.mark.asyncio
 async def test_codex_stream_endpoint(monkeypatch):
-    async def dummy_stream(message: str, context: str, user_id=None):
+    async def dummy_stream(query: str, context: str, user_id=None):
         yield "patch1"
         yield "patch2"
 

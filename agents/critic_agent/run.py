@@ -81,14 +81,14 @@ import json
 from core.logging import log_event
 
 # === Relay-compatible runner ===
-async def run(message: str, context: str, user_id: str = "system") -> List[Dict]:
+async def run(query: str, context: str, user_id: str = "system") -> List[Dict]:
     """
     Handles relay requests to 'critic' role.
     Expects context to be a JSON-encoded plan object.
     """
     try:
         plan = json.loads(context)
-        results = run_critics(plan, query=message)
+        results = run_critics(plan, query=query)
 
         log_event("critic_agent_result", {
             "user": user_id,
