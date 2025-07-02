@@ -47,7 +47,7 @@ class MemoryAgent:
 memory_agent = MemoryAgent()
 
 # === Relay-compatible route handler ===
-async def run(message: str, context: str, user_id: str = "anonymous") -> Dict:
+async def run(query: str, context: str, user_id: str = "anonymous") -> Dict:
     """
     Returns a summary of the most recent memory logs for the user.
     """

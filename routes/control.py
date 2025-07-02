@@ -119,7 +119,7 @@ async def approve_action(data: dict = Body(...), user=Depends(auth)):
 
     if handler:
         result = await handler(
-            message=action_data.get("query", ""),
+            query=action_data.get("query", ""),
             context=action_data.get("context", {}),
             user_id=user
         )

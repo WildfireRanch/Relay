@@ -31,7 +31,7 @@ class SimulationAgent:
 simulation_agent = SimulationAgent()
 
 # === Relay-compatible route handler ===
-async def run(message: str, context: str, user_id: str = "system") -> Dict[str, Any]:
+async def run(query: str, context: str, user_id: str = "system") -> Dict[str, Any]:
     """
     Relay handler for 'simulate' route. Parses plan from context and runs a sandbox check.
     """
@@ -40,7 +40,7 @@ async def run(message: str, context: str, user_id: str = "system") -> Dict[str, 
         result = simulation_agent.simulate_plan(plan)
         log_event("simulation_agent_result", {
             "user": user_id,
-            "message": message,
+            "query": query,
             "result": result
         })
         return result

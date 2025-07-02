@@ -1,6 +1,6 @@
 # agents/janitor_agent.py
 
-async def run(message: str, context: str, user_id: str = "system") -> dict:
+async def run(query: str, context: str, user_id: str = "system") -> dict:
     """
     Summarizes memory logs, detects duplicates, removes noise, and compresses the log footprint.
     """
