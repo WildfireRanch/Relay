@@ -61,7 +61,6 @@ async def ask_get(
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # === POST /ask =================================================================
 @router.post("")
 async def ask_post(

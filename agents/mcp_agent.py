@@ -18,7 +18,6 @@ from agents.critic_agent.run import run_critics, run as critic_runner
 from agents.memory_agent import run as memory_runner
 from agents.janitor_agent import run as janitor_agent
 
-
 from services.context_injector import build_context
 from services.queue import queue_action
 from core.logging import log_event
@@ -68,23 +67,27 @@ async def run_mcp(
     """
     Main MCP entry point.
 
-    Builds context → generates plan (or routes directly) → optionally overrides via MetaPlanner →
-    runs routed agent → validates result via critics → logs to graph via TrainerAgent.
-
-    Echo is the primary and fallback agent: if no other handler is routed or errors,
-    Echo will always handle the request.
+    1. Builds context using the context injector.
+    2. If 'planner' role: generates plan, applies MetaPlanner override, routes accordingly.
+    3. If another explicit role: directly invokes the corresponding agent.
+    4. Always passes output through critics if relevant.
+    5. Logs all results for graph/training.
+    6. If any error: Echo agent is used as universal fallback.
     """
+
     files = files or []
     topics = topics or []
 
+    # === STEP 1: Build Context ===
     try:
         context_data = await build_context(query, files, topics, debug=debug)
+        # context_data might be a dict or a string (legacy fallback)
         context = context_data["context"] if isinstance(context_data, dict) else context_data
         files_used = context_data.get("files_used", []) if isinstance(context_data, dict) else []
-
+        log_event("mcp_context_loaded", {"user": user_id, "files": files_used})
     except Exception as e:
         log_event("mcp_context_error", {"error": str(e), "trace": traceback.format_exc()})
-        # Echo always as fallback, even if context build fails
+        # Fallback: Echo agent with empty context if context building fails
         fallback = await echo_agent_run(query=query, context="", user_id=user_id)
         return {
             "plan": None,
@@ -95,17 +98,24 @@ async def run_mcp(
             "error": "Failed to build context."
         }
 
-    log_event("mcp_context_loaded", {"user": user_id, "files": files_used})
-
+    # === STEP 2: AGENT ROUTING AND EXECUTION ===
     try:
-        # === PLANNER MODE ===
+        # === PLANNER MODE: The "default" route ===
         if role == "planner":
+            # 1. Generate plan using planner agent
             plan = await planner_agent.ask(query=query, context=context)
 
-            # 🔁 Override route using MetaPlanner if possible
-            suggested = await suggest_route(query=query, plan=plan, user_id=user_id)
-            route = suggested if suggested and suggested != plan.get("route") else plan.get("route")
-            plan["meta_override"] = route if route != plan.get("route") else None
+            # 2. MetaPlanner: Try to override routing if needed
+            try:
+                suggested = await suggest_route(query=query, plan=plan, user_id=user_id)
+                route = suggested if suggested and suggested != plan.get("route") else plan.get("route")
+                plan["meta_override"] = route if route != plan.get("route") else None
+            except Exception as meta_exc:
+                log_event("mcp_metaplanner_error", {
+                    "error": str(meta_exc),
+                    "trace": traceback.format_exc()
+                })
+                route = plan.get("route")  # Fall back to plan's route
 
             log_event("mcp_dispatch", {
                 "role": role,
@@ -113,6 +123,7 @@ async def run_mcp(
                 "meta_override": plan.get("meta_override")
             })
 
+            # 3. Route to agent by plan/MetaPlanner (fallback to echo if no handler)
             handler = ROUTING_TABLE.get(route)
             routed_result = None
             try:
@@ -130,18 +141,33 @@ async def run_mcp(
                 })
                 routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
 
-            # --- Critic Validation: always pass the extracted plan/patch, and user query (not context!) ---
-            plan_to_critique = extract_plan_for_critics(route, routed_result)
-            critics = run_critics(plan_to_critique, query)
+            # 4. Run critics on agent output/plan (awaited async)
+            try:
+                plan_to_critique = extract_plan_for_critics(route, routed_result)
+                critics = await run_critics(plan_to_critique, query)
+            except Exception as critic_exc:
+                log_event("mcp_critics_error", {
+                    "route": route,
+                    "error": str(critic_exc),
+                    "trace": traceback.format_exc()
+                })
+                critics = None
 
-            await trainer_agent.ingest_results(
-                query=query,
-                plan=plan,
-                routed_result=routed_result,
-                critics=critics,
-                feedback=None,
-                user_id=user_id,
-            )
+            # 5. Ingest everything for training/logging
+            try:
+                await trainer_agent.ingest_results(
+                    query=query,
+                    plan=plan,
+                    routed_result=routed_result,
+                    critics=critics,
+                    feedback=None,
+                    user_id=user_id,
+                )
+            except Exception as train_exc:
+                log_event("mcp_trainer_ingest_error", {
+                    "error": str(train_exc),
+                    "trace": traceback.format_exc()
+                })
 
             result = {
                 "plan": plan,
@@ -151,7 +177,7 @@ async def run_mcp(
                 "files_used": files_used,
             }
 
-        # === EXPLICIT ROLE MODE ===
+        # === EXPLICIT ROLE MODE (non-planner): Direct agent dispatch ===
         elif role in ROUTING_TABLE:
             handler = ROUTING_TABLE[role]
             log_event("mcp_dispatch", {"role": role})
@@ -173,9 +199,8 @@ async def run_mcp(
                 "files_used": files_used,
             }
 
-        # === UNKNOWN ROLE ===
+        # === UNKNOWN ROLE: Fallback to Echo ===
         else:
-            # Unknown role: always fallback to Echo
             log_event("mcp_fallback_echo", {"reason": f"Unknown role '{role}'"})
             routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
             result = {
@@ -187,15 +212,16 @@ async def run_mcp(
                 "error": f"Unknown role: {role}"
             }
 
+        # === FINAL LOGGING AND DEBUG RETURN ===
         log_event("mcp_result", {"user": user_id, "role": role, "result": result})
 
         if debug:
             return {"result": result, "context": context, "files_used": files_used}
         return result
 
+    # === MCP FATAL ERROR: Use Echo as last-resort fallback ===
     except Exception as e:
         log_event("mcp_agent_error", {"role": role, "error": str(e), "trace": traceback.format_exc()})
-        # Echo as final fallback if MCP main loop itself errors
         routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
         return {
             "plan": None,

@@ -29,7 +29,6 @@ Plans should:
 Return only valid JSON with keys: `objective`, `steps`, `recommendation`, `route`
 """.strip()
 
-# === PlannerAgent Class ===
 class PlannerAgent:
     async def ask(self, query: str, context: str) -> dict:
         """
@@ -47,13 +46,32 @@ class PlannerAgent:
                 response_format="json"
             )
 
-            raw = response.choices[0].message.content
+            # === Guard against missing/empty/malformed response ===
+            if not response or not hasattr(response, "choices") or not response.choices:
+                log_event("planner_empty_response", {"query": query, "context": context, "response": str(response)})
+                return {
+                    "objective": "[planner did not return a response]",
+                    "steps": [],
+                    "recommendation": "",
+                    "route": "echo",
+                    "critics": [],
+                    "passes": False,
+                    "plan_id": str(uuid.uuid4())
+                }
+
+            raw = getattr(response.choices[0].message, "content", "")
             log_event("planner_response_raw", {"query": query, "output": raw[:500]})
 
             try:
                 plan = json.loads(raw)
-            except Exception:
-                log_event("planner_parse_error", {"raw": raw})
+            except Exception as parse_exc:
+                log_event("planner_parse_error", {
+                    "raw": raw,
+                    "query": query,
+                    "context": context,
+                    "error": str(parse_exc),
+                    "trace": traceback.format_exc()
+                })
                 plan = {
                     "objective": "[invalid JSON returned by planner]",
                     "steps": [],
@@ -64,6 +82,7 @@ class PlannerAgent:
 
             plan["plan_id"] = str(uuid.uuid4())
 
+            # === Run critics on the plan ===
             try:
                 critic_results = await run_critics(plan, context)
                 plan["critics"] = critic_results
@@ -75,7 +94,6 @@ class PlannerAgent:
                     "passes": plan["passes"],
                     "issues": [c for c in critic_results if not c.get("passes", True)]
                 })
-
             except Exception as critic_error:
                 log_event("planner_critic_fail", {
                     "query": query,
@@ -90,12 +108,17 @@ class PlannerAgent:
                 plan["passes"] = False
 
             if not plan.get("objective"):
-                log_event("planner_empty_objective", {"plan": plan, "query": query})
+                log_event("planner_empty_objective", {"plan": plan, "query": query, "context": context})
 
             return plan
 
         except OpenAIError as e:
-            log_event("planner_error", {"query": query, "error": str(e)})
+            log_event("planner_error", {
+                "query": query,
+                "context": context,
+                "error": str(e),
+                "trace": traceback.format_exc()
+            })
             return {
                 "objective": "[planner failed to generate a response]",
                 "steps": [],
@@ -107,7 +130,12 @@ class PlannerAgent:
             }
 
         except Exception as e:
-            log_event("planner_exception", {"trace": traceback.format_exc()})
+            log_event("planner_exception", {
+                "query": query,
+                "context": context,
+                "error": str(e),
+                "trace": traceback.format_exc()
+            })
             return {
                 "objective": "[planner crashed unexpectedly]",
                 "steps": [],
