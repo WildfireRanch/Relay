@@ -1,22 +1,10 @@
-// File: src/app/layout.tsx
-// Purpose: Global layout using the styled pixel-art sidebar from the new frontend
+// File: src/app/docs/page.tsx
+// Purpose: Route-level page that renders the full DocsViewer
 
-import '<source /app/globals.css'
-import { ReactNode } from 'react'
-import Sidebar from '@/components/Sidebar/Sidebar'
+'use client'
 
-export default function RootLayout({ children }: { children: ReactNode }) {
-  return (
-    <html lang="en">
-      <body className="flex min-h-screen">
-        {/* Sidebar: pixel-art menu */}
-        <Sidebar />
+import DocsViewer from '@/components/DocsViewer/DocsViewer'
 
-        {/* Page content */}
-        <main className="flex-1 grid grid-cols-4 grid-rows-2 gap-4 p-4 bg-gray-50">
-          {children}
-        </main>
-      </body>
-    </html>
-  )
+export default function DocsPage() {
+  return <DocsViewer />
 }
