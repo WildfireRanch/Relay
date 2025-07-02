@@ -1,45 +1,46 @@
-// File: frontend/src/app/layout.tsx
-// Purpose: Global layout wrapper with Sidebar, sticky Navbar (with dark mode toggle and avatar), and StatusPanel
-// NO "use client" here—this is a server component
+// File: app/layout.tsx
+import './globals.css'
+import Image from 'next/image'
+import { ReactNode } from 'react'
 
-import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
-import Navbar from "@/components/Navbar/Navbar";
-import { Sidebar, StatusPanel } from "@/components";
-import { ThemeProvider } from "next-themes";
+const sidebarLinks = [
+  { href: '/ask', label: 'Ask Echo', icon: '/WildfireMang.png' },
+  { href: '/codex', label: 'Codex', icon: '/PlannerCop.png' },
+  { href: '/docs', label: 'Docs', icon: '/Hoody.png' },
+  { href: '/control', label: 'Control', icon: '/PigTails.png' },
+  { href: '/planner', label: 'Planner', icon: '/ballcap beard.png' },
+  { href: '/email', label: 'Email', icon: '/blackbeard earing.png' },
+  { href: '/critic', label: 'Critic', icon: '/beanie and smoke.png' },
+  { href: '/janitor', label: 'Janitor', icon: '/sunglass shadow.png' }
+]
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
-export const metadata: Metadata = {
-  title: "WildfireRanch Command Center",
-  description: "Relay is ready for action.",
-};
-
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <div className="flex min-h-screen">
-            <Sidebar />
-            <div className="flex flex-col flex-1 min-h-screen">
-              <Navbar />
-              <StatusPanel />
-              <main className="flex-1 p-6 overflow-auto">{children}</main>
-            </div>
-          </div>
-        </ThemeProvider>
+    <html lang="en">
+      <body className="flex min-h-screen">
+        {/* Sidebar */}
+        <aside className="w-48 bg-white border-r p-3 space-y-2">
+          <h2 className="text-lg font-bold flex items-center gap-2">
+            <Image src="/WildfireMang.png" alt="cowboy" width={24} height={24} />
+            Wildfire Ranch
+          </h2>
+          <nav className="mt-4 space-y-2 text-sm">
+            {sidebarLinks.map(({ href, label, icon }) => (
+              <a
+                key={href}
+                href={href}
+                className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100"
+              >
+                <Image src={icon} alt={label} width={24} height={24} />
+                <span>/{label.toLowerCase()}</span>
+              </a>
+            ))}
+          </nav>
+        </aside>
+
+        {/* Route content */}
+        <main className="flex-1 p-4 bg-gray-50">{children}</main>
       </body>
     </html>
-  );
+  )
 }
