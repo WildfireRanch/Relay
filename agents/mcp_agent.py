@@ -45,7 +45,8 @@ async def run_mcp(
     topics = topics or []
 
     try:
-        context_data = build_context(query, files, topics, debug=debug)
+        # ✅ FIXED: Await async context builder
+        context_data = await build_context(query, files, topics, debug=debug)
         if isinstance(context_data, dict):
             context = context_data["context"]
             files_used = context_data["files_used"]

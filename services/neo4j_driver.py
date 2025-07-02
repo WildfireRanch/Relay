@@ -4,7 +4,6 @@
 import os
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from contextlib import asynccontextmanager
-
 from core.logging import log_event
 
 # === Config from ENV ===
@@ -12,10 +11,13 @@ NEO4J_URI = os.getenv("NEO4J_URI", "neo4j+s://localhost:7687")
 NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
 NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password")
 
-# === Initialize driver ===
+# === Initialize internal driver (hidden) ===
 _driver: AsyncDriver = AsyncGraphDatabase.driver(
     NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD)
 )
+
+# ✅ Exported handle for direct import
+neo4j_driver = _driver
 
 # === Async context manager to open sessions ===
 @asynccontextmanager
