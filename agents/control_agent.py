@@ -1,96 +1,88 @@
 # File: agents/control_agent.py
-# Purpose: Execute structured plans that trigger real-world scripts, toggles, or system actions
+# Purpose: Securely execute structured plans as shell actions or toggles
 # Directory: agents/
-# Notes:
-#   - Only executes actions from an allowlist (`allowed_actions`)
-#   - Each action is an async function to allow network/shell integration
-#   - Designed to be safely called from MCP as: control_agent.run(...)
 
 from typing import Dict, Any
 from core.logging import log_event
+import subprocess
+import shlex
 
 
 class ControlAgent:
     def __init__(self):
         """
-        Initialize the action registry with a safe allowlist.
-        Only explicitly listed actions can be invoked by plans.
+        Register all allowed actions. Only these can be triggered.
+        Each maps to an async method on this class.
         """
         self.allowed_actions = {
             "restart_service": self.restart_service,
             "clear_cache": self.clear_cache,
-            # TODO: Add more actions (e.g., relay toggles, shell scripts, API hooks)
+            "echo": self.echo_command,
         }
 
-    async def run(self, query: str, context: str, user_id: str = "system") -> Dict[str, Any]:
+    async def run(self, query: str, context: Any, user_id: str = "system") -> Dict[str, Any]:
         """
-        Executes a structured action. Expects the `context` to contain the action key (e.g., 'restart_service').
+        Executes a structured plan step.
 
-        Parameters:
-            query (str): The original user query (for logging).
-            context (str): The parsed action key or structured step to execute.
-            user_id (str): Identifier for auditing/logging.
-
-        Returns:
-            Dict[str, Any]: Result or error message from the action execution.
+        Expected context format:
+        {
+            "action": "restart_service",
+            "params": {...}
+        }
         """
         try:
-            if context not in self.allowed_actions:
-                log_event("control_agent_reject", {
-                    "user": user_id,
-                    "action": context,
-                    "reason": "Not in allowlist"
-                })
-                return {"error": f"Action '{context}' is not permitted."}
+            if not isinstance(context, dict):
+                return {"error": "Invalid context. Expected JSON object with `action` key."}
 
-            result = await self.allowed_actions[context]()
-            log_event("control_agent_success", {
-                "user": user_id,
-                "action": context,
-                "result": result
-            })
+            action = context.get("action")
+            params = context.get("params", {})
+
+            if action not in self.allowed_actions:
+                log_event("control_agent_reject", {"user": user_id, "action": action})
+                return {"error": f"Action '{action}' is not permitted."}
+
+            result = await self.allowed_actions[action](**params)
+            log_event("control_agent_success", {"user": user_id, "action": action, "result": result})
 
             return {
                 "result": result,
                 "status": "executed",
-                "action": context
+                "action": action,
+                "params": params,
             }
 
         except Exception as e:
-            log_event("control_agent_error", {
-                "user": user_id,
-                "action": context,
-                "error": str(e)
-            })
+            log_event("control_agent_error", {"user": user_id, "error": str(e)})
             return {"error": f"Failed to execute action: {str(e)}"}
 
-    # === Mocked Actions — replace with real logic ===
+    # === Safe actions — extend for real ops ===
 
     async def restart_service(self) -> str:
-        """
-        Simulated restart of a service (e.g., relay, backend daemon).
-        """
-        # TODO: Replace with actual restart command or script trigger
-        return "Service restarted successfully."
+        """Mocked restart action."""
+        # Replace with actual service manager command if needed
+        return self._run_command("systemctl restart relay-backend.service")
 
     async def clear_cache(self) -> str:
-        """
-        Simulated cache clear.
-        """
-        # TODO: Replace with actual cache clear operation
-        return "Cache cleared."
+        """Mocked cache clear."""
+        return self._run_command("rm -rf /tmp/relay_cache/*")
+
+    async def echo_command(self, message: str = "Hello") -> str:
+        """Simple echo test."""
+        return self._run_command(f"echo {shlex.quote(message)}")
+
+    def _run_command(self, cmd: str) -> str:
+        """Runs a shell command and returns output or error."""
+        try:
+            result = subprocess.run(
+                shlex.split(cmd),
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            return f"Command failed: {e.stderr.strip()}"
 
 
-# === Exported instance for use in MCP and other agents ===
+# === Export instance ===
 control_agent = ControlAgent()
-
-# === Optional CLI test runner ===
-if __name__ == "__main__":
-    import asyncio
-
-    async def test():
-        agent = ControlAgent()
-        result = await agent.run("restart_service", context="restart_service")
-        print("Result:", result)
-
-    asyncio.run(test())

@@ -276,3 +276,24 @@ def api_get_email(email_id: str, user=Depends(auth)):
         return {"email": email}
     except Exception as e:
         raise HTTPException(500, f"Gmail get failed: {e}")
+from fastapi import Request
+from agents.control_agent import control_agent
+
+@router.post("/test")
+async def control_test(request: Request, user=Depends(auth)):
+    """
+    Test ControlAgent directly with a structured context payload.
+    Expects:
+    {
+      "query": "restart backend",
+      "context": {
+        "action": "restart_service"
+      }
+    }
+    """
+    payload = await request.json()
+    query = payload.get("query", "")
+    context = payload.get("context", {})
+
+    result = await control_agent.run(query=query, context=context, user_id=user)
+    return result
