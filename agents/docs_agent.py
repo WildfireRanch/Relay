@@ -11,7 +11,6 @@ from utils.openai_client import create_openai_client
 
 client = create_openai_client()
 
-# === System Prompt ===
 SYSTEM_PROMPT = """
 You are an expert technical analyst. Given a longform document and user query,
 extract a concise plan, summary, or insight. Always return valid JSON like:
@@ -26,41 +25,46 @@ Avoid repeating the full doc. Focus on useful, structured information.
 """.strip()
 
 
-async def analyze(query: str, context: str, user_id: str = "anonymous") -> dict:
-    """
-    Analyzes document content in light of user query. Returns structured summary + critic results.
-    """
-    try:
-        completion = await client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Query: {query}\n\nDocument:\n{context}"}
-            ],
-            temperature=0.4,
-            response_format="json"
-        )
+class DocsAgent:
+    async def analyze(self, query: str, context: str, user_id: str = "anonymous") -> dict:
+        """
+        Analyzes document content in light of user query. Returns structured summary + critic results.
+        """
+        try:
+            completion = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Query: {query}\n\nDocument:\n{context}"}
+                ],
+                temperature=0.4,
+                response_format="json"
+            )
 
-        raw = completion.choices[0].message.content.strip()
-        log_event("docs_agent_raw", {"query": query, "output": raw[:500]})
-        summary = eval(raw)  # Assumes valid JSON
+            raw = completion.choices[0].message.content.strip()
+            log_event("docs_agent_raw", {"query": query, "output": raw[:500]})
+            summary = eval(raw)  # assumes valid JSON, should be replaced with json.loads if format varies
 
-        critics = await run_critics(summary, context)
-        summary["critics"] = critics
+            critics = await run_critics(summary, context)
+            summary["critics"] = critics
 
-        log_event("docs_agent_critique", {
-            "user": user_id,
-            "objective": summary.get("objective"),
-            "passes": all(c.get("passes", False) for c in critics),
-            "issues": [c for c in critics if not c.get("passes", True)]
-        })
+            log_event("docs_agent_critique", {
+                "user": user_id,
+                "objective": summary.get("objective"),
+                "passes": all(c.get("passes", False) for c in critics),
+                "issues": [c for c in critics if not c.get("passes", True)]
+            })
 
-        return summary
+            return summary
 
-    except OpenAIError as e:
-        log_event("docs_agent_error", {"error": str(e), "user_id": user_id})
-        return {"error": "OpenAI failed to respond."}
+        except OpenAIError as e:
+            log_event("docs_agent_error", {"error": str(e), "user_id": user_id})
+            return {"error": "OpenAI failed to respond."}
 
-    except Exception as e:
-        log_event("docs_agent_exception", {"trace": traceback.format_exc()})
-        return {"error": "Unexpected error in docs agent."}
+        except Exception as e:
+            log_event("docs_agent_exception", {"trace": traceback.format_exc()})
+            return {"error": "Unexpected error in docs agent."}
+
+
+# Exported instance
+docs_agent = DocsAgent()
