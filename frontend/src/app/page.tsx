@@ -1,47 +1,83 @@
-// File: src/app/page.tsx
-// Purpose: Homepage — fully stripped layout with no Puck or layout dependencies
-
 'use client'
 
 import Image from 'next/image'
-import { API_ROOT } from '@/lib/api'
 
-export default function Home() {
+export default function HomePage() {
   return (
-    <main className="p-6 space-y-6 relative">
-      <div className="absolute top-4 right-4 bg-black/90 text-white rounded-xl shadow-2xl p-4 max-w-xs z-50 backdrop-blur-sm">
-        <div className="flex items-center gap-4">
-          <Image
-            src="/Echo.png"
-            alt="Echo"
-            width={48}
-            height={48}
-            className="w-12 h-12 rounded-md border border-white shadow-md"
-          />
-          <div className="text-sm leading-snug">
-            <p className="font-semibold">Echo</p>
-            <p className="italic text-gray-300">
-              The daemon sees, the daemon knows,<br />
-              He watches where the process goes.<br />
-              He patches code while systems sleep,<br />
-              And keeps the ranch, in silence, deep.
-            </p>
-          </div>
+    <div className="flex h-screen w-full">
+      
+      {/* Sidebar */}
+      <aside className="w-48 bg-white border-r p-3 space-y-2">
+        <h2 className="text-lg font-bold flex items-center gap-2">
+          <Image src="/cowboy.png" alt="cowboy" width={24} height={24} />
+          Wildfire Ranch
+        </h2>
+        <nav className="mt-4 space-y-2 text-sm">
+          {[
+            ['ask echo', 'cowboy1.png'],
+            ['codex', 'coder.png'],
+            ['docs', 'blonde.png'],
+            ['control', 'cop.png'],
+            ['planner', 'pigtails.png'],
+            ['email', 'dude.png'],
+            ['critic', 'spiky.png'],
+            ['janitor', 'janitor.png'],
+          ].map(([label, img]) => (
+            <a key={label} href={`/${label.replace(' ', '')}`} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-100">
+              <Image src={`/${img}`} alt={label} width={24} height={24} />
+              /{label}
+            </a>
+          ))}
+        </nav>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 grid grid-cols-4 grid-rows-2 gap-4 p-4 bg-gray-50">
+        
+        {/* Top Left Box */}
+        <div className="col-span-3 row-span-1 bg-white rounded-xl shadow p-4">
+          <h3 className="font-semibold mb-2">Top Left Panel</h3>
+          <p>Content goes here...</p>
         </div>
-      </div>
 
-      <h1 className="text-3xl font-bold">WildfireRanch Command Center</h1>
-      <p className="text-muted-foreground">Relay is ready for action.</p>
+        {/* Agent Status */}
+        <div className="col-span-1 row-span-1 bg-white rounded-xl shadow p-4">
+          <h4 className="font-bold flex items-center gap-2">
+            <Image src="/cop.png" alt="agent" width={20} height={20} />
+            Agent Status
+          </h4>
+          <ul className="mt-2 text-sm space-y-1">
+            {['red', 'green', 'orange', 'green'].map((color, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full bg-${color}-500`} />
+                Service {i + 1}
+              </li>
+            ))}
+          </ul>
+        </div>
 
-      <div className="border rounded-lg p-6 bg-white/70 dark:bg-zinc-900/60 shadow">
-        <p className="text-sm text-gray-500 dark:text-gray-400">
-          Select a section from the sidebar to get started.
-        </p>
-      </div>
+        {/* Bottom Left Box */}
+        <div className="col-span-3 row-span-1 bg-white rounded-xl shadow p-4">
+          <h3 className="font-semibold mb-2">Bottom Left Panel</h3>
+          <p>More content here...</p>
+        </div>
 
-      <div className="text-xs text-gray-400 text-center mt-6">
-        API root: <span className="font-mono">{API_ROOT}</span>
-      </div>
-    </main>
-  );
+        {/* Shack Status */}
+        <div className="col-span-1 row-span-1 bg-white rounded-xl shadow p-4">
+          <h4 className="font-bold flex items-center gap-2">
+            <Image src="/cowboy.png" alt="shack" width={20} height={20} />
+            Shack Status
+          </h4>
+          <ul className="mt-2 text-sm space-y-1">
+            {['red', 'green', 'orange', 'green'].map((color, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <span className={`w-3 h-3 rounded-full bg-${color}-500`} />
+                Service {i + 1}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </main>
+    </div>
+  )
 }
