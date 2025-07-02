@@ -1,10 +1,9 @@
-# ──────────────────────────────────────────────────────────────────────────────
 # File: routes/ask.py
 # Directory: routes/
 # Purpose: Unified API routes for /ask endpoints — user entry point to Relay agents
 #          Delegates all query logic to MCP (run_mcp), handling agent/critic orchestration.
-# Updated: 2025-06-30 (Wired to run_mcp, clarified roles, full comments)
-# ──────────────────────────────────────────────────────────────────────────────
+#          Handles streaming for both Codex and Echo (primary/fallback) agents.
+# Updated: 2025-07-02
 
 import traceback
 from fastapi import APIRouter, Query, Request, Header, HTTPException
@@ -13,10 +12,18 @@ from typing import Optional
 
 from agents.mcp_agent import run_mcp
 from agents.codex_agent import stream as codex_stream
+from agents.echo_agent import stream as echo_stream
 from utils.openai_client import create_openai_client
 from openai import OpenAIError
 
 router = APIRouter(prefix="/ask", tags=["ask"])
+
+# Streaming map for roles that support it
+STREAM_ROUTING_TABLE = {
+    "codex": codex_stream,
+    "echo": echo_stream,
+    # Add more streaming agents here as needed in the future
+}
 
 # === GET /ask ==================================================================
 @router.get("")
@@ -25,13 +32,14 @@ async def ask_get(
     question: str = Query(..., description="User's natural language question"),
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
     debug: Optional[bool] = Query(False, description="Return debug/context info"),
-    role: Optional[str] = Query("planner", description="Which agent role to use"),
+    role: Optional[str] = Query("planner", description="Which agent role to use (planner, echo, codex, etc)"),
     files: Optional[str] = Query(None, description="Comma-separated file list for context"),
     topics: Optional[str] = Query(None, description="Comma-separated topics for context")
 ):
     """
     GET version of /ask, mostly for quick dev/testing.
     Routes to MCP with appropriate agent role.
+    Echo is always available as both primary and fallback agent.
     """
     user_id = x_user_id or "anonymous"
     file_list = [f.strip() for f in files.split(",")] if files else []
@@ -63,8 +71,9 @@ async def ask_post(
     debug: Optional[bool] = Query(False),
 ):
     """
-    Main POST endpoint for /ask — entrypoint for planner, codex, or other agents.
+    Main POST endpoint for /ask — entrypoint for planner, codex, echo, or other agents.
     Routes all queries to MCP for context injection, agent routing, and critics.
+    Echo is always available as both primary and fallback agent.
     """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
@@ -77,7 +86,6 @@ async def ask_post(
         raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
 
     try:
-        # All logic (agent, critics, queuing) is now in run_mcp!
         result = await run_mcp(
             query=question,
             files=files,
@@ -100,7 +108,9 @@ async def ask_stream(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     """
-    Streaming plan generation for long-running agent tasks (e.g. planner).
+    Streaming endpoint for planner/meta/explicit agent roles via MCP routing.
+    If the routed agent supports streaming, streams the response.
+    Fallbacks to Echo stream if the routed agent doesn't support streaming.
     """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
@@ -113,8 +123,8 @@ async def ask_stream(
         raise HTTPException(status_code=422, detail="Missing 'question' in request payload.")
 
     try:
-        # For now, just return full result (streaming relay can be improved)
-        result = await run_mcp(
+        # Get plan and route via MCP (to know the agent/role to stream)
+        mcp_result = await run_mcp(
             query=question,
             files=files,
             topics=topics,
@@ -122,8 +132,14 @@ async def ask_stream(
             user_id=user_id,
             debug=False
         )
-        # If you want true streaming, you'd need a generator and StreamingResponse here.
-        return result
+        plan = mcp_result.get("plan", {})
+        used_route = plan.get("meta_override") or plan.get("route") or role
+
+        stream_fn = STREAM_ROUTING_TABLE.get(used_route, echo_stream)
+        return StreamingResponse(
+            stream_fn(question, context, user_id),
+            media_type="text/plain"
+        )
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -137,7 +153,7 @@ async def ask_codex_stream(
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
 ):
     """
-    Streaming endpoint for Codex/code edits. Streams text output.
+    Streaming endpoint for Codex/code edits. Streams text output directly.
     """
     user_id = x_user_id or "anonymous"
     question = payload.get("question", "")
@@ -148,6 +164,33 @@ async def ask_codex_stream(
 
     try:
         return StreamingResponse(codex_stream(question, context, user_id), media_type="text/plain")
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# === POST /ask/echo_stream ====================================================
+@router.post("/echo_stream")
+async def ask_echo_stream(
+    request: Request,
+    payload: dict,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    """
+    Streaming endpoint for Echo (LLM chat) responses.
+    """
+    user_id = x_user_id or "anonymous"
+    question = payload.get("question", "")
+    context = payload.get("context", "")
+
+    if not question:
+        raise HTTPException(status_code=422, detail="Missing 'question' in request.")
+
+    try:
+        return StreamingResponse(
+            echo_stream(question, context, user_id),
+            media_type="text/plain"
+        )
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
@@ -174,4 +217,3 @@ async def test_openai():
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
-

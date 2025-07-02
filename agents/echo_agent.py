@@ -3,7 +3,7 @@
 # Role: General Q&A, summarization, explanation, or chat-like fallback
 
 import os
-from typing import Dict
+from typing import Dict, AsyncGenerator
 from openai import AsyncOpenAI, OpenAIError
 from core.logging import log_event
 from utils.openai_client import create_openai_client
@@ -35,7 +35,6 @@ async def run(
                 {"role": "user", "content": f"{query}\n\nContext:\n{context}"}
             ],
             temperature=0.7,
-            # max_tokens=512,  # Uncomment/adjust for cost or verbosity control
         )
         reply = completion.choices[0].message.content.strip()
         log_event("echo_agent_reply", {
@@ -53,3 +52,37 @@ async def run(
             "query": query
         })
         return {"error": "Echo failed to respond."}
+
+
+async def stream(
+    query: str,
+    context: str = "",
+    user_id: str = "anonymous"
+) -> AsyncGenerator[str, None]:
+    """
+    Streams the Echo agent response chunk by chunk.
+    """
+    try:
+        response_stream = await openai.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"{query}\n\nContext:\n{context}"}
+            ],
+            temperature=0.7,
+            stream=True,
+        )
+        async for chunk in response_stream:
+            delta = getattr(chunk.choices[0].delta, "content", None)
+            if delta:
+                yield delta
+    except OpenAIError as e:
+        log_event("echo_agent_stream_error", {
+            "error": str(e),
+            "user_id": user_id,
+            "query": query
+        })
+        yield f"[Error] Echo stream failed: {str(e)}"
+
+# Export for import in routes/ask.py or MCP
+stream = stream
