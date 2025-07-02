@@ -36,7 +36,18 @@ async def run(
             ],
             temperature=0.7,
         )
-        reply = completion.choices[0].message.content.strip()
+        reply = completion.choices[0].message.content
+        log_event("echo_agent_reply_raw", {
+            "reply_raw": str(reply),
+            "user": user_id,
+            "query": query,
+            "context_sample": context[:200]
+        })
+        if not reply or not str(reply).strip():
+            log_event("echo_agent_empty_reply", {"user": user_id, "query": query})
+            return {"response": "[Echo received no answer from the model.]"}
+
+        reply = reply.strip()
         log_event("echo_agent_reply", {
             "user": user_id, 
             "reply": reply[:500],  # log only first 500 chars for readability
@@ -52,6 +63,7 @@ async def run(
             "query": query
         })
         return {"error": "Echo failed to respond."}
+
 
 
 async def stream(
