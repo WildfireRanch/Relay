@@ -1,9 +1,8 @@
-# ──────────────────────────────────────────────────────────────────────────────
 # File: agents/planner_agent.py
-# Purpose: Generate intelligent task plans from user queries and injected context
-# ──────────────────────────────────────────────────────────────────────────────
+# Purpose: Generate intelligent task plans from user queries and injected context — safely and with consistent output
 
 import os
+import json
 import traceback
 from openai import AsyncOpenAI, OpenAIError
 from core.logging import log_event
@@ -33,6 +32,7 @@ async def ask(query: str, context: str) -> dict:
     returns structured plan as dictionary. Runs all critics post-generation.
     """
     try:
+        # === Step 1: Query LLM with system + user messages ===
         response = await openai.chat.completions.create(
             model=MODEL,
             messages=[
@@ -44,10 +44,21 @@ async def ask(query: str, context: str) -> dict:
         )
 
         raw = response.choices[0].message.content
-        log_event("planner_response", {"query": query, "output": raw[:500]})
-        plan = eval(raw)  # Unsafe in prod, assumes clean JSON
+        log_event("planner_response_raw", {"query": query, "output": raw[:500]})
 
-        # === Step 1: Run Planner Critics ===
+        # === Step 2: Safely parse LLM JSON output ===
+        try:
+            plan = json.loads(raw)
+        except Exception:
+            log_event("planner_parse_error", {"raw": raw})
+            plan = {
+                "objective": "[invalid JSON returned by planner]",
+                "steps": [],
+                "recommendation": "",
+                "critics": []
+            }
+
+        # === Step 3: Run Critics ===
         try:
             critic_results = await run_critics(plan, context)
             plan["critics"] = critic_results
@@ -63,14 +74,32 @@ async def ask(query: str, context: str) -> dict:
                 "error": str(critic_error),
                 "trace": traceback.format_exc()
             })
-            plan["critics"] = [{"name": "system", "passes": False, "issues": ["Critic system failed"]}]
+            plan["critics"] = [{
+                "name": "system",
+                "passes": False,
+                "issues": ["Critic system failed"]
+            }]
+
+        # === Step 4: Final safety check ===
+        if not plan.get("objective"):
+            log_event("planner_empty_objective", {"plan": plan, "query": query})
 
         return plan
 
     except OpenAIError as e:
         log_event("planner_error", {"query": query, "error": str(e)})
-        return {"error": "Planner failed to generate a response."}
+        return {
+            "objective": "[planner failed to generate a response]",
+            "steps": [],
+            "recommendation": "",
+            "critics": []
+        }
 
     except Exception as e:
         log_event("planner_exception", {"trace": traceback.format_exc()})
-        return {"error": "Unexpected error in planner agent."}
+        return {
+            "objective": "[planner crashed unexpectedly]",
+            "steps": [],
+            "recommendation": "",
+            "critics": []
+        }
