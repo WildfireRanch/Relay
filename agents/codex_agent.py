@@ -176,3 +176,4 @@ class CodexAgent:
 
 # Singleton export for app-wide import
 codex_agent = CodexAgent()
+stream = codex_agent.stream  
