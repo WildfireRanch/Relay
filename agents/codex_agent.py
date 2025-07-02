@@ -176,4 +176,5 @@ class CodexAgent:
 
 # Singleton export for app-wide import
 codex_agent = CodexAgent()
-stream = codex_agent.stream  
+handle = codex_agent.handle
+stream = codex_agent.stream
