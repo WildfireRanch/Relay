@@ -1,15 +1,17 @@
 // File: src/components/Sidebar/Sidebar.tsx
 "use client";
 
+console.log("Sidebar mounted");
+
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const links = [
-  { href: "/ask", label: "Ask Echo", icon: "/WildfireMang.png" },
+  { href: "/ask", label: "Ask Echo", icon: "/Hoody.png" },
   { href: "/codex", label: "Codex", icon: "/PlannerCop.png" },
-  { href: "/docs", label: "Docs", icon: "/Hoody.png" },
-  { href: "/control", label: "Control", icon: "/PigTails.png" },
+  { href: "/docs", label: "Docs", icon: "/PigTails.png" },
+  { href: "/control", label: "Control", icon: "/Echo.png" },
   { href: "/planner", label: "Planner", icon: "/ballcap beard.png" },
   { href: "/email", label: "Email", icon: "/blackbeard earing.png" },
   { href: "/critic", label: "Critic", icon: "/beanie and smoke.png" },
