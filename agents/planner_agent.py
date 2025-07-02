@@ -1,38 +1,43 @@
+
 # File: agents/planner_agent.py
-# Purpose: Generate intelligent task plans from user queries and injected context — safely and with consistent output
+# Purpose: Relay's PlannerAgent — generates task plans from queries and context
+# Handles LLM prompting, critic scoring, and structured plan shaping
 
 import os
 import json
 import traceback
+import uuid
 from openai import AsyncOpenAI, OpenAIError
+
 from core.logging import log_event
 from agents.critic_agent import run_critics
 from utils.openai_client import create_openai_client
 
 # === Model Configuration ===
 MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")
-openai = create_openai_client()
+openai: AsyncOpenAI = create_openai_client()
 
-# === System Prompt: Define role and structure for planner output ===
+# === System Prompt: Defines planner behavior and plan schema ===
 SYSTEM_PROMPT = """
 You are the Planner Agent inside an AI command and control system (Relay).
 Your job is to generate high-level structured plans from user input and rich context.
 Plans should:
 - Be actionable and decomposed into clear steps
 - Reference any relevant files, sensors, functions, or context
+- Suggest a route to a specialist agent (e.g. codex, docs, control)
 - Avoid implementation (leave that to Codex)
-- Provide justifications if appropriate
-Return only valid JSON with keys: `objective`, `steps`, `recommendation`
+- Justify the plan if useful
+Return only valid JSON with keys: `objective`, `steps`, `recommendation`, `route`
 """.strip()
 
-# === Planner Agent Entrypoint ===
+# === Main planner interface ===
 async def ask(query: str, context: str) -> dict:
     """
-    Main planner interface. Accepts user query and full context string,
-    returns structured plan as dictionary. Runs all critics post-generation.
+    Generates a structured plan from the user's query and context using OpenAI,
+    runs critics on the result, and returns a JSON plan with scoring metadata.
     """
     try:
-        # === Step 1: Query LLM with system + user messages ===
+        # Step 1: LLM call for plan generation
         response = await openai.chat.completions.create(
             model=MODEL,
             messages=[
@@ -46,7 +51,7 @@ async def ask(query: str, context: str) -> dict:
         raw = response.choices[0].message.content
         log_event("planner_response_raw", {"query": query, "output": raw[:500]})
 
-        # === Step 2: Safely parse LLM JSON output ===
+        # Step 2: Parse JSON plan
         try:
             plan = json.loads(raw)
         except Exception:
@@ -55,17 +60,23 @@ async def ask(query: str, context: str) -> dict:
                 "objective": "[invalid JSON returned by planner]",
                 "steps": [],
                 "recommendation": "",
+                "route": "echo",
                 "critics": []
             }
 
-        # === Step 3: Run Critics ===
+        # Add metadata: plan ID and fallback structure
+        plan["plan_id"] = str(uuid.uuid4())
+
+        # Step 3: Validate with critics
         try:
             critic_results = await run_critics(plan, context)
             plan["critics"] = critic_results
+            plan["passes"] = all(c.get("passes", False) for c in critic_results)
+
             log_event("planner_critique", {
                 "query": query,
                 "objective": plan.get("objective"),
-                "passes": all(c.get("passes", False) for c in critic_results),
+                "passes": plan["passes"],
                 "issues": [c for c in critic_results if not c.get("passes", True)]
             })
         except Exception as critic_error:
@@ -79,8 +90,9 @@ async def ask(query: str, context: str) -> dict:
                 "passes": False,
                 "issues": ["Critic system failed"]
             }]
+            plan["passes"] = False
 
-        # === Step 4: Final safety check ===
+        # Step 4: Final safety checks
         if not plan.get("objective"):
             log_event("planner_empty_objective", {"plan": plan, "query": query})
 
@@ -92,7 +104,10 @@ async def ask(query: str, context: str) -> dict:
             "objective": "[planner failed to generate a response]",
             "steps": [],
             "recommendation": "",
-            "critics": []
+            "route": "echo",
+            "critics": [],
+            "passes": False,
+            "plan_id": str(uuid.uuid4())
         }
 
     except Exception as e:
@@ -101,5 +116,8 @@ async def ask(query: str, context: str) -> dict:
             "objective": "[planner crashed unexpectedly]",
             "steps": [],
             "recommendation": "",
-            "critics": []
+            "route": "echo",
+            "critics": [],
+            "passes": False,
+            "plan_id": str(uuid.uuid4())
         }

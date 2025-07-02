@@ -1,105 +1,132 @@
-# File: agents/planner_agent.py
-# Purpose: Generate intelligent task plans from user queries and injected context — safely and with consistent output
+# File: agents/mcp_agent.py
+# Purpose: Central orchestrator for Relay — planner-based routing, MetaPlanner override, critic validation, and Trainer logging to Neo4j.
 
-import os
-import json
 import traceback
-from openai import AsyncOpenAI, OpenAIError
-from core.logging import log_event
+from typing import Optional
+
+from agents import (
+    planner_agent,
+    codex_agent,
+    docs_agent,
+    control_agent,
+    echo_agent,
+    trainer_agent,
+)
+from agents.metaplanner_agent import suggest_route
 from agents.critic_agent import run_critics
-from utils.openai_client import create_openai_client
 
-# === Model Configuration ===
-MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")
-openai = create_openai_client()
+from services.context_injector import build_context
+from core.logging import log_event
+from services.queue import queue_action
 
-# === System Prompt: Define role and structure for planner output ===
-SYSTEM_PROMPT = """
-You are the Planner Agent inside an AI command and control system (Relay).
-Your job is to generate high-level structured plans from user input and rich context.
-Plans should:
-- Be actionable and decomposed into clear steps
-- Reference any relevant files, sensors, functions, or context
-- Avoid implementation (leave that to Codex)
-- Provide justifications if appropriate
-Return only valid JSON with keys: `objective`, `steps`, `recommendation`
-""".strip()
+# Routing map for all available agent handlers
+ROUTING_TABLE = {
+    "codex": codex_agent.handle,
+    "docs": docs_agent.analyze,
+    "control": control_agent.run,
+    "echo": echo_agent.run,
+    # Add additional routes here
+}
 
-# === Planner Agent Entrypoint ===
-async def ask(query: str, context: str) -> dict:
+async def run_mcp(
+    query: str,
+    files: Optional[list[str]] = None,
+    topics: Optional[list[str]] = None,
+    role: str = "planner",
+    user_id: str = "anonymous",
+    debug: bool = False,
+):
     """
-    Main planner interface. Accepts user query and full context string,
-    returns structured plan as dictionary. Runs all critics post-generation.
+    Main MCP entry point.
+    Builds context, delegates to planner, allows MetaPlanner override,
+    executes routed agent, and logs to Neo4j via TrainerAgent.
     """
+    files = files or []
+    topics = topics or []
+
     try:
-        # === Step 1: Query LLM with system + user messages ===
-        response = await openai.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Query: {query}\n\nContext:\n{context}"}
-            ],
-            temperature=0.4,
-            response_format="json"
-        )
+        context_data = build_context(query, files, topics, debug=debug)
+        if isinstance(context_data, dict):
+            context = context_data["context"]
+            files_used = context_data["files_used"]
+        else:
+            context = context_data
+            files_used = []
+    except Exception as e:
+        log_event("mcp_context_error", {"error": str(e), "trace": traceback.format_exc()})
+        return {"error": "Failed to build context."}
 
-        raw = response.choices[0].message.content
-        log_event("planner_response_raw", {"query": query, "output": raw[:500]})
+    log_event("mcp_context_loaded", {"user": user_id, "files": files_used})
 
-        # === Step 2: Safely parse LLM JSON output ===
-        try:
-            plan = json.loads(raw)
-        except Exception:
-            log_event("planner_parse_error", {"raw": raw})
-            plan = {
-                "objective": "[invalid JSON returned by planner]",
-                "steps": [],
-                "recommendation": "",
-                "critics": []
+    try:
+        if role == "planner":
+            # 🧠 Ask Planner for a route and steps
+            plan = await planner_agent.ask(query=query, context=context)
+
+            # 🔁 Optionally override with MetaPlanner
+            suggested = await suggest_route(query=query, plan=plan, user_id=user_id)
+            if suggested and suggested != plan.get("route"):
+                plan["meta_override"] = suggested
+                route = suggested
+            else:
+                route = plan.get("route")
+
+            # 🚦 Route to the correct agent
+            handler = ROUTING_TABLE.get(route)
+            if handler:
+                routed_result = await handler(message=query, context=context, user_id=user_id)
+            else:
+                routed_result = {"response": f"No agent found for route: {route}"}
+
+            # ✅ Validate with critics
+            critics = await run_critics(routed_result, query)
+
+            # 🧠 Log result to graph memory
+            await trainer_agent.ingest_results(
+                query=query,
+                plan=plan,
+                routed_result=routed_result,
+                critics=critics,
+                feedback=None,
+                user_id=user_id,
+            )
+
+            result = {
+                "plan": plan,
+                "routed_result": routed_result,
+                "critics": critics,
             }
 
-        # === Step 3: Run Critics ===
-        try:
-            critic_results = await run_critics(plan, context)
-            plan["critics"] = critic_results
-            log_event("planner_critique", {
-                "query": query,
-                "objective": plan.get("objective"),
-                "passes": all(c.get("passes", False) for c in critic_results),
-                "issues": [c for c in critic_results if not c.get("passes", True)]
-            })
-        except Exception as critic_error:
-            log_event("planner_critic_fail", {
-                "query": query,
-                "error": str(critic_error),
-                "trace": traceback.format_exc()
-            })
-            plan["critics"] = [{
-                "name": "system",
-                "passes": False,
-                "issues": ["Critic system failed"]
-            }]
+        elif role == "codex":
+            # ✍️ Patch mode using CodexAgent
+            patch_result = await codex_agent.handle(message=query, context=context, user_id=user_id)
+            action = patch_result.get("action")
+            if action and action.get("type") == "patch":
+                queue_action(action, reason="Generated by MCP Codex")
+                patch_result["queued"] = True
 
-        # === Step 4: Final safety check ===
-        if not plan.get("objective"):
-            log_event("planner_empty_objective", {"plan": plan, "query": query})
+            critics = await run_critics(patch_result, query)
 
-        return plan
+            await trainer_agent.ingest_results(
+                query=query,
+                plan=patch_result,
+                routed_result=patch_result,
+                critics=critics,
+                feedback=None,
+                user_id=user_id,
+            )
 
-    except OpenAIError as e:
-        log_event("planner_error", {"query": query, "error": str(e)})
-        return {
-            "objective": "[planner failed to generate a response]",
-            "steps": [],
-            "recommendation": "",
-            "critics": []
-        }
+            result = patch_result
+
+        else:
+            result = {"error": f"Unknown role: {role}"}
+
+        log_event("mcp_result", {"user": user_id, "role": role, "result": result})
+
+        if debug:
+            return {"result": result, "context": context, "files_used": files_used}
+        return result
 
     except Exception as e:
-        log_event("planner_exception", {"trace": traceback.format_exc()})
-        return {
-            "objective": "[planner crashed unexpectedly]",
-            "steps": [],
-            "recommendation": "",
-            "critics": []
-        }
+        log_event("mcp_agent_error", {"role": role, "error": str(e), "trace": traceback.format_exc()})
+        return {"error": f"Failed to execute {role} agent."}
