@@ -1,14 +1,14 @@
 # services/semantic_retriever.py
-
-from llama_index.core import load_index_from_storage
+from llama_index.core import load_index_from_storage, StorageContext
 from llama_index.embeddings.openai import OpenAIEmbedding
 
-# --- Load index once at startup ---
 INDEX_DIR = "./data/index"
-_embed_model = OpenAIEmbedding(model="text-embedding-3-large")  # Keep in sync with your index
-_index = load_index_from_storage(persist_dir=INDEX_DIR, embed_model=_embed_model)
+_embed_model = OpenAIEmbedding(model="text-embedding-3-large")
+storage_context = StorageContext.from_defaults(persist_dir=INDEX_DIR)
+_index = load_index_from_storage(storage_context=storage_context, embed_model=_embed_model)
 
 def get_semantic_context(query: str, top_k: int = 5) -> str:
+
     """
     Retrieves the top_k most semantically relevant code/docs chunks for the query.
     Returns concatenated context string (with file path/title if possible).
