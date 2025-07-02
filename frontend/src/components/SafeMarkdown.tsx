@@ -24,10 +24,10 @@ const markdownComponents: Components = {
       className?: string;
       children: React.ReactNode;
     };
-    // Extract language from className (e.g., "language-js")
     const match = /language-(\w+)/.exec(className || "");
+    const content = String(children).replace(/\n$/, "");
+
     if (!inline && match) {
-      // Block code: highlight with Prism
       return (
         <SyntaxHighlighter
           style={vscDarkPlus}
@@ -35,14 +35,14 @@ const markdownComponents: Components = {
           PreTag="div"
           {...rest}
         >
-          {String(children).replace(/\n$/, "")}
+          {content}
         </SyntaxHighlighter>
       );
     }
-    // Inline code: render as <code>
+
     return (
       <code {...(className ? { className } : {})} {...rest}>
-        {String(children)}
+        {content}
       </code>
     );
   },
@@ -65,7 +65,6 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
 
   // Debug: Log if somehow a non-string is still about to render (for final #418 hunting)
   if (typeof strChildren !== "string") {
-    // This should never happen, but will catch #418 roots
     // eslint-disable-next-line no-console
     console.error("SAFE-MARKDOWN-418-DEBUG", typeof strChildren, strChildren);
   }
@@ -83,7 +82,6 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
       // SECURITY: Never allow any HTML passthrough from markdown
       skipHtml={true}
       disallowedElements={["html", "head", "body", "style", "script", "iframe"]}
-      // Add more custom renderers above as needed (tables, math, images)
       {...(className ? { className } : {})}
     >
       {safeChildren}
