@@ -16,6 +16,7 @@ const links = [
   { href: "/email", label: "Email", icon: "/blackbeard earing.png" },
   { href: "/critic", label: "Critic", icon: "/beanie and smoke.png" },
   { href: "/janitor", label: "Janitor", icon: "/sunglass shadow.png" },
+   { href: "/logs", label: "Logs", icon: "/echo.png" }, // Pick a fun icon!
 ];
 
 export default function Sidebar() {

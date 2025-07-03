@@ -1,6 +1,6 @@
 // File: frontend/src/components/LogsPanel.tsx
-// Purpose: Displays the system action log with results, file paths, timestamps, auto-refresh, action-type filtering, text-based search, and JSON/CSV download.
-//          Result output is rendered with SafeMarkdown when string; otherwise, pretty JSON.
+// Purpose: Full-featured system log/audit/error viewer with filtering, searching, stack trace viewing, and CSV/JSON export.
+// Compatible with robust backend logger (fields: time, source, level, message, stack_trace, etc).
 
 "use client";
 
@@ -9,58 +9,84 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
 import SafeMarkdown from "@/components/SafeMarkdown";
-import { toMDString } from "@/lib/toMDString";
 
-interface LogEntry {
+interface AuditLogEntry {
   id: string;
-  timestamp: string;
-  type: string;
-  path?: string;
-  status: string;
-  result?: unknown; // Can be string (markdown), object, or null
+  time: string;
+  source: string;
+  level: string;
+  message: string;
+  stack_trace?: string;
+  [key: string]: any;
 }
 
-export default function LogsPanel() {
-  const [log, setLog] = useState<LogEntry[]>([]);
+export default function AuditPanel() {
+  const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [filterType, setFilterType] = useState<string>("");
+  const [levelFilter, setLevelFilter] = useState<string>("");
+  const [sourceFilter, setSourceFilter] = useState<string>("");
   const [searchText, setSearchText] = useState<string>("");
 
-  async function fetchLog() {
-    const res = await fetch(`${API_ROOT}/control/list_log`, {
+  async function fetchLogs() {
+    const params = new URLSearchParams();
+    if (levelFilter) params.append("level_filter", levelFilter);
+    params.append("n", "100");
+    const res = await fetch(`${API_ROOT}/logs/recent?${params.toString()}`, {
       headers: {
         "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
       }
     });
     const data = await res.json();
-    const mapped = (data.log || []).map((entry: LogEntry) => ({
+    const mapped = (data.logs || []).map((entry: any, idx: number) => ({
+      id: entry.id || entry.time || `${idx}`,
+      time: entry.time || "",
+      source: entry.source || "system",
+      level: entry.level || "INFO",
+      message: entry.message || "",
+      stack_trace: entry.stack_trace || "",
       ...entry,
-      result: toMDString(entry.result)
     }));
-    setLog(mapped);
+    setLogs(mapped);
   }
 
+  useEffect(() => {
+    fetchLogs();
+    if (!autoRefresh) return;
+    const interval = setInterval(fetchLogs, 15000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, levelFilter]);
+
+  const uniqueSources = Array.from(new Set(logs.map(l => l.source))).sort();
+
+  const filteredLogs = logs.filter(entry => {
+    const matchLevel = !levelFilter || entry.level === levelFilter;
+    const matchSource = !sourceFilter || entry.source === sourceFilter;
+    const matchSearch = !searchText || (
+      JSON.stringify(entry).toLowerCase().includes(searchText.toLowerCase())
+    );
+    return matchLevel && matchSource && matchSearch;
+  });
+
   function downloadJSON() {
-    const blob = new Blob([JSON.stringify(filteredLog, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(filteredLogs, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "relay_log.json";
+    link.download = "audit_log.json";
     link.click();
     URL.revokeObjectURL(url);
   }
 
   function downloadCSV() {
-    const headers = ["id", "timestamp", "type", "path", "status"];
+    const headers = ["time", "source", "level", "message"];
     const csvRows = [headers.join(",")];
-    filteredLog.forEach(entry => {
+    filteredLogs.forEach(entry => {
       const row = [
-        entry.id,
-        entry.timestamp,
-        entry.type,
-        entry.path || "",
-        entry.status
-      ].map(field => `"${String(field).replace(/"/g, '""')}"`);
+        entry.time,
+        entry.source,
+        entry.level,
+        (entry.message || "").replace(/"/g, '""').replace(/\n/g, "\\n")
+      ].map(field => `"${String(field)}"`);
       csvRows.push(row.join(","));
     });
     const csvContent = csvRows.join("\n");
@@ -68,37 +94,17 @@ export default function LogsPanel() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "relay_log.csv";
+    link.download = "audit_log.csv";
     link.click();
     URL.revokeObjectURL(url);
   }
 
-  useEffect(() => {
-    fetchLog();
-    if (!autoRefresh) return;
-    const interval = setInterval(fetchLog, 15000);
-    return () => clearInterval(interval);
-  }, [autoRefresh]);
-
-  const uniqueTypes = Array.from(new Set(log.map(l => l.type))).sort();
-  const filteredLog = log.filter(entry => {
-    const matchType = !filterType || entry.type === filterType;
-    const matchSearch = !searchText || JSON.stringify(entry).toLowerCase().includes(searchText.toLowerCase());
-    return matchType && matchSearch;
-  });
-
-  if (!filteredLog.length)
+  if (!filteredLogs.length)
     return (
       <p className="text-muted-foreground">
-        No log entries{filterType ? ` of type '${filterType}'` : ""} found.
+        No log entries{levelFilter ? ` of level '${levelFilter}'` : ""}{sourceFilter ? ` from '${sourceFilter}'` : ""} found.
       </p>
     );
-
-  for (const entry of filteredLog) {
-    if (entry.result && typeof entry.result !== "string") {
-      console.log("DEBUG 418:", typeof entry.result, entry.result);
-    }
-  }
 
   return (
     <div className="space-y-4">
@@ -107,15 +113,25 @@ export default function LogsPanel() {
         <Button variant={autoRefresh ? "default" : "outline"} onClick={() => setAutoRefresh(!autoRefresh)}>
           {autoRefresh ? "Auto-Refresh ON" : "Auto-Refresh OFF"}
         </Button>
-        <div className="text-sm text-gray-500">Log updates every 15s</div>
+        <span className="text-sm text-gray-500">Log updates every 15s</span>
         <select
           className="border rounded px-2 py-1 text-sm"
-          value={filterType}
-          onChange={e => setFilterType(e.target.value)}
+          value={levelFilter}
+          onChange={e => setLevelFilter(e.target.value)}
         >
-          <option value="">All Types</option>
-          {uniqueTypes.map(type => (
-            <option key={type} value={type}>{type}</option>
+          <option value="">All Levels</option>
+          <option value="INFO">INFO</option>
+          <option value="ERROR">ERROR</option>
+          <option value="WARNING">WARNING</option>
+        </select>
+        <select
+          className="border rounded px-2 py-1 text-sm"
+          value={sourceFilter}
+          onChange={e => setSourceFilter(e.target.value)}
+        >
+          <option value="">All Sources</option>
+          {uniqueSources.map(source => (
+            <option key={source} value={source}>{source}</option>
           ))}
         </select>
         <input
@@ -134,32 +150,21 @@ export default function LogsPanel() {
       </div>
 
       {/* Log entries */}
-      {filteredLog.map((entry) => (
-        <Card key={entry.id}>
+      {filteredLogs.map((entry) => (
+        <Card key={entry.id} className={entry.level === "ERROR" ? "border-red-400" : ""}>
           <CardContent className="p-4 space-y-2">
-            <div className="text-sm font-mono text-muted-foreground">
-              #{entry.id.slice(0, 8)} • {entry.timestamp}
+            <div className="text-xs font-mono text-muted-foreground">
+              {entry.time} • <span className="font-bold">{entry.source}</span> [{entry.level}]
             </div>
-            <div className="text-sm">
-              <strong>Type:</strong> {entry.type}
-              {entry.path && (
-                <span className="ml-2"><strong>Path:</strong> {entry.path}</span>
-              )}
-              <span className="ml-2"><strong>Status:</strong> {entry.status}</span>
+            <div className="text-sm break-words">
+              <SafeMarkdown>{entry.message}</SafeMarkdown>
             </div>
-            {/* If the result is a markdown string, render as markdown.
-                Otherwise, pretty-print as JSON. */}
-            {typeof entry.result === "string" ? (
-              <div className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
-                <div className="prose prose-neutral dark:prose-invert max-w-none">
-                  <SafeMarkdown>{entry.result}</SafeMarkdown>
-                </div>
-              </div>
-            ) : entry.result ? (
-              <pre className="bg-muted p-2 rounded text-sm overflow-auto whitespace-pre-wrap">
-                {JSON.stringify(entry.result, null, 2)}
-              </pre>
-            ) : null}
+            {entry.stack_trace && entry.stack_trace.trim() && (
+              <details>
+                <summary className="text-red-700 cursor-pointer">Stack trace</summary>
+                <pre className="bg-red-100 text-xs p-2 rounded overflow-x-auto">{entry.stack_trace}</pre>
+              </details>
+            )}
           </CardContent>
         </Card>
       ))}
