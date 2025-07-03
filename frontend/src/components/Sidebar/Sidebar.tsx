@@ -11,12 +11,13 @@ const links = [
   { href: "/ask", label: "Ask Echo", icon: "/Hoody.png" },
   { href: "/codex", label: "Codex", icon: "/PlannerCop.png" },
   { href: "/docs", label: "Docs", icon: "/PigTails.png" },
+  { href: "/logs", label: "Logs", icon: "/echo.png" }, // Pick a fun icon!
   { href: "/control", label: "Control", icon: "/Echo.png" },
   { href: "/planner", label: "Planner", icon: "/ballcap beard.png" },
   { href: "/email", label: "Email", icon: "/blackbeard earing.png" },
-  { href: "/critic", label: "Critic", icon: "/beanie and smoke.png" },
+  { href: "/ActionQueue", label: "ActionQueue", icon: "/beanie and smoke.png" },
   { href: "/janitor", label: "Janitor", icon: "/sunglass shadow.png" },
-   { href: "/logs", label: "Logs", icon: "/echo.png" }, // Pick a fun icon!
+
 ];
 
 export default function Sidebar() {

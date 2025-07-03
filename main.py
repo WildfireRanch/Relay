@@ -1,6 +1,6 @@
 # File: main.py
 # Directory: project root
-# Purpose: Relay backend entrypoint for FastAPI with CORS, startup validation, router mounting, and ENV awareness
+# Purpose: Relay backend entrypoint for FastAPI with CORS, startup validation, router mounting, ENV awareness, and bulletproof OpenTelemetry tracing
 
 from __future__ import annotations
 
@@ -25,6 +25,41 @@ ENV_NAME = os.getenv("ENV", "local")
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.append(str(PROJECT_ROOT))
 
+# ─── OpenTelemetry Tracing Setup (Bulletproof, Inserted Here) ─────────────────
+try:
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+
+    SERVICE = "relay-backend"
+    JAEGER_HOST = os.getenv("JAEGER_HOST", "localhost")
+    JAEGER_PORT = int(os.getenv("JAEGER_PORT", 6831))
+
+    # Initialize the tracer provider with service name for full context
+    trace.set_tracer_provider(
+        TracerProvider(
+            resource=Resource.create({SERVICE_NAME: SERVICE})
+        )
+    )
+
+    # Configure Jaeger exporter for trace data
+    jaeger_exporter = JaegerExporter(
+        agent_host_name=JAEGER_HOST,
+        agent_port=JAEGER_PORT,
+    )
+    trace.get_tracer_provider().add_span_processor(
+        BatchSpanProcessor(jaeger_exporter)
+    )
+
+    tracer = trace.get_tracer(__name__)
+    logging.info(f"🟣 OpenTelemetry tracing enabled for service: {SERVICE} (Jaeger: {JAEGER_HOST}:{JAEGER_PORT})")
+except ImportError as e:
+    logging.warning(f"⚠️ OpenTelemetry tracing not enabled (missing packages): {e}")
+except Exception as ex:
+    logging.error(f"❌ OpenTelemetry setup failed: {ex}")
+
 # ─── Validate required ENV vars ──────────────────────────────────────────────
 for key in ("API_KEY", "OPENAI_API_KEY"):
     if not os.getenv(key):
@@ -40,6 +75,16 @@ app = FastAPI(
     version="1.0.0",
     description="Backend API for Relay agent – ask, control, status, docs, admin",
 )
+
+# ─── Instrument FastAPI with OpenTelemetry (All Requests Become Traces) ──────
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    FastAPIInstrumentor().instrument_app(app)
+    logging.info("🟣 OpenTelemetry FastAPI instrumentation active")
+except ImportError:
+    logging.warning("⚠️ opentelemetry-instrumentation-fastapi not installed; API traces will NOT be captured")
+except Exception as ex:
+    logging.error(f"❌ FastAPI OTel instrumentation failed: {ex}")
 
 # ─── Configure CORS (support static or regex origin) ─────────────────────────
 cors_origins = []
