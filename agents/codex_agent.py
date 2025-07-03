@@ -4,7 +4,7 @@
 # Exports: codex_agent (CodexAgent instance)
 
 import os
-from typing import Dict, Any, Optional, AsyncGenerator
+from typing import Dict, Any, Optional, AsyncGenerator, Tuple
 from openai import AsyncOpenAI, OpenAIError
 
 from utils.openai_client import create_openai_client
@@ -12,10 +12,27 @@ from utils.patch_utils import validate_patch_format
 from core.logging import log_event
 from dotenv import load_dotenv
 from agents.critic_agent import run_critics
-from typing import Dict, Any, Optional, Tuple, AsyncGenerator
 
 load_dotenv()
 client = create_openai_client()
+
+RELAY_SYSTEM_PROMPT = """
+You are Relay — a surgical, code-focused agent in a multi-agent system.
+
+Your primary role is execution: refactoring, repairing, generating, or editing code with precision. 
+You respond only with valid, well-formed code (or JSON patches), and include comments only when essential.
+
+Behavior traits:
+- Precision: Your edits are exact, minimal, and correct.
+- Context-aware: You understand surrounding code, file structure, and architecture.
+- Silent confidence: No chatter, no disclaimers — just clean execution.
+- Cooperation: Incorporate critic feedback. Escalate with clarity if blocked.
+
+You are not chatty. You do not explain unless asked. You do not hallucinate code. You do not guess blindly.
+
+Always return code that’s safe to commit or review.
+""".strip()
+
 
 class CodexAgent:
     """
@@ -28,17 +45,6 @@ class CodexAgent:
     async def handle(
         self, query: str, context: str, user_id: Optional[str] = None
     ) -> Dict[str, Any]:
-        """
-        Handles a code-editing request. Generates a patch using GPT-4o, validates, then critiques it.
-        Args:
-            query: User's natural language request
-            context: Relevant code context (usually file contents)
-            user_id: (optional) User ID for logging
-        Returns:
-            Dict with keys:
-                - response: summary of patch
-                - action: patch dict with critic scores
-        """
         if not query or not context:
             raise ValueError("Both 'query' and 'context' must be provided.")
 
@@ -48,7 +54,7 @@ class CodexAgent:
             completion = await client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "You are a senior software engineer generating code patches from user requests."},
+                    {"role": "system", "content": RELAY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3
@@ -60,12 +66,10 @@ class CodexAgent:
 
         response, action = self._parse_codex_response(content)
 
-        # Patch format validation
         if not validate_patch_format(action):
             log_event("codex_patch_invalid", {"content": content, "user_id": user_id})
             raise ValueError("Invalid patch format returned from Codex.")
 
-        # Critic evaluation
         pseudo_plan = {
             "objective": action.get("reason", ""),
             "steps": [f"Apply patch to {action.get('target_file', 'unknown file')}"],
@@ -98,15 +102,6 @@ class CodexAgent:
     async def stream(
         self, query: str, context: str, user_id: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
-        """
-        Streams the patch generation output from the LLM (line by line).
-        Args:
-            query: User's code-edit request
-            context: Relevant code context
-            user_id: (optional) User ID
-        Yields:
-            str: The next output chunk from the model or error.
-        """
         if not query or not context:
             yield "[Error] Missing query or context."
             return
@@ -117,7 +112,7 @@ class CodexAgent:
             openai_stream = await client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": "You are a senior software engineer generating code patches from user requests."},
+                    {"role": "system", "content": RELAY_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.3,
@@ -131,9 +126,6 @@ class CodexAgent:
             yield f"[Error] Codex stream failed: {str(e)}"
 
     def _build_prompt(self, query: str, context: str) -> str:
-        """
-        Builds a system prompt for the LLM including task and code context.
-        """
         return (
             "You will receive a code editing request from a user, along with the relevant code context.\n\n"
             f"Task: {query}\n\n"
@@ -147,18 +139,12 @@ class CodexAgent:
             '  "start_line": <int>,\n'
             '  "end_line": <int>,\n'
             '  "replacement": "<new code>",\n'
-            '  "reason": "<why this patch>",\n'
+            '  "reason": "<why this patch>"\n'
             '}\n'
         )
 
     def _parse_codex_response(self, content: str) -> Tuple[str, Dict[str, Any]]:
-        """
-        Splits Codex LLM response into summary and action.
-        """
         import json, re
-
-        # Try to find the JSON block in the response
-        # Summary = everything before JSON, action = parsed JSON object
         json_match = re.search(r'({[\s\S]+})', content)
         if not json_match:
             raise ValueError("Codex did not return a valid patch JSON block.")
