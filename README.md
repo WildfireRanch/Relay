@@ -263,3 +263,24 @@ Relay now supports a fully embedded drag-and-drop layout editor using [Puck](htt
 - Editor access available via 🧩 Sandbox button in sidebar
 
 > 🔐 Future: Add named layouts, version history, and user-specific layouts
+# Relay App Core Flows & Audit
+
+## 1. User Question
+- [ ] UI: AskAgent > /ask API > agent backend > LLM > response to UI
+
+## 2. Docs Sync
+- [ ] UI: DocsSyncPanel > /context/sync_docs API > sync_google_docs.py > local docs > index update
+
+## 3. Logging & Errors
+- [ ] LogsPanel fetches /logs/recent API
+- [ ] Server writes logs to logs/session_log.jsonl
+
+## 4. Dead/Unused Code Candidates
+- [ ] tests/ folder (just deleted)
+- [ ] queue.py (already deleted)
+- [ ] old endpoints (list here...)
+
+## TODO
+- [ ] Remove/merge any components with 0 references
+- [ ] Confirm all sidebar links work
+- [ ] Sketch "What happens when I X" for every major UI feature
