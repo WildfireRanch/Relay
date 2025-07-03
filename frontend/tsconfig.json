@@ -1,49 +1,49 @@
 {
   "compilerOptions": {
     // ========= ECMAScript Target & Modules =========
-    "target": "esnext",                      // Use the latest JS features
-    "module": "esnext",                      // Modern ES modules
-    "lib": ["dom", "dom.iterable", "esnext"],// Browser + latest ES features
+    "target": "esnext",
+    "module": "esnext",
+    "lib": ["dom", "dom.iterable", "esnext"],
 
     // ========= TypeScript Core Behavior =========
-    "strict": true,                          // All strict type-checking options
-    "forceConsistentCasingInFileNames": true,// Catch case issues on import
-    "noEmit": true,                          // Don't output .js files
-    "incremental": true,                     // Speed up repeated builds
-    "skipLibCheck": true,                    // Faster builds, disables type-checking node_modules
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "incremental": true,
+    "skipLibCheck": true,
 
     // ========= Module Resolution & Interop =========
-    "esModuleInterop": true,                  // Allow default imports from CJS modules
-    "moduleResolution": "bundler",            // (Next.js 13+ best practice)
-    "resolveJsonModule": true,                // Allows importing JSON files
-    "isolatedModules": true,                  // Required by Next.js
+    "esModuleInterop": true,
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
 
     // ========= JS/TS Interop =========
-    "allowJs": true,                          // Allow JavaScript files
+    "allowJs": true,
 
     // ========= JSX Behavior =========
-    "jsx": "preserve",                        // JSX remains for Next.js to handle
+    "jsx": "preserve",
 
     // ========= Path Aliases =========
-    "baseUrl": ".",                           // Root for path mappings
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],                       // ✅ @/lib/api → src/lib/api
-      "@components/*": ["src/components/*"],  // Optional: import from @components/...
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"]
     },
 
+    // ========= Type Definitions =========
+    "types": ["vitest"],
+
     // ========= Next.js Plugins =========
-    "plugins": [
-      { "name": "next" }
-    ]
+    "plugins": [{ "name": "next" }]
   },
   "include": [
-    "next-env.d.ts",         // Next.js auto-generated types
-    "**/*.ts",               // All TypeScript files
-    "**/*.tsx",              // All TSX (React) files
-    ".next/types/**/*.ts",   // Next.js build artifacts (for type safety)
-    "types/**/*.d.ts"        // Any global/custom type definitions
+    "next-env.d.ts",
+    "vitest-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts",
+    "types/**/*.d.ts"
   ],
-  "exclude": [
-    "node_modules"           // Never include node_modules
-  ]
+  "exclude": ["node_modules"]
 }
