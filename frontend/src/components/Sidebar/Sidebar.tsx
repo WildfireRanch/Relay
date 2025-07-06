@@ -15,7 +15,7 @@ const links = [
   { href: "/control", label: "Control", icon: "/Echo.png" },
   { href: "/planner", label: "Planner", icon: "/ballcap beard.png" },
   { href: "/email", label: "Email", icon: "/blackbeard earing.png" },
-  { href: "/ActionQueue", label: "ActionQueue", icon: "/beanie and smoke.png" },
+  { href: "/action-queue", label: "ActionQueue", icon: "/beanie and smoke.png" },
   { href: "/janitor", label: "Janitor", icon: "/sunglass shadow.png" },
 
 ];
