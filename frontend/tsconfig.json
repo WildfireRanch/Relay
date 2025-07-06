@@ -31,15 +31,11 @@
       "@components/*": ["src/components/*"]
     },
 
-    // ========= Type Definitions =========
-    "types": ["vitest"],
-
     // ========= Next.js Plugins =========
     "plugins": [{ "name": "next" }]
   },
   "include": [
     "next-env.d.ts",
-    "vitest-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",

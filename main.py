@@ -125,6 +125,7 @@ from routes.search import router as search_router
 from routes.admin import router as admin_router
 from routes.codex import router as codex_router
 from routes.mcp import router as mcp_router
+from routes.logs import router as logs_router
 
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -136,6 +137,7 @@ app.include_router(kb_router)
 app.include_router(search_router)
 app.include_router(codex_router)
 app.include_router(mcp_router)
+app.include_router(logs_router)
 
 if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
     app.include_router(admin_router)
