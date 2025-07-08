@@ -1,11 +1,33 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # File: services/kb.py
-# Purpose: Full-featured semantic KB for LlamaIndex (robust chunking, tiering, filtering, search)
+# Purpose: Full-featured semantic KB for LlamaIndex (robust chunking, tiering, filtering, search ,embedding operations within the system)
 #           - Aggressive junk filtering & deduplication
 #           - Tier-aware, content-boosted ranking
 #           - Context-rich node metadata for intelligent agent answers
 #           - CLI & debug
-# Updated: 2025-06-30 (Debug hardening for startup hangs)
+#
+# Upstream:
+#   - ENV: KB_EMBED_MODEL, OPENAI_EMBED_MODEL
+#   - Imports: hashlib, json, llama_index.core, llama_index.core.extractors, llama_index.core.ingestion, llama_index.core.node_parser, llama_index.embeddings.openai, logging, os, pathlib, services.config, shutil, sys, time, typing
+#
+# Downstream:
+#   - services.agent
+#   - services.context_injector
+#
+# Contents:
+#   - _kb_cli()
+#   - _vector_dim_current()
+#   - _vector_dim_stored()
+#   - api_reindex()
+#   - api_search()
+#   - embed_all()
+#   - ensure_vector_dim_initialized()
+#   - get_index()
+#   - get_recent_summaries()
+#   - index_is_valid()
+#   - query_index()
+#   - search()
+#   - should_index_file()
 # ─────────────────────────────────────────────────────────────────────────────
 
 import os

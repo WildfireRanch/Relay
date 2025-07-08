@@ -1,7 +1,27 @@
-# File: agents/simulation_agent.py
-# Purpose: SimulationAgent for Relay
-# Runs hypothetical plan executions in a sandboxed environment.
-# Helps catch errors, safety issues, and performance bottlenecks before real actions.
+# File: simulation_agent.py
+# Directory: agents
+# Purpose: # Purpose: Defines a class to manage and execute simulations based on predefined plans.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, json, typing
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - SimulationAgent()
+#   - __init__()
+#   - run()
+#   - simulate_plan()
+
+
+
+
+
+
+
+
 
 from typing import List, Dict, Any
 from core.logging import log_event

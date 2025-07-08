@@ -1,6 +1,27 @@
 # File: relay_mcp.py
-# Directory: core/
-# Purpose: Registers core agents as MCP tools using FastAPIMCP
+# Directory: core
+# Purpose: # Purpose: Provides the interface and tools for managing and testing the MCP (Master Control Program) integration within a FastAPI framework.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents, agents.mcp_agent, fastapi, fastapi_mcp, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - codex_generate_patch()
+#   - register_mcp()
+#   - test_full_mcp_run()
+#   - test_tool()
+
+
+
+
+
+
+
+
 
 from fastapi import FastAPI, APIRouter, Request
 from fastapi_mcp import FastAPIMCP, tool

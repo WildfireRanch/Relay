@@ -1,6 +1,28 @@
 # File: main.py
-# Directory: project root
-# Purpose: Relay backend entrypoint for FastAPI with CORS, startup validation, router mounting, ENV awareness, and bulletproof OpenTelemetry tracing
+# Directory: .
+# Purpose: # Purpose: Serve as the entry point for the web application, initializing the server and routing requests to appropriate handlers.
+#
+# Upstream:
+#   - ENV: ENABLE_ADMIN_TOOLS, ENV, FRONTEND_ORIGIN, FRONTEND_ORIGIN_REGEX, JAEGER_HOST, JAEGER_PORT, PORT
+#   - Imports: __future__, dotenv, fastapi, fastapi.middleware.cors, fastapi.responses, logging, opentelemetry, opentelemetry.exporter.jaeger.thrift, opentelemetry.instrumentation.fastapi, opentelemetry.sdk.resources, opentelemetry.sdk.trace, opentelemetry.sdk.trace.export, os, pathlib, routes.admin, routes.ask, routes.codex, routes.control, routes.debug, routes.docs, routes.kb, routes.logs, routes.mcp, routes.oauth, routes.search, routes.status, services, subprocess, sys, uvicorn
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - ensure_kb_index()
+#   - health_check()
+#   - root()
+#   - test_cors()
+#   - version()
+
+
+
+
+
+
+
+
 
 from __future__ import annotations
 

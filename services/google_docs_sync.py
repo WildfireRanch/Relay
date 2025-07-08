@@ -1,11 +1,23 @@
-# File: services/google_docs_sync.py
-# Directory: /services
-# Purpose: Synchronize Google Docs from the COMMAND_CENTER Drive folder into local Markdown files
-# Usage:
-#   1. Set env var GOOGLE_CREDS_JSON to a base64-encoded Google client secret JSON
-#   2. (Optional) Set env var GOOGLE_TOKEN_JSON to a base64-encoded OAuth token JSON for bootstrapping
-#   3. For local development, set ENV=local to allow interactive OAuth login
-#   4. Call sync_google_docs() to fetch and convert all docs into docs/imported/
+# ──────────────────────────────────────────────────────────────────────────────
+# File: google_docs_sync.py
+# Directory: services
+# Purpose: # Purpose: Synchronize documents from Google Docs to local storage, handling authentication, retrieval, and conversion to markdown.
+#
+# Upstream:
+#   - ENV: ENV, GOOGLE_CREDS_JSON, GOOGLE_TOKEN_JSON
+#   - Imports: base64, google.auth.transport.requests, google.oauth2.credentials, google_auth_oauthlib.flow, googleapiclient.discovery, markdownify, os, pathlib
+#
+# Downstream:
+#   - routes.context
+#   - routes.docs
+#
+# Contents:
+#   - fetch_and_save_doc()
+#   - find_folder_id()
+#   - get_docs_in_folder()
+#   - get_google_service()
+#   - sync_google_docs()
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 import base64

@@ -1,9 +1,24 @@
-# File: routes/ask.py
-# Directory: routes/
-# Purpose: Unified API routes for /ask endpoints — user entry point to Relay agents
-#          Delegates all query logic to MCP (run_mcp), handling agent/critic orchestration.
-#          Handles streaming for both Codex and Echo (primary/fallback) agents.
-# Updated: 2025-07-02
+# ──────────────────────────────────────────────────────────────────────────────
+# File: ask.py
+# Directory: routes
+# Purpose: # Purpose: Provides API endpoints for handling various types of requests and interactions with OpenAI models and agents.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents.codex_agent, agents.echo_agent, agents.mcp_agent, fastapi, fastapi.responses, openai, traceback, typing, utils.openai_client
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - ask_codex_stream()
+#   - ask_echo_stream()
+#   - ask_get()
+#   - ask_post()
+#   - ask_stream()
+#   - test_openai()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 import traceback
 from fastapi import APIRouter, Query, Request, Header, HTTPException

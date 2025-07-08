@@ -1,7 +1,18 @@
-# File: services/summarize_memory.py
-# Directory: services/
-# Purpose: Use OpenAI to generate concise summary of a user-agent memory exchange
-
+# ─────────────────────────────────────────────────────────────────────────────
+# File: summarize_memory.py
+# Directory: services
+# Purpose: # Purpose: Provide a summary of memory usage and management within the system, utilizing OpenAI services for analysis.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: openai, os, utils.openai_client
+#
+# Downstream:
+#   - services.context_injector
+#
+# Contents:
+#   - summarize_memory_entry()
+# ─────────────────────────────────────────────────────────────────────────────
 import os
 from openai import AsyncOpenAI
 from utils.openai_client import create_openai_client

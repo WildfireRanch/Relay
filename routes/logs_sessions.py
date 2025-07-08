@@ -1,6 +1,18 @@
-# File: routes/logs_sessions.py
-# Directory: routes/
-# Purpose: API route for listing user session memory logs from /logs/sessions/*.jsonl
+# ──────────────────────────────────────────────────────────────────────────────
+# Directory: routes
+# Purpose: # Purpose: Manage and retrieve logs of user sessions within the application.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: fastapi, json, pathlib
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - list_all_sessions()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, Request
 from pathlib import Path

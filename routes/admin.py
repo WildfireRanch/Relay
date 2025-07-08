@@ -1,10 +1,29 @@
-# routes/admin.py
-# ------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# File: admin.py
+# Directory: routes
+# Purpose: # Purpose: Provides administrative functionalities like logging, indexing, and system health checks for the web service.
 # Admin and Ops Endpoints for Relay Command Center
 # Secure, auditable, and environment-driven maintenance tools.
 # ALL endpoints require a valid API key (X-API-Key header, matches API_KEY env var).
 # Review and update environment variables in Railway/Vercel/Codespaces as needed.
-# ------------------------------------------------------------------------
+
+# Upstream:
+#   - ENV: —
+#   - Imports: datetime, fastapi, fastapi.responses, os, pathlib, platform, psutil, services.config, services.indexer, shutil, zipfile
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - backup_index()
+#   - clean_index()
+#   - download_log()
+#   - health_check()
+#   - log_admin_event()
+#   - require_api_key()
+#   - trigger_reindex()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 import shutil

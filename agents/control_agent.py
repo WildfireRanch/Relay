@@ -1,6 +1,31 @@
-# File: agents/control_agent.py
-# Purpose: Securely execute structured plans as shell actions or toggles
-# Directory: agents/
+# File: control_agent.py
+# Directory: agents
+# Purpose: # Purpose: Provides an interface for managing and controlling system services, including starting, restarting, and cache management.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, shlex, subprocess, typing
+#
+# Downstream:
+#   - agents.mcp_agent
+#   - routes.control
+#
+# Contents:
+#   - ControlAgent()
+#   - __init__()
+#   - _run_command()
+#   - clear_cache()
+#   - echo_command()
+#   - restart_service()
+#   - run()
+
+
+
+
+
+
+
+
 
 from typing import Dict, Any
 from core.logging import log_event

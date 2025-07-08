@@ -1,7 +1,23 @@
-# File: agents/codex_agent.py
-# Purpose: Handles code-editing tasks (bugfix, refactor, docstring gen)
-# Returns a natural language summary and structured "patch" action with critic analysis
-# Exports: codex_agent (CodexAgent instance)
+# File: codex_agent.py
+# Directory: agents
+# Purpose: # Purpose: Manages interactions with the OpenAI Codex model, handling prompt creation, response parsing, and streaming data for code generation tasks.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents.critic_agent, core.logging, dotenv, json, openai, os, re, typing, utils.openai_client, utils.patch_utils
+#
+# Downstream:
+#   - agents.mcp_agent
+#   - routes.ask
+#
+# Contents:
+#   - CodexAgent()
+#   - _build_prompt()
+#   - _parse_codex_response()
+#   - handle()
+#   - stream()
+
+
 
 import os
 from typing import Dict, Any, Optional, AsyncGenerator, Tuple

@@ -1,3 +1,23 @@
+# File: test_planner_agent.py
+# Directory: tests
+# Purpose: # Purpose: Provides unit tests for the planner agent's behavior when encountering invalid GPT labels.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents, llama_index.core.settings, pytest, unittest.mock
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - test_critic_fallback_on_invalid_gpt_label()
+
+
+
+
+
+
+
 import pytest
 from unittest.mock import AsyncMock, patch
 from agents import planner_agent

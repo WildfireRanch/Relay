@@ -1,6 +1,22 @@
-# File: services/gmail.py
-# Directory: services/
-# Purpose: Gmail read/write utility using Google OAuth creds (Relay control/email ops)
+# ──────────────────────────────────────────────────────────────────────────────
+# File: gmail.py
+# Directory: services
+# Purpose: # Purpose: Provides utility functions for interacting with the Gmail API, including sending emails and managing email listings.
+#
+# Upstream:
+#   - ENV: GOOGLE_CREDS_JSON, NOTIFY_FROM_EMAIL
+#   - Imports: base64, email.mime.text, google.oauth2.service_account, googleapiclient.discovery, os, pathlib
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - get_email()
+#   - get_gmail_service()
+#   - list_emails()
+#   - send_email()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 from googleapiclient.discovery import build

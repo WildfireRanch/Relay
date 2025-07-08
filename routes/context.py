@@ -1,6 +1,23 @@
-# File: routes/context.py
-# Purpose: Robust API endpoints for updating and syncing global context and project summaries,
-#          with full markdown safety and error handling for downstream context injection.
+# ──────────────────────────────────────────────────────────────────────────────
+# File: context.py
+# Directory: routes
+# Purpose: # Purpose: Manage and synchronize documentation context between local and cloud storage, ensuring consistency and updating legacy systems.
+#
+# Upstream:
+#   - ENV: OPENAI_API_KEY
+#   - Imports: fastapi, openai, os, pathlib, services.google_docs_sync, services.logs, traceback
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - ensure_stub_file()
+#   - legacy_sync_google()
+#   - safe_write_markdown()
+#   - sync_docs_and_update()
+#   - update_context_summary()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException
 from services.logs import get_recent_logs, log_and_refresh

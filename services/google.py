@@ -1,4 +1,19 @@
-# File: services/google.py
+# ──────────────────────────────────────────────────────────────────────────────
+# File: google.py
+# Directory: services
+# Purpose: Provides functionality for fetching and converting Google Drive documents into markdown format.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: google_docs_sync, markdownify, typing
+#
+# Downstream:
+#   - scripts.sync_context_docs
+#
+# Contents:
+#   - fetch_drive_docs()
+# ──────────────────────────────────────────────────────────────────────────────
+
 """Utility helpers for fetching Google Docs content."""
 
 from typing import List, Tuple
@@ -10,7 +25,6 @@ from .google_docs_sync import (
     get_docs_in_folder,
     COMMAND_CENTER_FOLDER_NAME,
 )
-
 
 def fetch_drive_docs() -> List[Tuple[str, str]]:
     """Return (title, markdown) for docs in the COMMAND_CENTER folder."""

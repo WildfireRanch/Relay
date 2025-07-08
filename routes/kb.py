@@ -1,8 +1,25 @@
-# routes/kb.py
-# Directory: routes/
-# Purpose: API routes for knowledge base (KB) semantic search, summary, and admin endpoints.
+# ──────────────────────────────────────────────────────────────────────────────
+# File: kb.py
+# Directory: routes
+# Purpose: Provides the backend functionality for knowledge base search and management, including API endpoints and data validation models.
 # Security: All admin/debug endpoints require X-API-Key header, which must match API_KEY in environment.
 # Stack: FastAPI, LlamaIndex/OpenAI (via services.kb), User-aware
+# Upstream:
+#   - ENV: —
+#   - Imports: fastapi, os, pydantic, services, typing
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - SearchQuery()
+#   - get_summary()
+#   - reindex_kb()
+#   - require_api_key()
+#   - search_kb()
+#   - search_kb_get()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException, Header, Depends, Query
 from pydantic import BaseModel

@@ -1,6 +1,27 @@
-# File: agents/trainer_agent.py
-# Purpose: Observational learner that improves system logic over time based on plan outcomes, critic responses, and user feedback.
-# Role: Reflective observer (not judge); writes outcomes to graph for MetaPlanner use and summarizes training patterns via `run()`.
+# File: trainer_agent.py
+# Directory: agents
+# Purpose: # Purpose: Manages the training process of agents, including initialization, execution, and result ingestion.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, datetime, services.neo4j_driver, typing
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - TrainerAgent()
+#   - __init__()
+#   - ingest_results()
+#   - run()
+
+
+
+
+
+
+
+
 
 from typing import List, Dict, Optional, Any
 from datetime import datetime

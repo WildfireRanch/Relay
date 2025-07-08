@@ -1,0 +1,1690 @@
+[
+  {
+    "file": "test_graph_neoagent.py",
+    "directory": ".",
+    "contents": [
+      "test"
+    ],
+    "imports": [
+      "services.neo4j_driver",
+      "asyncio"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_graph_neoagent.py\n# Directory: .\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: asyncio, services.neo4j_driver\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - test()\n\n"
+  },
+  {
+    "file": "main.py",
+    "directory": ".",
+    "contents": [
+      "ensure_kb_index",
+      "root",
+      "health_check",
+      "test_cors",
+      "version"
+    ],
+    "imports": [
+      "__future__",
+      "os",
+      "logging",
+      "sys",
+      "pathlib",
+      "fastapi",
+      "fastapi.middleware.cors",
+      "fastapi.responses",
+      "routes.ask",
+      "routes.status",
+      "routes.control",
+      "routes.docs",
+      "routes.oauth",
+      "routes.debug",
+      "routes.kb",
+      "routes.search",
+      "routes.admin",
+      "routes.codex",
+      "routes.mcp",
+      "routes.logs",
+      "services",
+      "opentelemetry",
+      "opentelemetry.sdk.resources",
+      "opentelemetry.sdk.trace",
+      "opentelemetry.sdk.trace.export",
+      "opentelemetry.exporter.jaeger.thrift",
+      "opentelemetry.instrumentation.fastapi",
+      "uvicorn",
+      "dotenv",
+      "subprocess"
+    ],
+    "env_vars": [
+      "ENV",
+      "FRONTEND_ORIGIN_REGEX",
+      "FRONTEND_ORIGIN",
+      "ENV",
+      "JAEGER_HOST",
+      "JAEGER_PORT",
+      "PORT",
+      "ENABLE_ADMIN_TOOLS"
+    ],
+    "header_block": "# File: main.py\n# Directory: .\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: ENABLE_ADMIN_TOOLS, ENV, FRONTEND_ORIGIN, FRONTEND_ORIGIN_REGEX, JAEGER_HOST, JAEGER_PORT, PORT\n#   - Imports: __future__, dotenv, fastapi, fastapi.middleware.cors, fastapi.responses, logging, opentelemetry, opentelemetry.exporter.jaeger.thrift, opentelemetry.instrumentation.fastapi, opentelemetry.sdk.resources, opentelemetry.sdk.trace, opentelemetry.sdk.trace.export, os, pathlib, routes.admin, routes.ask, routes.codex, routes.control, routes.debug, routes.docs, routes.kb, routes.logs, routes.mcp, routes.oauth, routes.search, routes.status, services, subprocess, sys, uvicorn\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ensure_kb_index()\n#   - health_check()\n#   - root()\n#   - test_cors()\n#   - version()\n\n"
+  },
+  {
+    "file": "cron_generate_auto_context.py",
+    "directory": "cron",
+    "contents": [
+      "run"
+    ],
+    "imports": [
+      "time",
+      "subprocess",
+      "datetime"
+    ],
+    "env_vars": [],
+    "header_block": "# File: cron_generate_auto_context.py\n# Directory: cron\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, subprocess, time\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n\n"
+  },
+  {
+    "file": "graph_store.py",
+    "directory": "memory",
+    "contents": [
+      "GraphMemoryStore",
+      "Neo4jGraphMemoryStore",
+      "add_node",
+      "add_edge",
+      "get_connected",
+      "query",
+      "get_all",
+      "__init__",
+      "close",
+      "add_node",
+      "add_edge",
+      "get_connected",
+      "query",
+      "get_all"
+    ],
+    "imports": [
+      "neo4j",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: graph_store.py\n# Directory: memory\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: neo4j, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - GraphMemoryStore()\n#   - Neo4jGraphMemoryStore()\n#   - __init__()\n#   - add_edge()\n#   - add_node()\n#   - close()\n#   - get_all()\n#   - get_connected()\n#   - query()\n\n"
+  },
+  {
+    "file": "patch_utils.py",
+    "directory": "utils",
+    "contents": [
+      "validate_patch_format",
+      "generate_diff",
+      "summarize_patch",
+      "render_patch_preview"
+    ],
+    "imports": [
+      "difflib",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: patch_utils.py\n# Directory: utils\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: difflib, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - generate_diff()\n#   - render_patch_preview()\n#   - summarize_patch()\n#   - validate_patch_format()\n\n"
+  },
+  {
+    "file": "openai_client.py",
+    "directory": "utils",
+    "contents": [
+      "create_openai_client"
+    ],
+    "imports": [
+      "os",
+      "httpx",
+      "openai"
+    ],
+    "env_vars": [
+      "OPENAI_TIMEOUT",
+      "OPENAI_MAX_RETRIES",
+      "OPENAI_API_KEY"
+    ],
+    "header_block": "# File: openai_client.py\n# Directory: utils\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: OPENAI_API_KEY, OPENAI_MAX_RETRIES, OPENAI_TIMEOUT\n#   - Imports: httpx, openai, os\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - create_openai_client()\n\n"
+  },
+  {
+    "file": "planner_agent.py",
+    "directory": "agents",
+    "contents": [
+      "PlannerAgent",
+      "ask"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "traceback",
+      "uuid",
+      "openai",
+      "core.logging",
+      "agents.critic_agent",
+      "utils.openai_client"
+    ],
+    "env_vars": [
+      "PLANNER_MODEL"
+    ],
+    "header_block": "# File: planner_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: PLANNER_MODEL\n#   - Imports: agents.critic_agent, core.logging, json, openai, os, traceback, utils.openai_client, uuid\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - PlannerAgent()\n#   - ask()\n\n"
+  },
+  {
+    "file": "simulation_agent.py",
+    "directory": "agents",
+    "contents": [
+      "SimulationAgent",
+      "run",
+      "__init__",
+      "simulate_plan"
+    ],
+    "imports": [
+      "typing",
+      "core.logging",
+      "json"
+    ],
+    "env_vars": [],
+    "header_block": "# File: simulation_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, json, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - SimulationAgent()\n#   - __init__()\n#   - run()\n#   - simulate_plan()\n\n"
+  },
+  {
+    "file": "codex_agent.py",
+    "directory": "agents",
+    "contents": [
+      "CodexAgent",
+      "handle",
+      "stream",
+      "_build_prompt",
+      "_parse_codex_response"
+    ],
+    "imports": [
+      "os",
+      "typing",
+      "openai",
+      "utils.openai_client",
+      "utils.patch_utils",
+      "core.logging",
+      "dotenv",
+      "agents.critic_agent",
+      "json",
+      "re"
+    ],
+    "env_vars": [],
+    "header_block": "# File: codex_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.critic_agent, core.logging, dotenv, json, openai, os, re, typing, utils.openai_client, utils.patch_utils\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - CodexAgent()\n#   - _build_prompt()\n#   - _parse_codex_response()\n#   - handle()\n#   - stream()\n\n"
+  },
+  {
+    "file": "echo_agent.py",
+    "directory": "agents",
+    "contents": [
+      "run",
+      "stream"
+    ],
+    "imports": [
+      "os",
+      "typing",
+      "openai",
+      "core.logging",
+      "utils.openai_client"
+    ],
+    "env_vars": [
+      "ECHO_MODEL"
+    ],
+    "header_block": "# File: echo_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: ECHO_MODEL\n#   - Imports: core.logging, openai, os, typing, utils.openai_client\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n#   - stream()\n\n"
+  },
+  {
+    "file": "docs_agent.py",
+    "directory": "agents",
+    "contents": [
+      "DocsAgent",
+      "analyze"
+    ],
+    "imports": [
+      "os",
+      "traceback",
+      "openai",
+      "agents.critic_agent",
+      "core.logging",
+      "utils.openai_client",
+      "json"
+    ],
+    "env_vars": [],
+    "header_block": "# File: docs_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.critic_agent, core.logging, json, openai, os, traceback, utils.openai_client\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - DocsAgent()\n#   - analyze()\n\n"
+  },
+  {
+    "file": "memory_agent.py",
+    "directory": "agents",
+    "contents": [
+      "MemoryAgent",
+      "run",
+      "__init__",
+      "_load_entries",
+      "_summarize_entries"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "pathlib",
+      "typing",
+      "datetime",
+      "core.logging"
+    ],
+    "env_vars": [],
+    "header_block": "# File: memory_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, datetime, json, os, pathlib, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - MemoryAgent()\n#   - __init__()\n#   - _load_entries()\n#   - _summarize_entries()\n#   - run()\n\n"
+  },
+  {
+    "file": "trainer_agent.py",
+    "directory": "agents",
+    "contents": [
+      "TrainerAgent",
+      "__init__",
+      "run",
+      "ingest_results"
+    ],
+    "imports": [
+      "typing",
+      "datetime",
+      "core.logging",
+      "services.neo4j_driver"
+    ],
+    "env_vars": [],
+    "header_block": "# File: trainer_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, datetime, services.neo4j_driver, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - TrainerAgent()\n#   - __init__()\n#   - ingest_results()\n#   - run()\n\n"
+  },
+  {
+    "file": "mcp_agent.py",
+    "directory": "agents",
+    "contents": [
+      "extract_plan_for_critics",
+      "run_mcp"
+    ],
+    "imports": [
+      "traceback",
+      "typing",
+      "agents.planner_agent",
+      "agents.control_agent",
+      "agents.docs_agent",
+      "agents.codex_agent",
+      "agents.echo_agent",
+      "agents.simulation_agent",
+      "agents.trainer_agent",
+      "agents.metaplanner_agent",
+      "agents.critic_agent.run",
+      "agents.memory_agent",
+      "agents.janitor_agent",
+      "services.context_injector",
+      "services.queue",
+      "core.logging"
+    ],
+    "env_vars": [],
+    "header_block": "# File: mcp_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.codex_agent, agents.control_agent, agents.critic_agent.run, agents.docs_agent, agents.echo_agent, agents.janitor_agent, agents.memory_agent, agents.metaplanner_agent, agents.planner_agent, agents.simulation_agent, agents.trainer_agent, core.logging, services.context_injector, services.queue, traceback, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - extract_plan_for_critics()\n#   - run_mcp()\n\n"
+  },
+  {
+    "file": "janitor_agent.py",
+    "directory": "agents",
+    "contents": [
+      "run"
+    ],
+    "imports": [
+      "services.memory",
+      "os",
+      "json",
+      "pathlib"
+    ],
+    "env_vars": [],
+    "header_block": "# File: janitor_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: json, os, pathlib, services.memory\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n\n"
+  },
+  {
+    "file": "control_agent.py",
+    "directory": "agents",
+    "contents": [
+      "ControlAgent",
+      "__init__",
+      "run",
+      "restart_service",
+      "clear_cache",
+      "echo_command",
+      "_run_command"
+    ],
+    "imports": [
+      "typing",
+      "core.logging",
+      "subprocess",
+      "shlex"
+    ],
+    "env_vars": [],
+    "header_block": "# File: control_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, shlex, subprocess, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ControlAgent()\n#   - __init__()\n#   - _run_command()\n#   - clear_cache()\n#   - echo_command()\n#   - restart_service()\n#   - run()\n\n"
+  },
+  {
+    "file": "metaplanner_agent.py",
+    "directory": "agents",
+    "contents": [
+      "suggest_route",
+      "run"
+    ],
+    "imports": [
+      "core.logging",
+      "services.graph"
+    ],
+    "env_vars": [],
+    "header_block": "# File: metaplanner_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, services.graph\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n#   - suggest_route()\n\n"
+  },
+  {
+    "file": "reflection_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "ReflectionCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: reflection_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ReflectionCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "redundancy_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "RedundancyCritic",
+      "__init__",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: redundancy_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - RedundancyCritic()\n#   - __init__()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "robustness_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "RobustnessCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: robustness_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - RobustnessCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "base.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "BaseCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "abc",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: base.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: abc, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - BaseCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "ethical_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "EthicalCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: ethical_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - EthicalCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "run.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "run_critics",
+      "run"
+    ],
+    "imports": [
+      "typing",
+      "structure_critic",
+      "logic_critic",
+      "safety_critic",
+      "clarity_critic",
+      "feasibility_critic",
+      "impact_critic",
+      "intent_critic",
+      "dependency_critic",
+      "redundancy_critic",
+      "ethical_critic",
+      "performance_critic",
+      "reflection_critic",
+      "consensus_critic",
+      "temporal_critic",
+      "robustness_critic",
+      "json",
+      "core.logging"
+    ],
+    "env_vars": [],
+    "header_block": "# File: run.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: clarity_critic, consensus_critic, core.logging, dependency_critic, ethical_critic, feasibility_critic, impact_critic, intent_critic, json, logic_critic, performance_critic, redundancy_critic, reflection_critic, robustness_critic, safety_critic, structure_critic, temporal_critic, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n#   - run_critics()\n\n"
+  },
+  {
+    "file": "temporal_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "TemporalCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: temporal_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - TemporalCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "performance_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "PerformanceCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base"
+    ],
+    "env_vars": [],
+    "header_block": "# File: performance_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - PerformanceCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "impact_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "ImpactCritic",
+      "enrich",
+      "score"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: impact_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ImpactCritic()\n#   - enrich()\n#   - score()\n\n"
+  },
+  {
+    "file": "dependency_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "DependencyCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: dependency_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - DependencyCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "intent_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "IntentCritic",
+      "__init__",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: intent_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - IntentCritic()\n#   - __init__()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "logic_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "LogicCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: logic_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - LogicCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "structure_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "StructureCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: structure_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - StructureCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "consensus_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "ConsensusCritic",
+      "__init__",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: consensus_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ConsensusCritic()\n#   - __init__()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "clarity_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "ClarityCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: clarity_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ClarityCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "MemoryAgent.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "SimpleMemoryStore",
+      "MemoryAgent",
+      "__init__",
+      "add",
+      "query",
+      "__init__",
+      "add_memory",
+      "get_memory",
+      "summarize_memory"
+    ],
+    "imports": [
+      "typing",
+      "os"
+    ],
+    "env_vars": [],
+    "header_block": "# File: MemoryAgent.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - MemoryAgent()\n#   - SimpleMemoryStore()\n#   - __init__()\n#   - add()\n#   - add_memory()\n#   - get_memory()\n#   - query()\n#   - summarize_memory()\n\n"
+  },
+  {
+    "file": "feasibility_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "FeasibilityCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: feasibility_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - FeasibilityCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "safety_critic.py",
+    "directory": "agents/critic_agent",
+    "contents": [
+      "SafetyCritic",
+      "evaluate"
+    ],
+    "imports": [
+      "base",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: safety_critic.py\n# Directory: agents/critic_agent\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: base, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - SafetyCritic()\n#   - evaluate()\n\n"
+  },
+  {
+    "file": "batch_generate_headers.py",
+    "directory": "tools",
+    "contents": [
+      "inject_header_block",
+      "main"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "pathlib",
+      "parse_file_metadata",
+      "index_codebase"
+    ],
+    "env_vars": [],
+    "header_block": "# File: batch_generate_headers.py\n# Directory: tools\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: index_codebase, json, os, parse_file_metadata, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - inject_header_block()\n#   - main()\n\n"
+  },
+  {
+    "file": "inject_header.py",
+    "directory": "tools",
+    "contents": [
+      "extract_metadata",
+      "format_header",
+      "inject_header"
+    ],
+    "imports": [
+      "ast",
+      "sys",
+      "pathlib"
+    ],
+    "env_vars": [],
+    "header_block": "# File: inject_header.py\n# Directory: tools\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: ast, pathlib, sys\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - extract_metadata()\n#   - format_header()\n#   - inject_header()\n\n"
+  },
+  {
+    "file": "parse_file_metadata.py",
+    "directory": "tools",
+    "contents": [
+      "extract_metadata",
+      "format_header"
+    ],
+    "imports": [
+      "ast",
+      "os",
+      "sys",
+      "pathlib"
+    ],
+    "env_vars": [],
+    "header_block": "# File: parse_file_metadata.py\n# Directory: tools\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: ast, os, pathlib, sys\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - extract_metadata()\n#   - format_header()\n\n"
+  },
+  {
+    "file": "index_codebase.py",
+    "directory": "tools",
+    "contents": [
+      "is_valid_file",
+      "walk_directory"
+    ],
+    "imports": [
+      "os",
+      "sys",
+      "pathlib"
+    ],
+    "env_vars": [],
+    "header_block": "# File: index_codebase.py\n# Directory: tools\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, pathlib, sys\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - is_valid_file()\n#   - walk_directory()\n\n"
+  },
+  {
+    "file": "test_ask_routes.py",
+    "directory": "tests",
+    "contents": [
+      "test_ask_get",
+      "test_ask_post",
+      "test_ask_stream_rejects_bad_input",
+      "test_codex_stream_endpoint",
+      "dummy_stream"
+    ],
+    "imports": [
+      "pytest",
+      "httpx",
+      "main",
+      "agents"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_ask_routes.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents, httpx, main, pytest\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - dummy_stream()\n#   - test_ask_get()\n#   - test_ask_post()\n#   - test_ask_stream_rejects_bad_input()\n#   - test_codex_stream_endpoint()\n\n"
+  },
+  {
+    "file": "test_docs.py",
+    "directory": "tests",
+    "contents": [
+      "test_docs_list",
+      "test_docs_list_limit_enforced",
+      "test_docs_sync",
+      "test_refresh_kb",
+      "test_full_sync"
+    ],
+    "imports": [
+      "sys",
+      "types",
+      "asyncio",
+      "pytest",
+      "routes"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_docs.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: asyncio, pytest, routes, sys, types\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - test_docs_list()\n#   - test_docs_list_limit_enforced()\n#   - test_docs_sync()\n#   - test_full_sync()\n#   - test_refresh_kb()\n\n"
+  },
+  {
+    "file": "test_admin_routes.py",
+    "directory": "tests",
+    "contents": [
+      "test_generate_auto_context_runs_correct_script",
+      "Dummy",
+      "fake_run"
+    ],
+    "imports": [
+      "json",
+      "subprocess",
+      "routes"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_admin_routes.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: json, routes, subprocess\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - Dummy()\n#   - fake_run()\n#   - test_generate_auto_context_runs_correct_script()\n\n"
+  },
+  {
+    "file": "test_mcp_route.py",
+    "directory": "tests",
+    "contents": [
+      "test_mcp_run_invokes_agent",
+      "fake_run_mcp"
+    ],
+    "imports": [
+      "pytest",
+      "httpx",
+      "main"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_mcp_route.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: httpx, main, pytest\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - fake_run_mcp()\n#   - test_mcp_run_invokes_agent()\n\n"
+  },
+  {
+    "file": "test_planner_agent.py",
+    "directory": "tests",
+    "contents": [
+      "test_critic_fallback_on_invalid_gpt_label"
+    ],
+    "imports": [
+      "pytest",
+      "unittest.mock",
+      "agents",
+      "llama_index.core.settings"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_planner_agent.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents, llama_index.core.settings, pytest, unittest.mock\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - test_critic_fallback_on_invalid_gpt_label()\n\n"
+  },
+  {
+    "file": "test_context_engine.py",
+    "directory": "tests",
+    "contents": [
+      "stub_search",
+      "ctx",
+      "test_context_build_includes_search_snippet",
+      "test_build_context_passes_threshold",
+      "test_env_root_change_clears_cache",
+      "fake_search"
+    ],
+    "imports": [
+      "types",
+      "sys",
+      "pathlib",
+      "pytest",
+      "services"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_context_engine.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: pathlib, pytest, services, sys, types\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ctx()\n#   - fake_search()\n#   - stub_search()\n#   - test_build_context_passes_threshold()\n#   - test_context_build_includes_search_snippet()\n#   - test_env_root_change_clears_cache()\n\n"
+  },
+  {
+    "file": "test_cors.py",
+    "directory": "tests",
+    "contents": [
+      "test_cors_regex"
+    ],
+    "imports": [
+      "importlib",
+      "pytest",
+      "httpx",
+      "os",
+      "main"
+    ],
+    "env_vars": [],
+    "header_block": "# File: test_cors.py\n# Directory: tests\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: httpx, importlib, main, os, pytest\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - test_cors_regex()\n\n"
+  },
+  {
+    "file": "sync_context_docs.py",
+    "directory": "scripts",
+    "contents": [
+      "sync_context_from_drive"
+    ],
+    "imports": [
+      "os",
+      "pathlib",
+      "services.google"
+    ],
+    "env_vars": [],
+    "header_block": "# File: sync_context_docs.py\n# Directory: scripts\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, pathlib, services.google\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - sync_context_from_drive()\n\n"
+  },
+  {
+    "file": "discover_features.py",
+    "directory": "scripts",
+    "contents": [
+      "find_routes_and_docs"
+    ],
+    "imports": [
+      "os",
+      "re"
+    ],
+    "env_vars": [],
+    "header_block": "# File: discover_features.py\n# Directory: scripts\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, re\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - find_routes_and_docs()\n\n"
+  },
+  {
+    "file": "relay_mcp.py",
+    "directory": "core",
+    "contents": [
+      "codex_generate_patch",
+      "register_mcp",
+      "test_tool",
+      "test_full_mcp_run"
+    ],
+    "imports": [
+      "fastapi",
+      "fastapi_mcp",
+      "typing",
+      "agents",
+      "agents.mcp_agent"
+    ],
+    "env_vars": [],
+    "header_block": "# File: relay_mcp.py\n# Directory: core\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents, agents.mcp_agent, fastapi, fastapi_mcp, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - codex_generate_patch()\n#   - register_mcp()\n#   - test_full_mcp_run()\n#   - test_tool()\n\n"
+  },
+  {
+    "file": "logging.py",
+    "directory": "core",
+    "contents": [
+      "log_event"
+    ],
+    "imports": [
+      "datetime",
+      "json"
+    ],
+    "env_vars": [],
+    "header_block": "# File: logging.py\n# Directory: core\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, json\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - log_event()\n\n"
+  },
+  {
+    "file": "sync_google_docs.py",
+    "directory": "frontend/sync",
+    "contents": [
+      "get_google_service",
+      "find_folder_id",
+      "get_docs_in_folder",
+      "fetch_and_save_doc",
+      "sync_google_docs"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "base64",
+      "pathlib",
+      "google.oauth2.credentials",
+      "google_auth_oauthlib.flow",
+      "googleapiclient.discovery",
+      "googleapiclient.errors",
+      "markdownify",
+      "google.auth.transport.requests"
+    ],
+    "env_vars": [
+      "GOOGLE_TOKEN_JSON",
+      "ENV",
+      "GOOGLE_CREDS_JSON"
+    ],
+    "header_block": "# File: sync_google_docs.py\n# Directory: frontend/sync\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: ENV, GOOGLE_CREDS_JSON, GOOGLE_TOKEN_JSON\n#   - Imports: base64, google.auth.transport.requests, google.oauth2.credentials, google_auth_oauthlib.flow, googleapiclient.discovery, googleapiclient.errors, json, markdownify, os, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - fetch_and_save_doc()\n#   - find_folder_id()\n#   - get_docs_in_folder()\n#   - get_google_service()\n#   - sync_google_docs()\n\n"
+  },
+  {
+    "file": "kb.py",
+    "directory": "routes",
+    "contents": [
+      "require_api_key",
+      "SearchQuery",
+      "search_kb",
+      "search_kb_get",
+      "get_summary",
+      "reindex_kb"
+    ],
+    "imports": [
+      "fastapi",
+      "pydantic",
+      "typing",
+      "services",
+      "os"
+    ],
+    "env_vars": [],
+    "header_block": "# File: kb.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: fastapi, os, pydantic, services, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - SearchQuery()\n#   - get_summary()\n#   - reindex_kb()\n#   - require_api_key()\n#   - search_kb()\n#   - search_kb_get()\n\n"
+  },
+  {
+    "file": "ask.py",
+    "directory": "routes",
+    "contents": [
+      "ask_get",
+      "ask_post",
+      "ask_stream",
+      "ask_codex_stream",
+      "ask_echo_stream",
+      "test_openai"
+    ],
+    "imports": [
+      "traceback",
+      "fastapi",
+      "fastapi.responses",
+      "typing",
+      "agents.mcp_agent",
+      "agents.codex_agent",
+      "agents.echo_agent",
+      "utils.openai_client",
+      "openai"
+    ],
+    "env_vars": [],
+    "header_block": "# File: ask.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.codex_agent, agents.echo_agent, agents.mcp_agent, fastapi, fastapi.responses, openai, traceback, typing, utils.openai_client\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ask_codex_stream()\n#   - ask_echo_stream()\n#   - ask_get()\n#   - ask_post()\n#   - ask_stream()\n#   - test_openai()\n\n"
+  },
+  {
+    "file": "admin.py",
+    "directory": "routes",
+    "contents": [
+      "require_api_key",
+      "log_admin_event",
+      "clean_index",
+      "trigger_reindex",
+      "health_check",
+      "download_log",
+      "backup_index"
+    ],
+    "imports": [
+      "os",
+      "shutil",
+      "psutil",
+      "platform",
+      "zipfile",
+      "fastapi",
+      "fastapi.responses",
+      "pathlib",
+      "datetime",
+      "services.config",
+      "services.indexer"
+    ],
+    "env_vars": [],
+    "header_block": "# File: admin.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, fastapi, fastapi.responses, os, pathlib, platform, psutil, services.config, services.indexer, shutil, zipfile\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - backup_index()\n#   - clean_index()\n#   - download_log()\n#   - health_check()\n#   - log_admin_event()\n#   - require_api_key()\n#   - trigger_reindex()\n\n"
+  },
+  {
+    "file": "oauth.py",
+    "directory": "routes",
+    "contents": [
+      "start_oauth",
+      "oauth_callback"
+    ],
+    "imports": [
+      "os",
+      "base64",
+      "pathlib",
+      "fastapi",
+      "fastapi.responses",
+      "google_auth_oauthlib.flow"
+    ],
+    "env_vars": [
+      "OAUTH_REDIRECT_URI",
+      "POST_AUTH_REDIRECT_URI",
+      "GOOGLE_CREDS_JSON"
+    ],
+    "header_block": "# File: oauth.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: GOOGLE_CREDS_JSON, OAUTH_REDIRECT_URI, POST_AUTH_REDIRECT_URI\n#   - Imports: base64, fastapi, fastapi.responses, google_auth_oauthlib.flow, os, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - oauth_callback()\n#   - start_oauth()\n\n"
+  },
+  {
+    "file": "logs_sessions.py",
+    "directory": "routes",
+    "contents": [
+      "list_all_sessions"
+    ],
+    "imports": [
+      "fastapi",
+      "pathlib",
+      "json"
+    ],
+    "env_vars": [],
+    "header_block": "# File: logs_sessions.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: fastapi, json, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - list_all_sessions()\n\n"
+  },
+  {
+    "file": "embeddings.py",
+    "directory": "routes",
+    "contents": [
+      "embeddings_status",
+      "embeddings_rebuild"
+    ],
+    "imports": [
+      "fastapi",
+      "fastapi.responses",
+      "services",
+      "os",
+      "pathlib",
+      "time",
+      "pickle"
+    ],
+    "env_vars": [],
+    "header_block": "# File: embeddings.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: fastapi, fastapi.responses, os, pathlib, pickle, services, time\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - embeddings_rebuild()\n#   - embeddings_status()\n\n"
+  },
+  {
+    "file": "logs.py",
+    "directory": "routes",
+    "contents": [
+      "recent_logs"
+    ],
+    "imports": [
+      "fastapi",
+      "services.logs"
+    ],
+    "env_vars": [],
+    "header_block": "# File: logs.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: fastapi, services.logs\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - recent_logs()\n\n"
+  },
+  {
+    "file": "status_code.py",
+    "directory": "routes",
+    "contents": [
+      "extract_functions",
+      "get_code_status"
+    ],
+    "imports": [
+      "fastapi",
+      "pathlib",
+      "os",
+      "ast",
+      "datetime"
+    ],
+    "env_vars": [],
+    "header_block": "# File: status_code.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: ast, datetime, fastapi, os, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - extract_functions()\n#   - get_code_status()\n\n"
+  },
+  {
+    "file": "status.py",
+    "directory": "routes",
+    "contents": [
+      "get_status_paths",
+      "get_env_status",
+      "get_version",
+      "get_version",
+      "get_summary",
+      "list_context_inventory",
+      "get_context_status",
+      "fmt_time"
+    ],
+    "imports": [
+      "fastapi",
+      "pathlib",
+      "os",
+      "subprocess",
+      "datetime",
+      "subprocess"
+    ],
+    "env_vars": [
+      "RELAY_PROJECT_ROOT",
+      "RELAY_PROJECT_ROOT"
+    ],
+    "header_block": "# File: status.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: RELAY_PROJECT_ROOT\n#   - Imports: datetime, fastapi, os, pathlib, subprocess\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - fmt_time()\n#   - get_context_status()\n#   - get_env_status()\n#   - get_status_paths()\n#   - get_summary()\n#   - get_version()\n#   - list_context_inventory()\n\n"
+  },
+  {
+    "file": "context.py",
+    "directory": "routes",
+    "contents": [
+      "safe_write_markdown",
+      "ensure_stub_file",
+      "update_context_summary",
+      "sync_docs_and_update",
+      "legacy_sync_google"
+    ],
+    "imports": [
+      "fastapi",
+      "services.logs",
+      "services.google_docs_sync",
+      "openai",
+      "pathlib",
+      "os",
+      "traceback"
+    ],
+    "env_vars": [
+      "OPENAI_API_KEY"
+    ],
+    "header_block": "# File: context.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: OPENAI_API_KEY\n#   - Imports: fastapi, openai, os, pathlib, services.google_docs_sync, services.logs, traceback\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ensure_stub_file()\n#   - legacy_sync_google()\n#   - safe_write_markdown()\n#   - sync_docs_and_update()\n#   - update_context_summary()\n\n"
+  },
+  {
+    "file": "search.py",
+    "directory": "routes",
+    "contents": [
+      "require_api_key",
+      "search"
+    ],
+    "imports": [
+      "__future__",
+      "os",
+      "logging",
+      "typing",
+      "fastapi",
+      "services"
+    ],
+    "env_vars": [
+      "API_KEY"
+    ],
+    "header_block": "# File: search.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: API_KEY\n#   - Imports: __future__, fastapi, logging, os, services, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - require_api_key()\n#   - search()\n\n"
+  },
+  {
+    "file": "debug.py",
+    "directory": "routes",
+    "contents": [
+      "debug_env"
+    ],
+    "imports": [
+      "fastapi",
+      "os"
+    ],
+    "env_vars": [
+      "GOOGLE_CREDS_JSON"
+    ],
+    "header_block": "# File: debug.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: GOOGLE_CREDS_JSON\n#   - Imports: fastapi, os\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - debug_env()\n\n"
+  },
+  {
+    "file": "codex.py",
+    "directory": "routes",
+    "contents": [
+      "PatchRequest",
+      "apply_patch"
+    ],
+    "imports": [
+      "os",
+      "fastapi",
+      "fastapi.responses",
+      "pydantic",
+      "utils.patch_utils",
+      "core.logging"
+    ],
+    "env_vars": [],
+    "header_block": "# File: codex.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, fastapi, fastapi.responses, os, pydantic, utils.patch_utils\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - PatchRequest()\n#   - apply_patch()\n\n"
+  },
+  {
+    "file": "admin_routes.py",
+    "directory": "routes",
+    "contents": [
+      "generate_auto_context"
+    ],
+    "imports": [
+      "fastapi",
+      "fastapi.responses",
+      "subprocess",
+      "os"
+    ],
+    "env_vars": [],
+    "header_block": "# File: admin_routes.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: fastapi, fastapi.responses, os, subprocess\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - generate_auto_context()\n\n"
+  },
+  {
+    "file": "index.py",
+    "directory": "routes",
+    "contents": [
+      "require_api_key",
+      "log_event",
+      "trigger_index"
+    ],
+    "imports": [
+      "fastapi",
+      "os",
+      "services.indexer",
+      "datetime",
+      "pathlib"
+    ],
+    "env_vars": [],
+    "header_block": "# File: index.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, fastapi, os, pathlib, services.indexer\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - log_event()\n#   - require_api_key()\n#   - trigger_index()\n\n"
+  },
+  {
+    "file": "mcp.py",
+    "directory": "routes",
+    "contents": [
+      "mcp_run"
+    ],
+    "imports": [
+      "fastapi",
+      "typing",
+      "agents.mcp_agent"
+    ],
+    "env_vars": [],
+    "header_block": "# File: mcp.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.mcp_agent, fastapi, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - mcp_run()\n\n"
+  },
+  {
+    "file": "docs.py",
+    "directory": "routes",
+    "contents": [
+      "require_api_key",
+      "_safe_resolve",
+      "list_docs",
+      "view_doc",
+      "sync_docs",
+      "refresh_kb",
+      "full_sync",
+      "promote_doc",
+      "prune_duplicates",
+      "mark_priority"
+    ],
+    "imports": [
+      "__future__",
+      "os",
+      "shutil",
+      "pathlib",
+      "typing",
+      "fastapi",
+      "fastapi.responses",
+      "services.google_docs_sync",
+      "services",
+      "services.context_engine",
+      "services.docs_utils"
+    ],
+    "env_vars": [],
+    "header_block": "# File: docs.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: __future__, fastapi, fastapi.responses, os, pathlib, services, services.context_engine, services.docs_utils, services.google_docs_sync, shutil, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - _safe_resolve()\n#   - full_sync()\n#   - list_docs()\n#   - mark_priority()\n#   - promote_doc()\n#   - prune_duplicates()\n#   - refresh_kb()\n#   - require_api_key()\n#   - sync_docs()\n#   - view_doc()\n\n"
+  },
+  {
+    "file": "control.py",
+    "directory": "routes",
+    "contents": [
+      "auth",
+      "load_actions",
+      "save_actions",
+      "append_log",
+      "update_action_history",
+      "queue_action",
+      "list_queue",
+      "approve_action",
+      "deny_action",
+      "list_log",
+      "write_file",
+      "control_test"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "uuid",
+      "pathlib",
+      "datetime",
+      "fastapi",
+      "services",
+      "agents",
+      "agents.control_agent"
+    ],
+    "env_vars": [
+      "API_KEY"
+    ],
+    "header_block": "# File: control.py\n# Directory: routes\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: API_KEY\n#   - Imports: agents, agents.control_agent, datetime, fastapi, json, os, pathlib, services, uuid\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - append_log()\n#   - approve_action()\n#   - auth()\n#   - control_test()\n#   - deny_action()\n#   - list_log()\n#   - list_queue()\n#   - load_actions()\n#   - queue_action()\n#   - save_actions()\n#   - update_action_history()\n#   - write_file()\n\n"
+  },
+  {
+    "file": "kb.py",
+    "directory": "services",
+    "contents": [
+      "should_index_file",
+      "_vector_dim_current",
+      "_vector_dim_stored",
+      "ensure_vector_dim_initialized",
+      "index_is_valid",
+      "embed_all",
+      "get_index",
+      "search",
+      "api_search",
+      "query_index",
+      "api_reindex",
+      "get_recent_summaries",
+      "_kb_cli"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "shutil",
+      "logging",
+      "pathlib",
+      "typing",
+      "services.config",
+      "llama_index.core",
+      "llama_index.core.extractors",
+      "llama_index.core.ingestion",
+      "llama_index.core.node_parser",
+      "llama_index.embeddings.openai",
+      "hashlib",
+      "sys",
+      "time",
+      "llama_index.core",
+      "llama_index.core"
+    ],
+    "env_vars": [
+      "KB_EMBED_MODEL",
+      "OPENAI_EMBED_MODEL"
+    ],
+    "header_block": "# File: kb.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: KB_EMBED_MODEL, OPENAI_EMBED_MODEL\n#   - Imports: hashlib, json, llama_index.core, llama_index.core.extractors, llama_index.core.ingestion, llama_index.core.node_parser, llama_index.embeddings.openai, logging, os, pathlib, services.config, shutil, sys, time, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - _kb_cli()\n#   - _vector_dim_current()\n#   - _vector_dim_stored()\n#   - api_reindex()\n#   - api_search()\n#   - embed_all()\n#   - ensure_vector_dim_initialized()\n#   - get_index()\n#   - get_recent_summaries()\n#   - index_is_valid()\n#   - query_index()\n#   - search()\n#   - should_index_file()\n\n"
+  },
+  {
+    "file": "semantic_retriever.py",
+    "directory": "services",
+    "contents": [
+      "get_semantic_context"
+    ],
+    "imports": [
+      "llama_index.core",
+      "llama_index.embeddings.openai",
+      "sys",
+      "traceback"
+    ],
+    "env_vars": [],
+    "header_block": "# File: semantic_retriever.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: llama_index.core, llama_index.embeddings.openai, sys, traceback\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - get_semantic_context()\n\n"
+  },
+  {
+    "file": "logs.py",
+    "directory": "services",
+    "contents": [
+      "log_entry",
+      "log_exception",
+      "get_recent_logs",
+      "log_and_refresh"
+    ],
+    "imports": [
+      "datetime",
+      "json",
+      "pathlib",
+      "requests",
+      "traceback"
+    ],
+    "env_vars": [],
+    "header_block": "# File: logs.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, json, pathlib, requests, traceback\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - get_recent_logs()\n#   - log_and_refresh()\n#   - log_entry()\n#   - log_exception()\n\n"
+  },
+  {
+    "file": "google.py",
+    "directory": "services",
+    "contents": [
+      "fetch_drive_docs"
+    ],
+    "imports": [
+      "typing",
+      "markdownify",
+      "google_docs_sync"
+    ],
+    "env_vars": [],
+    "header_block": "# File: google.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: google_docs_sync, markdownify, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - fetch_drive_docs()\n\n"
+  },
+  {
+    "file": "settings.py",
+    "directory": "services",
+    "contents": [
+      "assert_env"
+    ],
+    "imports": [
+      "os",
+      "dotenv",
+      "pathlib"
+    ],
+    "env_vars": [
+      "OPENAI_API_KEY",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_REDIRECT_URI"
+    ],
+    "header_block": "# File: settings.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, OPENAI_API_KEY\n#   - Imports: dotenv, os, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - assert_env()\n\n"
+  },
+  {
+    "file": "logger.py",
+    "directory": "services",
+    "contents": [
+      "log_info",
+      "log_warning",
+      "log_error",
+      "log_event"
+    ],
+    "imports": [
+      "logging",
+      "datetime"
+    ],
+    "env_vars": [],
+    "header_block": "# File: logger.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, logging\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - log_error()\n#   - log_event()\n#   - log_info()\n#   - log_warning()\n\n"
+  },
+  {
+    "file": "queue.py",
+    "directory": "services",
+    "contents": [
+      "queue_action"
+    ],
+    "imports": [],
+    "env_vars": [],
+    "header_block": "# File: queue.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: \u2014\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - queue_action()\n\n"
+  },
+  {
+    "file": "context_engine.py",
+    "directory": "services",
+    "contents": [
+      "ContextEngine",
+      "build",
+      "clear_cache"
+    ],
+    "imports": [
+      "services.context_injector"
+    ],
+    "env_vars": [],
+    "header_block": "# File: context_engine.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: services.context_injector\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - ContextEngine()\n#   - build()\n#   - clear_cache()\n\n"
+  },
+  {
+    "file": "gmail.py",
+    "directory": "services",
+    "contents": [
+      "get_gmail_service",
+      "send_email",
+      "list_emails",
+      "get_email"
+    ],
+    "imports": [
+      "os",
+      "googleapiclient.discovery",
+      "email.mime.text",
+      "base64",
+      "pathlib",
+      "google.oauth2.service_account"
+    ],
+    "env_vars": [
+      "GOOGLE_CREDS_JSON",
+      "NOTIFY_FROM_EMAIL",
+      "NOTIFY_FROM_EMAIL"
+    ],
+    "header_block": "# File: gmail.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: GOOGLE_CREDS_JSON, NOTIFY_FROM_EMAIL\n#   - Imports: base64, email.mime.text, google.oauth2.service_account, googleapiclient.discovery, os, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - get_email()\n#   - get_gmail_service()\n#   - list_emails()\n#   - send_email()\n\n"
+  },
+  {
+    "file": "graph.py",
+    "directory": "services",
+    "contents": [
+      "query_similar_routes",
+      "summarize_recent_context"
+    ],
+    "imports": [
+      "services.neo4j_driver",
+      "core.logging"
+    ],
+    "env_vars": [],
+    "header_block": "# File: graph.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, services.neo4j_driver\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - query_similar_routes()\n#   - summarize_recent_context()\n\n"
+  },
+  {
+    "file": "summarize_memory.py",
+    "directory": "services",
+    "contents": [
+      "summarize_memory_entry"
+    ],
+    "imports": [
+      "os",
+      "openai",
+      "utils.openai_client"
+    ],
+    "env_vars": [],
+    "header_block": "# File: summarize_memory.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: openai, os, utils.openai_client\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - summarize_memory_entry()\n\n"
+  },
+  {
+    "file": "google_docs_sync.py",
+    "directory": "services",
+    "contents": [
+      "get_google_service",
+      "find_folder_id",
+      "get_docs_in_folder",
+      "fetch_and_save_doc",
+      "sync_google_docs"
+    ],
+    "imports": [
+      "os",
+      "base64",
+      "pathlib",
+      "google.oauth2.credentials",
+      "google_auth_oauthlib.flow",
+      "google.auth.transport.requests",
+      "googleapiclient.discovery",
+      "markdownify"
+    ],
+    "env_vars": [
+      "GOOGLE_CREDS_JSON",
+      "GOOGLE_TOKEN_JSON",
+      "GOOGLE_TOKEN_JSON",
+      "ENV"
+    ],
+    "header_block": "# File: google_docs_sync.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: ENV, GOOGLE_CREDS_JSON, GOOGLE_TOKEN_JSON\n#   - Imports: base64, google.auth.transport.requests, google.oauth2.credentials, google_auth_oauthlib.flow, googleapiclient.discovery, markdownify, os, pathlib\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - fetch_and_save_doc()\n#   - find_folder_id()\n#   - get_docs_in_folder()\n#   - get_google_service()\n#   - sync_google_docs()\n\n"
+  },
+  {
+    "file": "delete_embeddings.py",
+    "directory": "services",
+    "contents": [
+      "iter_files",
+      "embed_text",
+      "build_index",
+      "search_index"
+    ],
+    "imports": [
+      "os",
+      "openai",
+      "numpy",
+      "pickle",
+      "sys"
+    ],
+    "env_vars": [],
+    "header_block": "# File: delete_embeddings.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: numpy, openai, os, pickle, sys\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - build_index()\n#   - embed_text()\n#   - iter_files()\n#   - search_index()\n\n"
+  },
+  {
+    "file": "indexer.py",
+    "directory": "services",
+    "contents": [
+      "should_index_file",
+      "get_language_from_path",
+      "collect_code_context",
+      "index_directories"
+    ],
+    "imports": [
+      "os",
+      "glob",
+      "sys",
+      "pathlib",
+      "llama_index.core",
+      "llama_index.embeddings.openai",
+      "llama_index.core.node_parser",
+      "services.config",
+      "shutil"
+    ],
+    "env_vars": [
+      "KB_EMBED_MODEL",
+      "OPENAI_EMBED_MODEL",
+      "WIPE_INDEX"
+    ],
+    "header_block": "# File: indexer.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: KB_EMBED_MODEL, OPENAI_EMBED_MODEL, WIPE_INDEX\n#   - Imports: glob, llama_index.core, llama_index.core.node_parser, llama_index.embeddings.openai, os, pathlib, services.config, shutil, sys\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - collect_code_context()\n#   - get_language_from_path()\n#   - index_directories()\n#   - should_index_file()\n\n"
+  },
+  {
+    "file": "env_checker.py",
+    "directory": "services",
+    "contents": [
+      "find_env_keys_in_code",
+      "check_env_keys"
+    ],
+    "imports": [
+      "os",
+      "re",
+      "pathlib",
+      "dotenv",
+      "pprint"
+    ],
+    "env_vars": [],
+    "header_block": "# File: env_checker.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: dotenv, os, pathlib, pprint, re\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - check_env_keys()\n#   - find_env_keys_in_code()\n\n"
+  },
+  {
+    "file": "neo4j_driver.py",
+    "directory": "services",
+    "contents": [
+      "get_session",
+      "execute_read",
+      "execute_write"
+    ],
+    "imports": [
+      "os",
+      "neo4j",
+      "contextlib",
+      "core.logging"
+    ],
+    "env_vars": [
+      "NEO4J_URI",
+      "NEO4J_USER",
+      "NEO4J_PASSWORD"
+    ],
+    "header_block": "# File: neo4j_driver.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER\n#   - Imports: contextlib, core.logging, neo4j, os\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - execute_read()\n#   - execute_write()\n#   - get_session()\n\n"
+  },
+  {
+    "file": "context_injector.py",
+    "directory": "services",
+    "contents": [
+      "safe_truncate",
+      "load_summary",
+      "load_global_context",
+      "load_context",
+      "build_recent_memory_summaries",
+      "build_context"
+    ],
+    "imports": [
+      "os",
+      "pathlib",
+      "typing",
+      "services.semantic_retriever",
+      "services.kb",
+      "services.graph",
+      "services.summarize_memory"
+    ],
+    "env_vars": [],
+    "header_block": "# File: context_injector.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, pathlib, services.graph, services.kb, services.semantic_retriever, services.summarize_memory, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - build_context()\n#   - build_recent_memory_summaries()\n#   - load_context()\n#   - load_global_context()\n#   - load_summary()\n#   - safe_truncate()\n\n"
+  },
+  {
+    "file": "docs_utils.py",
+    "directory": "services",
+    "contents": [
+      "extract_doc_id",
+      "build_doc_registry",
+      "choose_canonical_path",
+      "write_doc_metadata"
+    ],
+    "imports": [
+      "re",
+      "collections",
+      "pathlib",
+      "typing"
+    ],
+    "env_vars": [],
+    "header_block": "# File: docs_utils.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: collections, pathlib, re, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - build_doc_registry()\n#   - choose_canonical_path()\n#   - extract_doc_id()\n#   - write_doc_metadata()\n\n"
+  },
+  {
+    "file": "memory.py",
+    "directory": "services",
+    "contents": [
+      "summarize_memory_entry",
+      "save_memory_entry",
+      "debug_log_entry"
+    ],
+    "imports": [
+      "os",
+      "json",
+      "datetime"
+    ],
+    "env_vars": [],
+    "header_block": "# File: memory.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: datetime, json, os\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - debug_log_entry()\n#   - save_memory_entry()\n#   - summarize_memory_entry()\n\n"
+  },
+  {
+    "file": "agent.py",
+    "directory": "services",
+    "contents": [
+      "wants_docgen",
+      "search_docs",
+      "run_code_review",
+      "reflect_and_plan",
+      "answer",
+      "generate_doc_for_path",
+      "gen"
+    ],
+    "imports": [
+      "os",
+      "re",
+      "json",
+      "pathlib",
+      "typing",
+      "openai",
+      "services.kb",
+      "httpx",
+      "services.context_engine",
+      "utils.openai_client"
+    ],
+    "env_vars": [
+      "API_KEY",
+      "RAILWAY_URL",
+      "ENABLE_REFLECT_AND_PLAN"
+    ],
+    "header_block": "# File: agent.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: API_KEY, ENABLE_REFLECT_AND_PLAN, RAILWAY_URL\n#   - Imports: httpx, json, openai, os, pathlib, re, services.context_engine, services.kb, typing, utils.openai_client\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - answer()\n#   - gen()\n#   - generate_doc_for_path()\n#   - reflect_and_plan()\n#   - run_code_review()\n#   - search_docs()\n#   - wants_docgen()\n\n"
+  }
+]

@@ -1,5 +1,25 @@
-# File: agents/critic_agent/feasibility_critic.py
-# Purpose: Ensure that steps in the plan are executable based on available context or tools
+# File: feasibility_critic.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Provides a class to assess the feasibility of proposed solutions within the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: base, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - FeasibilityCritic()
+#   - evaluate()
+
+
+
+
+
+
+
+
 
 from .base import BaseCritic
 from typing import Dict, List

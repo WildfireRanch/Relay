@@ -1,9 +1,30 @@
-# File: routes/control.py
-# Directory: routes/
-# Purpose: Relay Action Queue & Audit API
-# - Queue, approve, deny, and execute agent-proposed actions
-# - Maintains audit log and Gmail notifications
-# - CORS-safe, with strong error handling and API key auth
+# ──────────────────────────────────────────────────────────────────────────────
+# File: control.py
+# Directory: routes
+# Purpose: # Purpose: Manages action control flows including authentication, logging, queuing, and approval processes within the application.
+#
+# Upstream:
+#   - ENV: API_KEY
+#   - Imports: agents, agents.control_agent, datetime, fastapi, json, os, pathlib, services, uuid
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - append_log()
+#   - approve_action()
+#   - auth()
+#   - control_test()
+#   - deny_action()
+#   - list_log()
+#   - list_queue()
+#   - load_actions()
+#   - queue_action()
+#   - save_actions()
+#   - update_action_history()
+#   - write_file()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os, json
 from uuid import uuid4

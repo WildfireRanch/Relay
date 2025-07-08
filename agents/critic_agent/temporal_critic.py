@@ -1,5 +1,25 @@
-# File: agents/critic_agent/temporal_critic.py
-# Purpose: Ensure steps are ordered correctly in time-sensitive workflows
+# File: temporal_critic.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Provides a class and methods for evaluating sequences over time, used for temporal analysis in the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: base, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - TemporalCritic()
+#   - evaluate()
+
+
+
+
+
+
+
+
 
 from .base import BaseCritic
 from typing import Dict, List

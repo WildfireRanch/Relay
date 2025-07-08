@@ -1,5 +1,20 @@
-# File: services/graph.py
-# Purpose: Graph query helpers for MetaPlanner (e.g. similar query lookup)
+# ──────────────────────────────────────────────────────────────────────────────
+# File: graph.py
+# Directory: services
+# Purpose: # Purpose: Provides functionalities to interact with graph databases for querying and summarizing route data.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, services.neo4j_driver
+#
+# Downstream:
+#   - agents.metaplanner_agent
+#   - services.context_injector
+#
+# Contents:
+#   - query_similar_routes()
+#   - summarize_recent_context()
+# ──────────────────────────────────────────────────────────────────────────────
 
 from services.neo4j_driver import neo4j_driver  # assumes driver is initialized separately
 from core.logging import log_event

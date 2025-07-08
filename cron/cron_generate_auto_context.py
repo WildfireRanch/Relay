@@ -1,5 +1,24 @@
-# File: cron/cron_generate_auto_context.py
-# Purpose: Scheduled job to generate global_context.auto.md daily
+# File: cron_generate_auto_context.py
+# Directory: cron
+# Purpose: # Purpose: Automates the generation of context data at scheduled intervals using system cron jobs.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: datetime, subprocess, time
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - run()
+
+
+
+
+
+
+
+
 
 import time
 import subprocess

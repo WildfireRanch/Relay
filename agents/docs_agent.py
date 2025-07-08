@@ -1,6 +1,25 @@
-# File: agents/docs_agent.py
-# Purpose: Analyze document content and produce structured summaries or plans
-# Includes critic review (structure, logic, safety) of generated insights
+# File: docs_agent.py
+# Directory: agents
+# Purpose: # Purpose: Manages the documentation analysis process using AI models to assess and improve content quality.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents.critic_agent, core.logging, json, openai, os, traceback, utils.openai_client
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - DocsAgent()
+#   - analyze()
+
+
+
+
+
+
+
+
 
 import os
 import traceback

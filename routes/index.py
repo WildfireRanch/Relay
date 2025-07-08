@@ -1,6 +1,22 @@
-# File: routes/index.py
-# Directory: routes/
-# Purpose: FastAPI endpoint to trigger code/doc indexing—secured with API Key, dev/staging only.
+# ──────────────────────────────────────────────────────────────────────────────
+# File: index.py
+# Directory: /routes/index.py
+# Purpose: # Purpose: Serve as the entry point for the API, handling key verifications, event logging, and triggering indexing operations.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: datetime, fastapi, os, pathlib, services.indexer
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - log_event()
+#   - require_api_key()
+#   - trigger_index()
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 from fastapi import APIRouter, Depends, HTTPException, Header
 import os

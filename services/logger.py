@@ -1,4 +1,22 @@
-# services/logger.py
+ # ─────────────────────────────────────────────────────────────────────────────
+# File: logger.py
+# Directory: services
+# Purpose: # Purpose: Provide centralized logging utilities for different levels of application events and errors.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: datetime, logging
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - log_error()
+#   - log_event()
+#   - log_info()
+#   - log_warning()
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 import logging
 from datetime import datetime
