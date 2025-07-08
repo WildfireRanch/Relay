@@ -1,0 +1,17 @@
+# File: <filename>.py
+# Directory: <relative path from repo root>
+# Purpose: <1–2 sentence summary of what this file does>
+#
+# Upstream:
+#   - <ENV variables>
+#   - <Imports from other internal modules>
+#   - <External services/APIs this depends on>
+#
+# Downstream:
+#   - <Functions or services this file calls>
+#   - <What this file returns or emits (e.g., HTTP endpoints, logs)>
+#
+# Contents:
+#   - <section or function 1 name>
+#   - <section or function 2 name>
+#   - ...

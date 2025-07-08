@@ -1,0 +1,322 @@
+.
+├── Dockerfile
+├── Echo-agent.code-workspace
+├── PY
+├── Procfile
+├── README.md
+├── agents
+│   ├── codex_agent.py
+│   ├── control_agent.py
+│   ├── critic_agent
+│   │   ├── MemoryAgent.py
+│   │   ├── __init__.py
+│   │   ├── base.py
+│   │   ├── clarity_critic.py
+│   │   ├── consensus_critic.py
+│   │   ├── dependency_critic.py
+│   │   ├── ethical_critic.py
+│   │   ├── feasibility_critic.py
+│   │   ├── impact_critic.py
+│   │   ├── intent_critic.py
+│   │   ├── logic_critic.py
+│   │   ├── performance_critic.py
+│   │   ├── redundancy_critic.py
+│   │   ├── reflection_critic.py
+│   │   ├── robustness_critic.py
+│   │   ├── run.py
+│   │   ├── safety_critic.py
+│   │   ├── structure_critic.py
+│   │   └── temporal_critic.py
+│   ├── docs_agent.py
+│   ├── echo_agent.py
+│   ├── janitor_agent.py
+│   ├── mcp_agent.py
+│   ├── memory_agent.py
+│   ├── metaplanner_agent.py
+│   ├── planner_agent.py
+│   ├── simulation_agent.py
+│   └── trainer_agent.py
+├── app
+│   └── gmail-ops
+│       └── page.tsx
+├── build_index.py
+├── check_google_token.py
+├── core
+│   ├── __init__.py
+│   ├── config.py
+│   ├── logging.py
+│   ├── relay_mcp.py
+│   └── scheduler.py
+├── cron
+│   └── cron_generate_auto_context.py
+├── data
+│   ├── index
+│   │   ├── default__vector_store.json
+│   │   ├── docstore.json
+│   │   ├── graph_store.json
+│   │   ├── image__vector_store.json
+│   │   ├── index_store.json
+│   │   └── text-embedding-3-large
+│   │       ├── default__vector_store.json
+│   │       ├── docstore.json
+│   │       ├── graph_store.json
+│   │       ├── image__vector_store.json
+│   │       └── index_store.json
+│   └── pending_actions.json
+├── devcontainer
+│   └── devcontainer.json
+├── docker-compose.yml
+├── docs
+│   ├── generated
+│   │   ├── global_context.md
+│   │   └── relay_context.md
+│   ├── imported
+│   │   ├── relay_code_update_250603.md
+│   │   ├── relay_code_update_250605.md
+│   │   ├── relay_code_update_250606.md
+│   │   ├── repository_overview_250606.md
+│   │   ├── test_placeholder.md
+│   │   ├── v1_documentation_250606.md
+│   │   └── 🔧_google_docs_sync_integration.md
+│   └── readme.md
+├── fix-api-root.sh
+├── from
+├── frontend
+│   ├── README.md
+│   ├── components.json
+│   ├── env.local
+│   ├── eslint.config.mjs
+│   ├── next-env.d.ts
+│   ├── next.config.ts
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── postcss.config.js
+│   ├── postcss.config.mjs
+│   ├── public
+│   │   ├── Echo.png
+│   │   ├── Hoody.png
+│   │   ├── PigTails.png
+│   │   ├── PlannerCop.png
+│   │   ├── Relay.png
+│   │   ├── WildfireMang.png
+│   │   ├── ballcap beard.png
+│   │   ├── beanie and smoke.png
+│   │   ├── blackbeard earing.png
+│   │   ├── file.svg
+│   │   ├── globe.svg
+│   │   ├── next.svg
+│   │   ├── sunglass shadow.png
+│   │   ├── vercel.svg
+│   │   └── window.svg
+│   ├── src
+│   │   ├── app
+│   │   │   ├── action-queue
+│   │   │   │   └── page.tsx
+│   │   │   ├── api
+│   │   │   │   ├── docs
+│   │   │   │   │   ├── list
+│   │   │   │   │   │   └── route.ts
+│   │   │   │   │   └── view
+│   │   │   │   │       └── route.ts
+│   │   │   │   ├── kb
+│   │   │   │   │   └── search
+│   │   │   │   │       └── route.ts
+│   │   │   │   └── status
+│   │   │   │       └── summary
+│   │   │   │           └── route.ts
+│   │   │   ├── ask
+│   │   │   │   └── page.tsx
+│   │   │   ├── audit
+│   │   │   │   └── page.tsx
+│   │   │   ├── codex
+│   │   │   │   └── page.tsx
+│   │   │   ├── control
+│   │   │   │   └── page.tsx
+│   │   │   ├── dashboard
+│   │   │   │   └── page.tsx
+│   │   │   ├── docs
+│   │   │   │   └── page.tsx
+│   │   │   ├── email
+│   │   │   │   └── page.tsx
+│   │   │   ├── favicon.ico
+│   │   │   ├── globals.css
+│   │   │   ├── gmail-ops
+│   │   │   │   └── page.tsx
+│   │   │   ├── janitor
+│   │   │   │   └── page.tsx
+│   │   │   ├── layout.tsx
+│   │   │   ├── logs
+│   │   │   │   └── page.tsx
+│   │   │   ├── metricschart
+│   │   │   │   └── page.tsx
+│   │   │   ├── page.tsx
+│   │   │   ├── planner
+│   │   │   │   └── page.tsx
+│   │   │   ├── search
+│   │   │   │   └── page.tsx
+│   │   │   ├── settings
+│   │   │   │   └── page.tsx
+│   │   │   └── status
+│   │   │       └── page.tsx
+│   │   ├── components
+│   │   │   ├── ActionQueue
+│   │   │   │   └── ActionQueuePanel.tsx
+│   │   │   ├── AskAgent
+│   │   │   │   ├── ChatMessage.tsx
+│   │   │   │   ├── ChatWindow.tsx
+│   │   │   │   ├── InputBar.tsx
+│   │   │   │   ├── hooks.ts
+│   │   │   │   └── useAskEcho.ts
+│   │   │   ├── AuditPanel
+│   │   │   │   └── AuditPanel.tsx
+│   │   │   ├── Codex
+│   │   │   │   ├── CodexEditor.tsx
+│   │   │   │   ├── CodexPatchView.tsx
+│   │   │   │   ├── CodexPromptBar.tsx
+│   │   │   │   ├── index.ts
+│   │   │   │   └── page.tsx
+│   │   │   ├── DocsSyncPanel.tsx
+│   │   │   ├── DocsViewer
+│   │   │   │   └── DocsViewer.tsx
+│   │   │   ├── GmailOps
+│   │   │   │   └── GmailOpsPanel.tsx
+│   │   │   ├── LogsPanel
+│   │   │   │   └── LogsPanel.tsx
+│   │   │   ├── MemoryPanel.tsx
+│   │   │   ├── MetricsCharts
+│   │   │   │   └── MetricsCharts.tsx
+│   │   │   ├── SafeMarkdown.tsx
+│   │   │   ├── SearchPanel.tsx
+│   │   │   ├── Sidebar
+│   │   │   │   └── Sidebar.tsx
+│   │   │   ├── StatusPanel.tsx
+│   │   │   ├── dashboard
+│   │   │   │   ├── Dashboard.stories.tsx
+│   │   │   │   └── Dashboard.tsx
+│   │   │   ├── index.ts
+│   │   │   └── ui
+│   │   │       ├── AskAgent
+│   │   │       │   └── AskAgent.tsx
+│   │   │       ├── badge.tsx
+│   │   │       ├── button.tsx
+│   │   │       ├── card.tsx
+│   │   │       ├── input.tsx
+│   │   │       ├── label.tsx
+│   │   │       ├── progress.tsx
+│   │   │       └── textarea.tsx
+│   │   ├── lib
+│   │   │   ├── api.ts
+│   │   │   ├── toMDString.ts
+│   │   │   └── utils.ts
+│   │   └── types
+│   │       └── react-syntax-highlighter.d.ts
+│   ├── sync
+│   │   └── sync_google_docs.py
+│   ├── tailwind.config.js
+│   ├── tsconfig.json
+│   ├── types
+│   │   └── next-auth.d.ts
+│   ├── vitest.config.ts
+│   └── vitest.shims.d.ts
+├── import
+├── index
+│   └── dev
+│       └── text-embedding-3-large
+├── logs
+├── main.py
+├── main.py.example
+├── manifest.txt
+├── memory
+│   └── graph_store.py
+├── next-env.d.ts
+├── package-lock.json
+├── package.json
+├── pages
+│   └── api
+│       └── auth
+│           └── [...nextauth].ts
+├── prod_token.b64
+├── project_bundle.zip
+├── railway.json
+├── relay-code.yml
+├── requirements-dev.txt
+├── requirements.txt
+├── routes
+│   ├── __init__.py
+│   ├── admin.py
+│   ├── admin_routes.py
+│   ├── ask.py
+│   ├── codex.py
+│   ├── context.py
+│   ├── control.py
+│   ├── debug.py
+│   ├── docs.py
+│   ├── embeddings.py
+│   ├── index.py
+│   ├── kb.py
+│   ├── logs.py
+│   ├── logs_sessions.py
+│   ├── mcp.py
+│   ├── oauth.py
+│   ├── search.py
+│   ├── status.py
+│   ├── status_code.py
+│   └── webhook.py
+├── scripts
+│   ├── authorize_google.py
+│   ├── discover_features.py
+│   ├── generate_code_map.py
+│   ├── generate_global_context.auto.py
+│   └── sync_context_docs.py
+├── services
+│   ├── _init_.py
+│   ├── agent.py
+│   ├── config.py
+│   ├── context_engine.py
+│   ├── context_injector.py
+│   ├── delete_embeddings.py
+│   ├── docs_utils.py
+│   ├── env_checker.py
+│   ├── gmail.py
+│   ├── google.py
+│   ├── google_docs_sync.py
+│   ├── graph.py
+│   ├── indexer.py
+│   ├── kb.py
+│   ├── logger.py
+│   ├── logs.py
+│   ├── memory.py
+│   ├── mqtt_client.py
+│   ├── neo4j_driver.py
+│   ├── queue.py
+│   ├── semantic_retriever.py
+│   ├── settings.py
+│   └── summarize_memory.py
+├── setup_relay_local.sh
+├── templates
+├── test_graph_direct.py
+├── test_graph_neoagent.py
+├── test_load_index.py
+├── test_sync.py
+├── tests
+│   ├── __init__.py
+│   ├── example.test.ts
+│   ├── test_admin_routes.py
+│   ├── test_ask_routes.py
+│   ├── test_context_engine.py
+│   ├── test_cors.py
+│   ├── test_docs.py
+│   ├── test_mcp_route.py
+│   └── test_planner_agent.py
+├── tracked_files.txt
+├── tree.txt
+├── tsconfig.json
+├── utils
+│   ├── logger.py
+│   ├── openai_client.py
+│   └── patch_utils.py
+├── vercel.json
+├── vitest-env.d.ts
+└── zip_codebase.sh
+
+73 directories, 247 files
