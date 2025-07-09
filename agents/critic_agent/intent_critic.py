@@ -1,5 +1,26 @@
-# File: agents/critic_agent/intent_critic.py
-# Purpose: Ensure that the generated plan aligns with the user's original query
+# File: intent_critic.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Provides a class to evaluate the alignment and quality of user intents within the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: base, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - IntentCritic()
+#   - __init__()
+#   - evaluate()
+
+
+
+
+
+
+
+
 
 from .base import BaseCritic
 from typing import Dict, List

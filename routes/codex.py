@@ -1,5 +1,20 @@
-# File: routes/codex.py
-# Purpose: CodexAgent backend endpoints (e.g., patch application, preview)
+# ──────────────────────────────────────────────────────────────────────────────
+# File: codex.py
+# Directory: routes
+# Purpose: # Purpose: Provides API endpoints for applying patches to system configurations using FastAPI.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, fastapi, fastapi.responses, os, pydantic, utils.patch_utils
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - PatchRequest()
+#   - apply_patch()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 from fastapi import APIRouter, HTTPException, Request

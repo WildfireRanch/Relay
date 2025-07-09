@@ -1,5 +1,25 @@
-# File: agents/critic_agent/ethical_critic.py
-# Purpose: Flag potentially unethical or non-compliant behavior in plan steps
+# File: ethical_critic.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Provides a class to evaluate actions or decisions based on ethical guidelines and principles.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: base, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - EthicalCritic()
+#   - evaluate()
+
+
+
+
+
+
+
+
 
 from .base import BaseCritic
 from typing import Dict, List

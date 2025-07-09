@@ -1,10 +1,20 @@
-# File: services/memory.py
-# Directory: services/
-# Purpose: Persist detailed session memory logs for /ask endpoint with deep context/usage auditing.
-# Features:
-#   - Logs timestamp, user, query, topics, files, and summary
-#   - Adds context_files, context_length, prompt_length, response_length, global_context_used, fallback flag
-#   - Used for MemoryPanel deep analysis and context diagnostics
+# ─────────────────────────────────────────────────────────────────────────────
+# File: memory.py
+# Directory: services
+# Purpose: # Purpose: Manage and log memory-related data entries for debugging and tracking purposes.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: datetime, json, os
+#
+# Downstream:
+#   - agents.janitor_agent
+#
+# Contents:
+#   - debug_log_entry()
+#   - save_memory_entry()
+#   - summarize_memory_entry()
+# ─────────────────────────────────────────────────────────────────────────────
 
 import os
 import json

@@ -1,3 +1,17 @@
+# File: janitor_agent.py
+# Directory: agents
+# Purpose: Manages the cleanup and maintenance of system resources and temporary files.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: json, os, pathlib, services.memory
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - run()
+
 # agents/janitor_agent.py
 
 async def run(query: str, context: str, user_id: str = "system") -> dict:

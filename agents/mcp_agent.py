@@ -1,7 +1,27 @@
-# File: agents/mcp_agent.py
-# Purpose: Central orchestrator for Relay — planner-based routing, MetaPlanner override,
-#          critic validation, and Trainer logging to Neo4j.
-#          Echo is primary and fallback agent.
+# File: mcp_agent.py
+# Directory: agents
+# Purpose: # Purpose: Coordinates the execution and interaction of various agent modules to manage complex planning and control tasks within the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents.codex_agent, agents.control_agent, agents.critic_agent.run, agents.docs_agent, agents.echo_agent, agents.janitor_agent, agents.memory_agent, agents.metaplanner_agent, agents.planner_agent, agents.simulation_agent, agents.trainer_agent, core.logging, services.context_injector, services.queue, traceback, typing
+#
+# Downstream:
+#   - core.relay_mcp
+#   - routes.ask
+#   - routes.mcp
+#
+# Contents:
+#   - extract_plan_for_critics()
+#   - run_mcp()
+
+
+
+
+
+
+
+
 
 import traceback
 from typing import Optional, List, Dict, Any

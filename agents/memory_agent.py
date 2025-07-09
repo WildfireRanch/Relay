@@ -1,6 +1,28 @@
-# File: agents/memory_agent.py
-# Purpose: Relay MemoryAgent — summarizes recent user sessions from local memory logs.
-# Directory: agents/
+# File: memory_agent.py
+# Directory: agents
+# Purpose: # Purpose: Manages the storage, retrieval, and summarization of memory entries within the application.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, datetime, json, os, pathlib, typing
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - MemoryAgent()
+#   - __init__()
+#   - _load_entries()
+#   - _summarize_entries()
+#   - run()
+
+
+
+
+
+
+
+
 
 import os
 import json

@@ -1,4 +1,20 @@
-# routes/embeddings.py
+# ──────────────────────────────────────────────────────────────────────────────
+# File: embeddings.py
+# Directory: routes
+# Purpose: # Purpose: Manage the lifecycle and API endpoints for embedding generation and updates in the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: fastapi, fastapi.responses, os, pathlib, pickle, services, time
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - embeddings_rebuild()
+#   - embeddings_status()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 """
 Embeddings Debug & Maintenance API for Relay

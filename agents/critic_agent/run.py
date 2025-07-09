@@ -1,6 +1,25 @@
-# File: agents/critic_agent/run.py
-# Purpose: Unified runner for all 15 critics in the Relay Pro Stack
-# Dependencies: All critic classes must be implemented and importable
+# File: run.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Acts as the entry point to execute various system critiques for code quality and performance assessment.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: clarity_critic, consensus_critic, core.logging, dependency_critic, ethical_critic, feasibility_critic, impact_critic, intent_critic, json, logic_critic, performance_critic, redundancy_critic, reflection_critic, robustness_critic, safety_critic, structure_critic, temporal_critic, typing
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - run()
+#   - run_critics()
+
+
+
+
+
+
+
+
 
 from typing import List, Dict
 

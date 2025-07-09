@@ -1,11 +1,20 @@
-# File: services/google_docs_sync.py
-# Purpose: Google Docs sync for COMMAND_CENTER folder → local /docs/imported
-# Directory Structure:
-# - GOOGLE_CREDS_JSON is decoded at runtime into /tmp/credentials.json
-# - GOOGLE_TOKEN_JSON is decoded (if present) into frontend/sync/token.json
-# - Synced .md files are saved into docs/imported/
-# - OAuth flow is launched only if token is missing or invalid
-
+# File: sync_google_docs.py
+# Directory: frontend/sync
+# Purpose: # Purpose: Synchronize documents from Google Docs to local storage, handling authentication and document retrieval.
+#
+# Upstream:
+#   - ENV: ENV, GOOGLE_CREDS_JSON, GOOGLE_TOKEN_JSON
+#   - Imports: base64, google.auth.transport.requests, google.oauth2.credentials, google_auth_oauthlib.flow, googleapiclient.discovery, googleapiclient.errors, json, markdownify, os, pathlib
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - fetch_and_save_doc()
+#   - find_folder_id()
+#   - get_docs_in_folder()
+#   - get_google_service()
+#   - sync_google_docs()
 import os
 import json
 import base64

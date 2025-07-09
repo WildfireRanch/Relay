@@ -1,13 +1,32 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # File: docs.py
 # Directory: routes/
-# Purpose : Secure API routes for listing, viewing, syncing, promoting,
-#           pruning, and prioritizing tiered Markdown documentation.
+# Purpose: Provides endpoints for managing documentation, including listing, viewing, syncing, and organizing documents.
 # Notes   :
 #   • API‑key (or future SSO) required for every endpoint.
 #   • Path‑traversal safe: requested file must resolve inside project_root/docs.
 #   • Adds /mark_priority to manually set doc tier or pin for context.
-# ──────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────#
+# Upstream:
+#   - ENV: —
+#   - Imports: __future__, fastapi, fastapi.responses, os, pathlib, services, services.context_engine, services.docs_utils, services.google_docs_sync, shutil, typing
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - _safe_resolve()
+#   - full_sync()
+#   - list_docs()
+#   - mark_priority()
+#   - promote_doc()
+#   - prune_duplicates()
+#   - refresh_kb()
+#   - require_api_key()
+#   - sync_docs()
+#   - view_doc()
+
+#-----docs.py-----
 
 from __future__ import annotations
 

@@ -1,4 +1,21 @@
-# services/env_checker.py
+# ──────────────────────────────────────────────────────────────────────────────
+# File: env_checker.py
+# Directory: services
+# Purpose: # Purpose: Verify that all required environment variables are defined and correctly set up in the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: dotenv, os, pathlib, pprint, re
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - check_env_keys()
+#   - find_env_keys_in_code()
+
+# ──────────────────────────────────────────────────────────────────────────────
+
 import os
 import re
 from pathlib import Path
@@ -7,7 +24,7 @@ from dotenv import dotenv_values
 SERVICES_DIR = Path(__file__).resolve().parents[1] / "services"
 ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
-GETENV_REGEX = re.compile(r"os\.getenv\(["'](.+?)["']")
+GETENV_REGEX = re.compile(r"os\.getenv\([\"'](.+?)[\"']\)")
 
 def find_env_keys_in_code(path: Path):
     found = {}
@@ -36,3 +53,7 @@ def check_env_keys():
         "defined_but_unused": unused_env_keys,
         "used_in_files": code_env_usage,
     }
+if __name__ == "__main__":
+    from pprint import pprint
+    result = check_env_keys()
+    pprint(result)

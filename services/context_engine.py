@@ -1,5 +1,22 @@
-# File: services/context_engine.py
-# Purpose: Drop-in ContextEngine class for all context operations (build, clear cache, etc.)
+# ──────────────────────────────────────────────────────────────────────────────
+# File: context_engine.py
+# Directory: services
+# Purpose: # Purpose: Manages the creation and lifecycle of context objects, including caching mechanisms, for the application.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: services.context_injector
+#
+# Downstream:
+#   - routes.docs
+#   - services.agent
+#
+# Contents:
+#   - ContextEngine()
+#   - build()
+#   - clear_cache()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 from services.context_injector import build_context
 

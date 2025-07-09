@@ -1,5 +1,25 @@
-# File: agents/critic_agent/robustness_critic.py
-# Purpose: Ensure plan includes fail-safes, retries, or fallback mechanisms
+# File: robustness_critic.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Provides functionality to assess and critique the robustness of models within the system.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: base, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - RobustnessCritic()
+#   - evaluate()
+
+
+
+
+
+
+
+
 
 from .base import BaseCritic
 from typing import Dict, List

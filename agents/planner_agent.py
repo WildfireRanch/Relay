@@ -1,6 +1,25 @@
-# File: agents/planner_agent.py
-# Purpose: Relay's PlannerAgent — generates task plans from queries and context
-# Handles LLM prompting, critic scoring, and structured plan shaping
+# File: planner_agent.py
+# Directory: agents
+# Purpose: # Purpose: Provides a planning agent that integrates with OpenAI services to generate and manage task plans based on user queries.
+#
+# Upstream:
+#   - ENV: PLANNER_MODEL
+#   - Imports: agents.critic_agent, core.logging, json, openai, os, traceback, utils.openai_client, uuid
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - PlannerAgent()
+#   - ask()
+
+
+
+
+
+
+
+
 
 import os
 import json

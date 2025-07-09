@@ -1,4 +1,18 @@
-# services/settings.py
+# ─────────────────────────────────────────────────────────────────────────────
+# File: settings.py
+# Directory: services
+# Purpose: # Purpose: Manage application configuration and environment variable loading.
+#
+# Upstream:
+#   - ENV: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI, OPENAI_API_KEY
+#   - Imports: dotenv, os, pathlib
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - assert_env()
+# ─────────────────────────────────────────────────────────────────────────────
 import os
 from dotenv import load_dotenv
 from pathlib import Path

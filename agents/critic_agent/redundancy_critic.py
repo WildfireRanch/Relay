@@ -1,5 +1,26 @@
-# File: agents/critic_agent/redundancy_critic.py
-# Purpose: Detect repetition of steps across this plan and prior plans (or internally)
+# File: redundancy_critic.py
+# Directory: agents/critic_agent
+# Purpose: # Purpose: Provides a class to evaluate and critique redundancy levels in data or processes.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: base, typing
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - RedundancyCritic()
+#   - __init__()
+#   - evaluate()
+
+
+
+
+
+
+
+
 
 from .base import BaseCritic
 from typing import Dict, List

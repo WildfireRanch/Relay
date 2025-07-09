@@ -31,10 +31,12 @@ export default NextAuth({
     },
     async session({ session, token }) {
       // Only expose what you actually need on session.user
-      session.user.email = token.email;
-      session.user.hd = token.hd;
-      session.user.name = token.name;
-      session.user.picture = token.picture;
+      if (session.user) {
+        session.user.email = token.email;
+        session.user.hd = token.hd as string | null | undefined;
+        session.user.name = token.name;
+        session.user.picture = token.picture;
+      }
       // Only expose the accessToken if you use Google APIs from the frontend
       // session.accessToken = token.accessToken;
       return session;

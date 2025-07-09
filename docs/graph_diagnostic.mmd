@@ -1,0 +1,356 @@
+```mermaid
+graph TD
+  admin --> main
+  ask --> main
+  codex --> main
+  codex_agent --> agents_mcp_agent
+  codex_agent --> routes_ask
+  context_engine --> routes_docs
+  context_engine --> services_agent
+  context_injector --> agents_mcp_agent
+  context_injector --> services_context_engine
+  control --> main
+  control_agent --> agents_mcp_agent
+  control_agent --> routes_control
+  debug --> main
+  docs --> main
+  docs_agent --> agents_mcp_agent
+  docs_utils --> routes_docs
+  echo_agent --> agents_mcp_agent
+  echo_agent --> routes_ask
+  google --> scripts_sync_context_docs
+  google_docs_sync --> routes_context
+  google_docs_sync --> routes_docs
+  graph --> agents_metaplanner_agent
+  graph --> services_context_injector
+  graph_store --> test_graph_direct
+  indexer --> routes_admin
+  indexer --> routes_index
+  janitor_agent --> agents_mcp_agent
+  kb --> main
+  kb --> services_agent
+  kb --> services_context_injector
+  logging --> agents_codex_agent
+  logging --> agents_control_agent
+  logging --> agents_critic_agent_run
+  logging --> agents_docs_agent
+  logging --> agents_echo_agent
+  logging --> agents_mcp_agent
+  logging --> agents_memory_agent
+  logging --> agents_metaplanner_agent
+  logging --> agents_planner_agent
+  logging --> agents_simulation_agent
+  logging --> agents_trainer_agent
+  logging --> routes_codex
+  logging --> services_graph
+  logging --> services_neo4j_driver
+  logging --> utils_logger
+  logs --> main
+  logs --> routes_context
+  logs --> routes_logs
+  mcp --> main
+  mcp_agent --> core_relay_mcp
+  mcp_agent --> routes_ask
+  mcp_agent --> routes_mcp
+  memory --> agents_janitor_agent
+  memory_agent --> agents_mcp_agent
+  metaplanner_agent --> agents_mcp_agent
+  neo4j_driver --> agents_trainer_agent
+  neo4j_driver --> services_graph
+  neo4j_driver --> test_graph_neoagent
+  oauth --> main
+  openai_client --> agents_codex_agent
+  openai_client --> agents_docs_agent
+  openai_client --> agents_echo_agent
+  openai_client --> agents_planner_agent
+  openai_client --> routes_ask
+  openai_client --> services_agent
+  openai_client --> services_summarize_memory
+  patch_utils --> agents_codex_agent
+  patch_utils --> routes_codex
+  planner_agent --> agents_mcp_agent
+  queue --> agents_mcp_agent
+  run --> agents_mcp_agent
+  search --> main
+  semantic_retriever --> services_context_injector
+  simulation_agent --> agents_mcp_agent
+  status --> main
+  summarize_memory --> services_context_injector
+  trainer_agent --> agents_mcp_agent
+  style test_graph_neoagent fill:#fcdcdc
+  style main fill:#e5e7eb
+  style cron_generate_auto_context fill:#e5e7eb
+  style graph_store fill:#e5e7eb
+  style patch_utils fill:#e5e7eb
+  style openai_client fill:#e5e7eb
+  style planner_agent fill:#e5e7eb
+  style simulation_agent fill:#e5e7eb
+  style codex_agent fill:#e5e7eb
+  style echo_agent fill:#e5e7eb
+  style docs_agent fill:#e5e7eb
+  style memory_agent fill:#ede9fe
+  style trainer_agent fill:#e5e7eb
+  style mcp_agent fill:#e5e7eb
+  style janitor_agent fill:#e5e7eb
+  style control_agent fill:#e5e7eb
+  style metaplanner_agent fill:#e5e7eb
+  style reflection_critic fill:#fef9c3
+  style redundancy_critic fill:#fef9c3
+  style robustness_critic fill:#fef9c3
+  style base fill:#fef9c3
+  style ethical_critic fill:#fef9c3
+  style run fill:#fef9c3
+  style temporal_critic fill:#fef9c3
+  style performance_critic fill:#fef9c3
+  style impact_critic fill:#fef9c3
+  style dependency_critic fill:#fef9c3
+  style intent_critic fill:#fef9c3
+  style logic_critic fill:#fef9c3
+  style structure_critic fill:#fef9c3
+  style consensus_critic fill:#fef9c3
+  style clarity_critic fill:#fef9c3
+  style MemoryAgent fill:#fef9c3
+  style feasibility_critic fill:#fef9c3
+  style safety_critic fill:#fef9c3
+  style batch_generate_headers fill:#e5e7eb
+  style inject_header fill:#e5e7eb
+  style parse_file_metadata fill:#e5e7eb
+  style index_codebase fill:#e5e7eb
+  style test_ask_routes fill:#fcdcdc
+  style test_docs fill:#fcdcdc
+  style test_admin_routes fill:#fcdcdc
+  style test_mcp_route fill:#fcdcdc
+  style test_planner_agent fill:#fcdcdc
+  style test_context_engine fill:#fcdcdc
+  style test_cors fill:#fcdcdc
+  style sync_context_docs fill:#e5e7eb
+  style discover_features fill:#e5e7eb
+  style relay_mcp fill:#e5e7eb
+  style logging fill:#e5e7eb
+  style sync_google_docs fill:#e5e7eb
+  style kb fill:#e5e7eb
+  style ask fill:#e5e7eb
+  style admin fill:#e5e7eb
+  style oauth fill:#e5e7eb
+  style logs_sessions fill:#e5e7eb
+  style embeddings fill:#e5e7eb
+  style logs fill:#e5e7eb
+  style status_code fill:#e5e7eb
+  style status fill:#e5e7eb
+  style context fill:#e5e7eb
+  style search fill:#e5e7eb
+  style debug fill:#e5e7eb
+  style codex fill:#e5e7eb
+  style admin_routes fill:#e5e7eb
+  style index fill:#e5e7eb
+  style mcp fill:#e5e7eb
+  style docs fill:#e5e7eb
+  style control fill:#e5e7eb
+  style semantic_retriever fill:#e5e7eb
+  style google fill:#e5e7eb
+  style settings fill:#e5e7eb
+  style logger fill:#e5e7eb
+  style queue fill:#e5e7eb
+  style context_engine fill:#e5e7eb
+  style gmail fill:#e5e7eb
+  style graph fill:#e5e7eb
+  style summarize_memory fill:#e5e7eb
+  style google_docs_sync fill:#e5e7eb
+  style delete_embeddings fill:#e5e7eb
+  style indexer fill:#e5e7eb
+  style env_checker fill:#e5e7eb
+  style neo4j_driver fill:#e5e7eb
+  style context_injector fill:#e5e7eb
+  style docs_utils fill:#e5e7eb
+  style memory fill:#ede9fe
+  style agent fill:#bae6fd
+
+%% Orphaned nodes
+  class MemoryAgent orphan
+  class admin orphan
+  class admin_routes orphan
+  class agent orphan
+  class ask orphan
+  class base orphan
+  class batch_generate_headers orphan
+  class clarity_critic orphan
+  class codex orphan
+  class codex_agent orphan
+  class consensus_critic orphan
+  class context orphan
+  class context_engine orphan
+  class context_injector orphan
+  class control orphan
+  class control_agent orphan
+  class cron_generate_auto_context orphan
+  class debug orphan
+  class delete_embeddings orphan
+  class dependency_critic orphan
+  class discover_features orphan
+  class docs orphan
+  class docs_agent orphan
+  class docs_utils orphan
+  class echo_agent orphan
+  class embeddings orphan
+  class env_checker orphan
+  class ethical_critic orphan
+  class feasibility_critic orphan
+  class gmail orphan
+  class google orphan
+  class google_docs_sync orphan
+  class graph orphan
+  class graph_store orphan
+  class impact_critic orphan
+  class index orphan
+  class index_codebase orphan
+  class indexer orphan
+  class inject_header orphan
+  class intent_critic orphan
+  class janitor_agent orphan
+  class kb orphan
+  class logger orphan
+  class logging orphan
+  class logic_critic orphan
+  class logs orphan
+  class logs_sessions orphan
+  class main orphan
+  class mcp orphan
+  class mcp_agent orphan
+  class memory orphan
+  class memory_agent orphan
+  class metaplanner_agent orphan
+  class neo4j_driver orphan
+  class oauth orphan
+  class openai_client orphan
+  class parse_file_metadata orphan
+  class patch_utils orphan
+  class performance_critic orphan
+  class planner_agent orphan
+  class queue orphan
+  class redundancy_critic orphan
+  class reflection_critic orphan
+  class relay_mcp orphan
+  class robustness_critic orphan
+  class run orphan
+  class safety_critic orphan
+  class search orphan
+  class semantic_retriever orphan
+  class settings orphan
+  class simulation_agent orphan
+  class status orphan
+  class status_code orphan
+  class structure_critic orphan
+  class summarize_memory orphan
+  class sync_context_docs orphan
+  class sync_google_docs orphan
+  class temporal_critic orphan
+  class test_admin_routes orphan
+  class test_ask_routes orphan
+  class test_context_engine orphan
+  class test_cors orphan
+  class test_docs orphan
+  class test_graph_neoagent orphan
+  class test_mcp_route orphan
+  class test_planner_agent orphan
+  class trainer_agent orphan
+  classDef orphan stroke:#f87171,stroke-width:2px;
+  subgraph Agent
+    agent
+  end
+  subgraph Critic
+    MemoryAgent
+    base
+    clarity_critic
+    consensus_critic
+    dependency_critic
+    ethical_critic
+    feasibility_critic
+    impact_critic
+    intent_critic
+    logic_critic
+    performance_critic
+    redundancy_critic
+    reflection_critic
+    robustness_critic
+    run
+    safety_critic
+    structure_critic
+    temporal_critic
+  end
+  subgraph Memory
+    memory
+    memory_agent
+  end
+  subgraph Test
+    test_admin_routes
+    test_ask_routes
+    test_context_engine
+    test_cors
+    test_docs
+    test_graph_neoagent
+    test_mcp_route
+    test_planner_agent
+  end
+  subgraph Unknown
+    admin
+    admin_routes
+    ask
+    batch_generate_headers
+    codex
+    codex_agent
+    context
+    context_engine
+    context_injector
+    control
+    control_agent
+    cron_generate_auto_context
+    debug
+    delete_embeddings
+    discover_features
+    docs
+    docs_agent
+    docs_utils
+    echo_agent
+    embeddings
+    env_checker
+    gmail
+    google
+    google_docs_sync
+    graph
+    graph_store
+    index
+    index_codebase
+    indexer
+    inject_header
+    janitor_agent
+    kb
+    kb
+    logger
+    logging
+    logs
+    logs
+    logs_sessions
+    main
+    mcp
+    mcp_agent
+    metaplanner_agent
+    neo4j_driver
+    oauth
+    openai_client
+    parse_file_metadata
+    patch_utils
+    planner_agent
+    queue
+    relay_mcp
+    search
+    semantic_retriever
+    settings
+    simulation_agent
+    status
+    status_code
+    summarize_memory
+    sync_context_docs
+    sync_google_docs
+    trainer_agent
+  end
+```

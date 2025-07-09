@@ -1,4 +1,17 @@
-# routes/logs.py
+# ──────────────────────────────────────────────────────────────────────────────
+# Directory: routes
+# Purpose: # Purpose: Provide API endpoints for accessing and managing recent log entries.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: fastapi, services.logs
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - recent_logs()
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, Query
 from services.logs import get_recent_logs

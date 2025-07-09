@@ -1,12 +1,18 @@
-# File: search.py
-# Directory: routes/
-# Purpose: Secure semantic KB search endpoint (GET /kb/search)
-# Notes:
-#   • Accepts canonical `query` param (alias `q` for legacy clients).
-#   • CORS‑safe: OPTIONS pre‑flight bypasses API‑key auth.
-#   • Casts similarity to `float` so FastAPI JSON serialisation never 500s.
-#   • Returns plain list consumed by SearchPanel.
-# Last Updated: 2025‑06‑13
+# ──────────────────────────────────────────────────────────────────────────────
+# File: routes/search.py
+# Purpose: # Purpose: Provide API endpoints for handling search queries and validating API keys.
+#
+# Upstream:
+#   - ENV: API_KEY
+#   - Imports: __future__, fastapi, logging, os, services, typing
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - require_api_key()
+#   - search()
+# ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 

@@ -1,7 +1,24 @@
-# File: routes/status.py
-# Directory: routes/
-# Purpose: Health, environment, version, and context awareness endpoints for Relay service.
-# Security: Public (no auth; consider protecting `/env` or `/summary` in production).
+# ──────────────────────────────────────────────────────────────────────────────
+# File: status.py
+# Directory: routes
+# Purpose: # Purpose: Provide utilities to fetch and format system status, versioning, and operational context details for monitoring and diagnostics.
+#
+# Upstream:
+#   - ENV: RELAY_PROJECT_ROOT
+#   - Imports: datetime, fastapi, os, pathlib, subprocess
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - fmt_time()
+#   - get_context_status()
+#   - get_env_status()
+#   - get_status_paths()
+#   - get_summary()
+#   - get_version()
+#   - list_context_inventory()
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter
 from pathlib import Path

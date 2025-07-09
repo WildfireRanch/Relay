@@ -1,5 +1,25 @@
-# File: agents/metaplanner_agent.py
-# Purpose: MetaPlanner suggests route overrides based on graph memory (Neo4j) or fallback heuristics
+# File: metaplanner_agent.py
+# Directory: agents
+# Purpose: # Purpose: Provides functionality for planning and suggesting optimal routes using graph-based algorithms.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: core.logging, services.graph
+#
+# Downstream:
+#   - agents.mcp_agent
+#
+# Contents:
+#   - run()
+#   - suggest_route()
+
+
+
+
+
+
+
+
 
 from core.logging import log_event
 from services.graph import query_similar_routes  # Optional: replace with your Neo4j utility

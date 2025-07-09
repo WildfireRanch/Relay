@@ -5,7 +5,22 @@
 #           • Extract doc_id from file
 #           • Build registry of all docs grouped by ID
 #           • Determine which file version is canonical
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: collections, pathlib, re, typing
+#
+# Downstream:
+#   - routes.docs
+#
+# Contents:
+#   - build_doc_registry()
+#   - choose_canonical_path()
+#   - extract_doc_id()
+#   - write_doc_metadata()
+
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 import re
 from collections import defaultdict

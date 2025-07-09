@@ -1,5 +1,19 @@
-# File: routes/admin_routes.py
-# Purpose: Add manual trigger to generate auto global context from /context/*.md
+# ──────────────────────────────────────────────────────────────────────────────
+# File: admin_routes.py
+# Directory: routes
+# Purpose: Provide route handlers for administrative functionalities within the FastAPI application.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: fastapi, fastapi.responses, os, subprocess
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - generate_auto_context()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse

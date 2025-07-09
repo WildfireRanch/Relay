@@ -1,7 +1,25 @@
-# File: services/context_injector.py
-# Purpose: Build optimal multi-source context blocks for agent prompts (code, docs, external topics, global context, knowledge base, and graph memory), 
-#           leveraging LlamaIndex for semantic search and aggressive filtering.
-# Updated: 2025-07-02
+# ──────────────────────────────────────────────────────────────────────────────
+# File: context_injector.py
+# Directory: services
+# Purpose: # Purpose: Manages the aggregation and injection of contextual data from various services into the application's processing flow.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: os, pathlib, services.graph, services.kb, services.semantic_retriever, services.summarize_memory, typing
+#
+# Downstream:
+#   - agents.mcp_agent
+#   - services.context_engine
+#
+# Contents:
+#   - build_context()
+#   - build_recent_memory_summaries()
+#   - load_context()
+#   - load_global_context()
+#   - load_summary()
+#   - safe_truncate()
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 import os
 from pathlib import Path

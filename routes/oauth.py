@@ -1,7 +1,19 @@
-# File: routes/oauth.py
-# Directory: /routes
-# Purpose: Provide Google OAuth endpoints for both development (Codespaces) and production.
-# Supports dynamic and environment-overridden redirect URIs, robust logging, and token persistence.
+# ──────────────────────────────────────────────────────────────────────────────
+#  File: oauth.py
+# Directory: routes
+# Purpose: # Purpose: Handle OAuth authentication flow for the application, including initiating authentication and processing callbacks.
+#
+# Upstream:
+#   - ENV: GOOGLE_CREDS_JSON, OAUTH_REDIRECT_URI, POST_AUTH_REDIRECT_URI
+#   - Imports: base64, fastapi, fastapi.responses, google_auth_oauthlib.flow, os, pathlib
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - oauth_callback()
+#   - start_oauth()
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 import base64

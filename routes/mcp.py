@@ -2,7 +2,22 @@
 # File: routes/mcp.py
 # Directory: routes/
 # Purpose: API route for direct access to MCP handler (run_mcp) for testing, automation, or admin use
+
+# Directory: routes
+# Purpose: # Purpose: Provides the main control program (MCP) for handling API requests and managing agent interactions in a FastAPI application.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: agents.mcp_agent, fastapi, typing
+#
+# Downstream:
+#   - main
+#
+# Contents:
+#   - mcp_run()
+
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 from fastapi import APIRouter, HTTPException, Request, Header
 from typing import Optional

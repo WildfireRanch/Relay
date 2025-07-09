@@ -1,6 +1,25 @@
+# ──────────────────────────────────────────────────────────────────────────────
 # File: agent.py
-# Directory: services/
-# Purpose: Main Relay agent logic—per-user, multi-turn, reflection, tools, OpenAI, and docgen
+# Directory: services
+# Purpose: Provides functionalities for automated documentation generation, code review, and interaction with knowledge base services.
+#
+# Upstream:
+#   - ENV: API_KEY, ENABLE_REFLECT_AND_PLAN, RAILWAY_URL
+#   - Imports: httpx, json, openai, os, pathlib, re, services.context_engine, services.kb, typing, utils.openai_client
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - answer()
+#   - gen()
+#   - generate_doc_for_path()
+#   - reflect_and_plan()
+#   - run_code_review()
+#   - search_docs()
+#   - wants_docgen()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 import os
 import re

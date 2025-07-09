@@ -1,5 +1,20 @@
-# File: routes/status_code.py
-# Purpose: Provide detailed insights into Relay source files, functions, usage, and freshness.
+# ──────────────────────────────────────────────────────────────────────────────
+# File: status_code.py
+# Directory: routes
+# Purpose: # Purpose: Provides utilities to extract and interpret status codes from FastAPI responses.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: ast, datetime, fastapi, os, pathlib
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - extract_functions()
+#   - get_code_status()
+
+# ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter
 from pathlib import Path

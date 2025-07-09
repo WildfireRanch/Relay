@@ -1,3 +1,23 @@
+# File: test_cors.py
+# Directory: tests
+# Purpose: # Purpose: Provides tests to verify the correctness of CORS (Cross-Origin Resource Sharing) configurations using regex patterns.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: httpx, importlib, main, os, pytest
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - test_cors_regex()
+
+
+
+
+
+
+
 import importlib
 import pytest
 from httpx import AsyncClient

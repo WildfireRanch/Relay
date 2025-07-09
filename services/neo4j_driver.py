@@ -1,10 +1,22 @@
-# File: services/neo4j_driver.py
-# Purpose: Shared async Neo4j driver for Relay agent memory graph
-# Notes:
-#   - Supports async read/write using Neo4j Aura
-#   - Uses single internal driver instance (AsyncGraphDatabase)
-#   - Logs errors and can be safely imported from anywhere in the app
-
+# ─────────────────────────────────────────────────────────────────────────────
+# File: neo4j_driver.py
+# Directory: services
+# Purpose: # Purpose: Provides an interface for managing Neo4j database sessions and executing read/write operations.
+#
+# Upstream:
+#   - ENV: NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+#   - Imports: contextlib, core.logging, neo4j, os
+#
+# Downstream:
+#   - agents.trainer_agent
+#   - services.graph
+#   - test_graph_neoagent
+#
+# Contents:
+#   - execute_read()
+#   - execute_write()
+#   - get_session()
+# ─────────────────────────────────────────────────────────────────────────────
 import os
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from contextlib import asynccontextmanager

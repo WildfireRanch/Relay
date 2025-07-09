@@ -1,6 +1,18 @@
-# File: services/semantic_retriever.py
-# Purpose: Provide top-K semantic context for agent prompts using LlamaIndex vector store.
-
+# ─────────────────────────────────────────────────────────────────────────────
+# File: semantic_retriever.py
+# Directory: services
+# Purpose: # Purpose: Provide functionality to retrieve and handle semantic contexts using embeddings for natural language processing tasks.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: llama_index.core, llama_index.embeddings.openai, sys, traceback
+#
+# Downstream:
+#   - services.context_injector
+#
+# Contents:
+#   - get_semantic_context()
+# ─────────────────────────────────────────────────────────────────────────────
 from llama_index.core import load_index_from_storage, StorageContext
 from llama_index.embeddings.openai import OpenAIEmbedding
 import sys

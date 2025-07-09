@@ -1,3 +1,24 @@
+# File: test_mcp_route.py
+# Directory: tests
+# Purpose: # Purpose: Provides unit tests for the MCP routing functionality within the application.
+#
+# Upstream:
+#   - ENV: —
+#   - Imports: httpx, main, pytest
+#
+# Downstream:
+#   - —
+#
+# Contents:
+#   - fake_run_mcp()
+#   - test_mcp_run_invokes_agent()
+
+
+
+
+
+
+
 import pytest
 from httpx import AsyncClient
 from main import app
