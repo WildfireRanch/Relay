@@ -1,3 +1,4 @@
+"use client";
 import MermaidGraph from '@/components/MermaidGraph';
 
 export default function MermaidPage() {
