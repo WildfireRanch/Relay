@@ -1,4 +1,4 @@
-"use client";
+// app/MermaidGraph/page.tsx
 import MermaidGraph from '@/components/MermaidGraph';
 
 export default function MermaidPage() {

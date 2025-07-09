@@ -1,4 +1,4 @@
-'use client'
+// File: frontend/src/app/metricschart/page.tsx
 
 import MetricsChart from '@/components/MetricsCharts/MetricsCharts'
 
