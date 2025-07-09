@@ -1,7 +1,5 @@
-'use client';
-
-import mermaid from 'mermaid';
-import { useEffect } from 'react';
+'use client'
+import MermaidGraph from '@/components/MermaidGraph';
 
 export default function MermaidGraph({ code }: { code: string }) {
   useEffect(() => {
