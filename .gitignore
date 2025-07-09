@@ -1,26 +1,31 @@
-# === Python Bytecode ===
+# === Node/Next.js Artifacts ===
+.next/
+node_modules/
+frontend/.next/
+frontend/node_modules/
+frontend/dist/
+frontend/out/
+frontend/.vercel/
+
+# === Python Bytecode and Virtual Envs ===
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-
-# === Virtual Environments ===
-.venv/
-venv/
+*venv*/
 env/
 
 # === OS Files ===
 .DS_Store
 Thumbs.db
-.next/
 
-# === IDEs ===
+# === IDEs & Editor Artifacts ===
 .vscode/
 .idea/
 *.sublime-workspace
 *.sublime-project
 
-# === Jupyter Notebooks ===
+# === Jupyter Notebook Checkpoints ===
 .ipynb_checkpoints/
 
 # === Environment & Secrets ===
@@ -31,88 +36,49 @@ Thumbs.db
 *.key
 *.pem
 
-# === API / OAuth / Token Files ===
+# === OAuth & Tokens ===
 token.json
 frontend/sync/token.json
 
-# === Log Files ===
+# === Log & Cache Files ===
 *.log
 logs/
+.cache/
 *.jsonl
 
-# === Database & Index Files ===
-*.sqlite*
-*.db
-data/index/
-data/index/*
-data/cache/
-data/cache/*
-index/
-index/*
-*.faiss
-*.h5
-*.parquet
-
-# === LlamaIndex / Semantic Index / Embeddings ===
-# (Assuming you store index files under data/index or similar)
-data/index/
-index/
-vectorstore/
-*.ann
-*.bin
-*.pkl
-
-# === Google Docs Sync (if local copies/exports) ===
-docs/imported/
-docs/generated/
-
-# === Node (frontend) ===
-node_modules/
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/dist/
-frontend/.vercel/
-frontend/.env
-frontend/.env.*
-
-# === Build / Dist / Package ===
+# === Coverage / Test / Build Artifacts ===
+.pytest_cache/
+.tox/
+htmlcov/
+.coverage
 dist/
 build/
 *.egg-info/
 *.eggs/
 
-# === Coverage / Testing ===
-.coverage
-.tox/
-htmlcov/
-.cache/
-.pytest_cache/
+# === Data, Index & Generated Embeddings ===
+data/index/
+data/index/*
+docs/imported/
+docs/generated/
+vectorstore/
+index/
+index/*
 
-# === Misc ===
+# === Misc/Temp/Backup ===
 *.bak
 *.tmp
 *.swp
-
-# === Backups ===
 *~
 *.zip
 *.tar.gz
 *.tar
 *.gz
-
-# === Admin/Backup Artifacts ===
 index_backup_*.zip
 admin_events.log
 
-# === VSCode Settings ===
-frontend/.vscode/
-backend/.vscode/
-.vscode/
-
-# === Exclude requirements lockfiles for local use only (uncomment if you want to ignore) ===
+# === Optional: Exclude requirements lockfiles ===
 # requirements*.lock
 
-# === Exclude compiled files ===
-*.so
-*.dll
+# === Optional: Poetry lock file ===
+# poetry.lock
