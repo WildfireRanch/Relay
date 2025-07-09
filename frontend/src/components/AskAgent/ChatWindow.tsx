@@ -2,7 +2,6 @@
 // Purpose: Chat window for Ask Echo UI using /mcp/run pipeline
 // Updated: 2025-07-01
 
-"use client";
 
 import ChatMessage from "./ChatMessage";
 import InputBar from "./InputBar";

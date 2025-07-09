@@ -3,6 +3,7 @@
 //          Ensures ALL message fields for markdown rendering are always strings (prevents React #418).
 // Updated: 2025-07-01
 
+"use client";
 import { useState } from "react";
 import { API_ROOT } from "@/lib/api";
 import { toMDString } from "@/lib/toMDString";

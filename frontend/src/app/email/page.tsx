@@ -1,4 +1,3 @@
-"use client";
 import GmailOpsPanel from "@/components/GmailOps/GmailOpsPanel";
 
 export default function EmailPage() {

@@ -1,4 +1,4 @@
-"use client";
+// File: frontend/src/app/action-queue/page.tsx
 import ActionQueuePanel from "@/components/ActionQueue/ActionQueuePanel";
 
 export default function ActionQueuePage() {

@@ -1,6 +1,7 @@
 // File: components/AskAgent/ChatMessage.tsx
 // Purpose: Renders a single chat message, always string-coercing content for SafeMarkdown.
 
+"use client";
 import React from "react";
 import SafeMarkdown from "@/components/SafeMarkdown"; // Use the shared safe renderer
 import { toMDString } from "@/lib/toMDString";
