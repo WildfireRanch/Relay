@@ -1,17 +1,18 @@
-'use client'
 import MermaidGraph from '@/components/MermaidGraph';
 
-export default function MermaidGraph({ code }: { code: string }) {
-  useEffect(() => {
-    mermaid.initialize({ startOnLoad: true });
-    mermaid.contentLoaded();
-  }, []);
+export default function MermaidPage() {
+  const code = `graph TD
+    main --> agents
+    agents --> critics
+    critics --> tests
+    services --> agents
+  `;
 
   return (
-    <div className="mermaid text-sm p-4 border rounded-md bg-white overflow-x-auto">
-      {code}
+    <div className="p-6">
+      <h1 className="text-2xl font-bold mb-4">Relay Graph</h1>
+      <MermaidGraph code={code} />
     </div>
   );
 }
-
 
