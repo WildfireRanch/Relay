@@ -1,27 +1,27 @@
 {
   "compilerOptions": {
     // ========= ECMAScript Target & Modules =========
-    "target": "esnext",
-    "module": "esnext",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "lib": ["DOM", "DOM.Iterable", "ESNext"],
 
-    // ========= TypeScript Core Behavior =========
+    // ========= Core TypeScript Behavior =========
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "noEmit": true,
     "incremental": true,
     "skipLibCheck": true,
 
-    // ========= Module Resolution & Interop =========
-    "esModuleInterop": true,
+    // ========= Module Resolution =========
     "moduleResolution": "node",
     "resolveJsonModule": true,
+    "esModuleInterop": true,
     "isolatedModules": true,
 
     // ========= JS/TS Interop =========
     "allowJs": true,
 
-    // ========= JSX Behavior =========
+    // ========= JSX Behavior for Next.js =========
     "jsx": "preserve",
 
     // ========= Path Aliases =========
@@ -31,7 +31,7 @@
       "@components/*": ["src/components/*"]
     },
 
-    // ========= Next.js Plugins =========
+    // ========= Next.js Plugin =========
     "plugins": [{ "name": "next" }]
   },
   "include": [

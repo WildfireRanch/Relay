@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "tw-animate-css";
+@import "tw-animate-css"; /* Optional: only include if tw-animate-css is installed */
 @import url('https://fonts.googleapis.com/css2?family=Geist+Sans:wght@400;700&family=Geist+Mono&display=swap');
 
 /* --- Custom Theme Vars --- */
@@ -79,26 +79,38 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    scrollbar-gutter: stable;
+  }
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-geist-sans);
   }
 }
 
-/* --- Markdown/Markdown output styling --- */
+/* --- Markdown Output --- */
+.prose {
+  max-width: 100%;
+}
 .prose pre, .prose code {
   font-family: var(--font-geist-mono), monospace;
 }
-
-/* Optional: style markdown links with your primary color */
 .prose a {
   color: var(--primary);
 }
 .prose a:hover {
   text-decoration: underline;
 }
+.prose h1 {
+  font-size: 2rem;
+  font-weight: bold;
+}
+.prose h2 {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
 
-/* --- Custom scrollbar styling for all scrollable containers --- */
+/* --- Scrollbars --- */
 ::-webkit-scrollbar {
   width: 8px;
   background: var(--muted, #f0f0f0);
@@ -111,7 +123,12 @@
   background: var(--accent, #aaa);
 }
 
-/* Optional: rounded inputs/buttons globally */
+/* --- Form elements --- */
 input, textarea, button {
   border-radius: var(--radius, 0.625rem);
+}
+@layer base {
+  body {
+    @apply bg-black text-white;
+  }
 }
