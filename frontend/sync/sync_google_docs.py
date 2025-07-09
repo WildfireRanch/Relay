@@ -1,3 +1,4 @@
+#---------------------------------------------------------
 # File: sync_google_docs.py
 # Directory: frontend/sync
 # Purpose: # Purpose: Synchronize documents from Google Docs to local storage, handling authentication and document retrieval.
@@ -15,6 +16,7 @@
 #   - get_docs_in_folder()
 #   - get_google_service()
 #   - sync_google_docs()
+#---------------------------------------------------------
 import os
 import json
 import base64

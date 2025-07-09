@@ -1,7 +1,6 @@
 // File: frontend/src/components/SearchPanel.tsx
 // Purpose: Robust, debounced UI panel for semantic KB search (GET /kb/search).
 //          Now renders result snippets with SafeMarkdown for readable markdown/code.
-// Notes: 2025‑07‑01 – All features preserved; only result snippet rendering is upgraded.
 
 "use client";
 

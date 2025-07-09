@@ -1,6 +1,6 @@
 // File: components/DocsSyncPanel.tsx
 // Purpose: UI panel for syncing, refreshing, and reindexing knowledge base docs. 
-//          All status and result messages are rendered with SafeMarkdown for rich, safe output.
+// All status and result messages are rendered with SafeMarkdown for rich, safe output.
 
 "use client";
 
