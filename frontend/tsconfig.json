@@ -19,7 +19,7 @@
     "isolatedModules": true,
 
     // ========= JS/TS Interop =========
-    "allowJs": true,
+    "allowJs": false, // ✅ If you're not mixing JS + TS (recommended)
 
     // ========= JSX Behavior for Next.js =========
     "jsx": "preserve",
