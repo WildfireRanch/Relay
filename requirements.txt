@@ -20,8 +20,7 @@ markdownify>=1.1.0      # HTML to Markdown converter
 # =========================
 markdown>=3.4.1         # Standard Python Markdown parser (used for rendering .md)
 python-frontmatter>=1.1.0  # For reading YAML frontmatter in markdown files
-# (optional, advanced: mistune, bleach, pypandoc)
-
+          
 # =========================
 # === Environment & Config ===
 # =========================
@@ -81,6 +80,8 @@ anyio>=3.7
 # =========================
 sqlalchemy>=2.0
 neo4j>=5.16.0
+psycopg2-binary>=2.9
+
 
 # =========================
 # === Testing ===
@@ -94,9 +95,26 @@ pytest-asyncio>=0.21
 black>=24.0
 
 # =========================
+# === Observability: OpenTelemetry Tracing ===
+# =========================
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-jaeger==1.21.0
+opentelemetry-instrumentation-fastapi>=0.46b0
+opentelemetry-instrumentation-asgi>=0.46b0  # Needed for FastAPI, covers all ASGI middleware
+
+# =========================
+# === Automation        ===
+# =========================
+playwright==1.42.0
+
+# === File/JSON Parsing (used in scraper logic) ===
+python-dateutil>=2.9
+
+# =========================
 # === (Optional) Markdown/HTML Extensions ===
 # =========================
-# bleach        # Sanitize HTML if converting markdown to HTML
+ bleach>=6.1.0  # Sanitize HTML if converting markdown to HTML
 # mistune       # Advanced/fast markdown parser with plugins
 # pypandoc      # Universal document converter for .md/.docx/.html
 
@@ -106,11 +124,4 @@ black>=24.0
 # - All packages are pinned to major versions; you may want to pin more tightly in production.
 # - For frontend markdown (JS/React), see your package.json (not this file).
 # - If you don’t use a feature, you can comment out its dependencies to speed up installs.
-# =========================
-# === Observability: OpenTelemetry Tracing ===
-# =========================
-opentelemetry-api>=1.25.0
-opentelemetry-sdk>=1.25.0
-opentelemetry-exporter-jaeger==1.21.0
-opentelemetry-instrumentation-fastapi>=0.46b0
-opentelemetry-instrumentation-asgi>=0.46b0  # Needed for FastAPI, covers all ASGI middleware
+

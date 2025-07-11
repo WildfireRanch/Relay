@@ -1,71 +1,89 @@
-# === Node/Next.js Artifacts ===
-.next/
+# =========================
+# === Node/JS Artifacts ===
+# =========================
 node_modules/
+.next/
 frontend/.next/
 frontend/node_modules/
 frontend/dist/
 frontend/out/
 frontend/.vercel/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# === Python Bytecode and Virtual Envs ===
+# =========================
+# === Python Artifacts ===
+# =========================
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-*venv*/
+.venv/
+venv/
 env/
+*.egg-info/
+*.eggs/
+.pytest_cache/
+.tox/
+htmlcov/
+.coverage*
+mypy_cache/
+.mypy_cache/
+*.sqlite3
 
-# === OS Files ===
+# =========================
+# === PHP/Composer Artifacts ===
+# =========================
+vendor/
+composer.lock
+
+# =========================
+# === OS & Editor Files ===
+# =========================
 .DS_Store
 Thumbs.db
-
-# === IDEs & Editor Artifacts ===
 .vscode/
 .idea/
 *.sublime-workspace
 *.sublime-project
 
-# === Jupyter Notebook Checkpoints ===
+# =========================
+# === Jupyter Artifacts ===
+# =========================
 .ipynb_checkpoints/
 
-# === Environment & Secrets ===
+# =========================
+# === Env & Secret Files ===
+# =========================
 .env
 .env.*
 *.env
 *.secret
 *.key
 *.pem
+.envrc
 
+# =========================
 # === OAuth & Tokens ===
+# =========================
 token.json
 frontend/sync/token.json
 
+# =========================
 # === Log & Cache Files ===
+# =========================
 *.log
 logs/
 .cache/
 *.jsonl
+admin_events.log
 
-# === Coverage / Test / Build Artifacts ===
-.pytest_cache/
-.tox/
-htmlcov/
-.coverage
+# =========================
+# === Test / Build / Coverage Artifacts ===
+# =========================
 dist/
 build/
-*.egg-info/
-*.eggs/
-
-# === Data, Index & Generated Embeddings ===
-data/index/
-data/index/*
-docs/imported/
-docs/generated/
-vectorstore/
-index/
-index/*
-
-# === Misc/Temp/Backup ===
 *.bak
 *.tmp
 *.swp
@@ -74,11 +92,47 @@ index/*
 *.tar.gz
 *.tar
 *.gz
+
+# =========================
+# === Data, Index, Embeddings ===
+# =========================
+data/index/
+docs/imported/
+docs/generated/
+vectorstore/
+index/
 index_backup_*.zip
-admin_events.log
 
-# === Optional: Exclude requirements lockfiles ===
-# requirements*.lock
+# =========================
+# === Python/Node Requirements Lockfiles ===
+# =========================
+requirements*.lock
+poetry.lock
+package-lock.json
+yarn.lock
 
-# === Optional: Poetry lock file ===
-# poetry.lock
+# =========================
+# === SolArk Scraper & Artifacts ===
+# =========================
+# Automation & credentials
+storage_dump.json
+auth_token.txt
+cookies.json
+debug.html
+device_id.txt
+device_error.html
+
+# Scraped and output data
+realtime*.json
+plant*.json
+inverter*.json
+
+# =========================
+# === Misc/Temp/Backup ===
+# =========================
+*.orig
+*.rej
+
+# =========================
+# === End ===
+# =========================
