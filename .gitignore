@@ -125,7 +125,7 @@ device_error.html
 
 # Scraped and output data
 realtime*.json
-plant*.json
+
 inverter*.json
 
 # =========================
