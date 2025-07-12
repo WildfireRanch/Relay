@@ -1,10 +1,10 @@
 {
   "name": "solark_browser",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "SolArk Cloud API browser and data loader",
+  "main": "fetch_token.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node fetch_token.js && node fetch_plant_flow.js && python3 poll_and_insert.py"
   },
   "keywords": [],
   "author": "",

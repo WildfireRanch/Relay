@@ -1,0 +1,33 @@
+# Ignore node_modules (Docker will re-install)
+node_modules
+
+# Ignore Python __pycache__ and cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignore logs and data artifacts
+*.log
+*.sqlite
+*.db
+*.db-journal
+
+# Ignore secret and env files (never build your local secrets into the container!)
+.env
+.env.*
+auth_token.txt
+fetch_token_error.json
+plant_flow.json
+plant_flow_error.json
+
+# Ignore OS and editor artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Ignore test folders (if any)
+tests/
+test/
