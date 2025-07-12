@@ -1,7 +1,3 @@
-requests
-playwright
-# Uncomment/add if you actually import them:
-# python-dotenv
-psycopg2-binary
-# sqlalchemy
-# pandas
+psycopg2-binary>=2.9      # DB adapter – required
+# If you later parse .env inside Python:
+python-dotenv>=1.0

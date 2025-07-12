@@ -10,11 +10,12 @@ import sys
 import os
 
 # === CONFIG: Use public connection from Railway "Connect" tab ===
-PGHOST = os.getenv("PGHOST", "shinkansen.proxy.rlwy.net")
-PGPORT = int(os.getenv("PGPORT", "33576"))
+PGHOST = os.getenv("PGHOST", "trolley.proxy.rlwy.net")
+PGPORT = int(os.getenv("PGPORT", "31385"))
 PGUSER = os.getenv("PGUSER", "postgres")
-PGPASSWORD = os.getenv("PGPASSWORD", "jLOVIWCdtEloFKdURTnlydLfajhYcMhV")
+PGPASSWORD = os.getenv("PGPASSWORD", "ZURcdqOrTWwRDAAkGgAaKKKFxWtZiiVm")
 PGDATABASE = os.getenv("PGDATABASE", "railway")
+
 
 # === 1. Verify plant_flow.json exists and is readable ===
 JSON_PATH = 'plant_flow.json'

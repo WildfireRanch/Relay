@@ -1,17 +1,13 @@
 {
   "name": "solark_browser",
   "version": "1.0.0",
-  "description": "SolArk Cloud API browser and data loader",
+  "description": "SolArk Cloud polling & DB loader",
   "main": "fetch_token.js",
   "scripts": {
     "start": "node fetch_token.js && node fetch_plant_flow.js && python3 poll_and_insert.py"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "dependencies": {
     "axios": "^1.10.0",
-    "dotenv": "^17.2.0",
-    "playwright": "^1.53.2"
+    "dotenv": "^17.2.0"
   }
 }
