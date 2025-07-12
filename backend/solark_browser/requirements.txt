@@ -2,6 +2,6 @@ requests
 playwright
 # Uncomment/add if you actually import them:
 # python-dotenv
-# psycopg2-binary
+psycopg2-binary
 # sqlalchemy
 # pandas
