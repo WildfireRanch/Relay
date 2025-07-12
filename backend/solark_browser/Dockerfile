@@ -1,44 +1,35 @@
-# ---- Use Node.js LTS base (Debian, for compatibility with Playwright/Node tools) ----
+# --- Use Node.js LTS base (Debian for maximum compatibility) ---
 FROM node:20-bullseye
 
-# ---- Install Python and pip ----
+# --- Install Python 3 and pip ---
 RUN apt-get update && \
     apt-get install -y python3 python3-pip && \
     ln -sf python3 /usr/bin/python && \
     pip install --upgrade pip && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ---- Set working directory ----
+# --- Set working directory (container starts in /app) ---
 WORKDIR /app
 
-# ---- Copy only requirements first for layer caching ----
+# --- Copy only requirements first for Docker cache efficiency ---
 COPY requirements.txt .
 
-# ---- Install Python dependencies ----
-RUN pip install --no-cache-dir -r requirements.txt
+# --- Install Python dependencies (add Playwright if needed) ---
+RUN pip install --no-cache-dir -r requirements.txt && \
+    playwright install --with-deps
 
-# ---- Copy all app code ----
+# --- Copy in app code (worker scripts, package.json, etc) ---
 COPY . .
 
-# ---- Install Node dependencies for your JS scraper ----
-RUN if [ -f backend/solark_browser/package.json ]; then \
-      npm install --prefix backend/solark_browser; \
-    fi
+# --- Install Node dependencies if package.json exists (for JS script) ---
+RUN if [ -f package.json ]; then npm install; fi
 
-# ---- (Optional) Install Playwright browser binaries if your scraper uses Playwright (JS or Python) ----
-# If you use Playwright in Python:
-RUN if grep -q 'playwright' requirements.txt; then \
-      playwright install --with-deps; \
-    fi
+# --- Install Playwright browsers for JS, if package.json exists and Playwright is a dep ---
+RUN if [ -f package.json ] && grep -q 'playwright' package.json; then npx playwright install --with-deps; fi
 
-# If you use Playwright in Node:
-RUN if [ -f backend/solark_browser/package.json ]; then \
-      npx playwright install --with-deps --cwd backend/solark_browser; \
-    fi
-
-# ---- Set environment variables for robust Python behavior ----
+# --- Set recommended Python environment variables ---
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# ---- Default command: run your SolArk cron job ----
-CMD bash -lc "cd backend/solark_browser && node fetch_plant_flow.js && python3 poll_and_insert.py"
+# --- CMD: runs both scripts, NO 'cd' needed (we're already in /app) ---
+CMD bash -lc "node fetch_plant_flow.js && python3 poll_and_insert.py"
