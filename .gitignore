@@ -102,7 +102,7 @@ docs/generated/
 vectorstore/
 index/
 index_backup_*.zip
-data/index
+data/index/
 data/index/*.json
 # =========================
 # === Python/Node Requirements Lockfiles ===
@@ -125,7 +125,7 @@ device_error.html
 
 # Scraped and output data
 realtime*.json
-
+plant*.json
 inverter*.json
 
 # =========================
