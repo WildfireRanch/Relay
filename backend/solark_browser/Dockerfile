@@ -8,7 +8,7 @@ RUN apt-get update && \
     pip install --upgrade pip && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# --- Set working directory (container starts in /app) ---
+# --- Set working directory ---
 WORKDIR /app
 
 # --- Copy only requirements first for Docker cache efficiency ---
@@ -31,5 +31,8 @@ RUN if [ -f package.json ] && grep -q 'playwright' package.json; then npx playwr
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# --- CMD: runs both scripts, NO 'cd' needed (we're already in /app) ---
-CMD bash -lc "node fetch_plant_flow.js && python3 poll_and_insert.py"
+# --- CMD: runs all scripts in order ---
+# 1. node fetch_token.js         => fetches token from SolArk and writes auth_token.txt
+# 2. node fetch_plant_flow.js    => uses the token to get plant data and writes plant_flow.json
+# 3. python3 poll_and_insert.py  => loads data into your database
+CMD bash -lc "node fetch_token.js && node fetch_plant_flow.js && python3 poll_and_insert.py"
