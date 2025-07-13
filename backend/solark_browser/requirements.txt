@@ -1,3 +1,2 @@
 psycopg2-binary>=2.9      # DB adapter – required
-# If you later parse .env inside Python:
-python-dotenv>=1.0
+python-dotenv>=1.0        # Only needed if poll_and_insert.py calls load_dotenv()
