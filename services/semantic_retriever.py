@@ -1,6 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # File: semantic_retriever.py
 # Directory: services
+#
 # Purpose: # Purpose: Provide functionality to retrieve and handle semantic contexts using embeddings for natural language processing tasks.
 #
 # Upstream:
