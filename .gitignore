@@ -100,7 +100,6 @@ build/
 docs/imported/
 docs/generated/
 vectorstore/
-index/
 index_backup_*.zip
 
 # =========================
