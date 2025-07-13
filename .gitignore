@@ -96,14 +96,13 @@ build/
 # =========================
 # === Data, Index, Embeddings ===
 # =========================
-data/index/
+
 docs/imported/
 docs/generated/
 vectorstore/
 index/
 index_backup_*.zip
-data/index/
-data/index/*.json
+
 # =========================
 # === Python/Node Requirements Lockfiles ===
 # =========================
