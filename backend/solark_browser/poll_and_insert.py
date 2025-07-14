@@ -1,24 +1,34 @@
 """
 File: backend/solark_browser/poll_and_insert.py
-Purpose: Load SolArk plant snapshot from plant_flow.json and insert it
-         into Postgres table  solark.plant_flow.
-         Must be run after `node fetch_plant_flow.js`.
+Purpose: Load SolArk plant snapshot (plant_flow.json) and insert into
+         Postgres table solark.plant_flow.
 
-Environment (Railway or local):
-  PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE, PLANT_ID
+Runs perfectly in:
+  • Railway cron container  ➜ uses injected PG* and PLANT_ID vars
+  • Local dev shell        ➜ loads .env then falls back to OS vars
 """
 
 from __future__ import annotations
 import json, os, sys
 from datetime import datetime, timezone
+
 import psycopg2
 from psycopg2.extras import Json
+from pathlib import Path
 
-# ---------------------------------------------------------------------
-# 1.  Verify required ENV vars (fail fast if any are missing)
-# ---------------------------------------------------------------------
-NEEDED = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PLANT_ID"]
-missing = [k for k in NEEDED if k not in os.environ]
+# ── 0. Local .env support (harmless in prod) ────────────────────────────
+try:
+    from dotenv import load_dotenv
+    dotenv_path = Path(__file__).resolve().parent / ".env"
+    if dotenv_path.exists():
+        load_dotenv(dotenv_path)      # injects keys into os.environ
+except ModuleNotFoundError:
+    # python-dotenv not installed in prod image → ignore
+    pass
+
+# ── 1. Required ENV vars ────────────────────────────────────────────────
+REQUIRED = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PLANT_ID"]
+missing = [k for k in REQUIRED if k not in os.environ]
 if missing:
     sys.exit(f"❌ Missing ENV vars: {', '.join(missing)}")
 
@@ -29,9 +39,7 @@ PGPASSWORD  = os.environ["PGPASSWORD"]
 PGDATABASE  = os.environ["PGDATABASE"]
 PLANT_ID    = int(os.environ["PLANT_ID"])
 
-# ---------------------------------------------------------------------
-# 2.  Load snapshot JSON written by fetch_plant_flow.js
-# ---------------------------------------------------------------------
+# ── 2. Load snapshot JSON ───────────────────────────────────────────────
 SNAP_PATH = "plant_flow.json"
 try:
     with open(SNAP_PATH, "r") as f:
@@ -41,9 +49,7 @@ except FileNotFoundError:
 except Exception as e:
     sys.exit(f"❌ Could not parse {SNAP_PATH}: {e}")
 
-# ---------------------------------------------------------------------
-# 3.  Build row dict (UTC timestamp)
-# ---------------------------------------------------------------------
+# ── 3. Compose row dict ────────────────────────────────────────────────
 now_utc = datetime.now(timezone.utc)
 row = {
     "plant_id":            PLANT_ID,
@@ -71,12 +77,10 @@ row = {
     "bms_comm_fault_flag": snap.get("bmsCommFaultFlag"),
     "pv":                  snap.get("pv"),
     "exist_think_power":   snap.get("existThinkPower"),
-    "raw_json":            Json(snap),        # store whole payload for audit
+    "raw_json":            Json(snap),   # JSONB column
 }
 
-# ---------------------------------------------------------------------
-# 4.  Insert into Postgres (schema: solark, table: plant_flow)
-# ---------------------------------------------------------------------
+# ── 4. Insert into Postgres (schema solark) ────────────────────────────
 SQL = """
 INSERT INTO solark.plant_flow (
     plant_id, ts,
@@ -105,5 +109,5 @@ try:
         cur.execute(SQL, row)
         conn.commit()
         print(f"✅ Inserted snapshot @ {now_utc.isoformat()}")
-except psycopg2.Error as db_err:
-    sys.exit(f"❌ Postgres error: {db_err}")
+except psycopg2.Error as err:
+    sys.exit(f"❌ Postgres error: {err}")
