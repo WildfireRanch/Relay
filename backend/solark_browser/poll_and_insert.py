@@ -1,45 +1,67 @@
 """
-File: backend/solark_browser/poll_and_insert.py
-Purpose: Load SolArk plant snapshot (plant_flow.json) and insert into
-         Postgres table solark.plant_flow.
+File  : backend/solark_browser/poll_and_insert.py
+Purpose: Read SolArk plant_flow.json and INSERT into solark.plant_flow.
 
-Runs perfectly in:
-  • Railway cron container  ➜ uses injected PG* and PLANT_ID vars
-  • Local dev shell        ➜ loads .env then falls back to OS vars
+Works in three modes
+────────────────────
+1. Railway cron / shell  → uses injected PG* variables  OR  DATABASE_URL.
+2. Local dev            → loads .env automatically via python-dotenv.
+3. Any CI/CD            → provide DATABASE_URL + PLANT_ID secrets.
+
+Env required
+────────────
+• DATABASE_URL           (preferred) -or- PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE
+• PLANT_ID               e.g. 146453
 """
 
 from __future__ import annotations
-import json, os, sys
+import json, os, sys, urllib.parse
 from datetime import datetime, timezone
+from pathlib import Path
 
 import psycopg2
 from psycopg2.extras import Json
-from pathlib import Path
 
-# ── 0. Local .env support (harmless in prod) ────────────────────────────
+# ── 0. Optional .env loader (ignored in prod image) ─────────────────────
 try:
     from dotenv import load_dotenv
-    dotenv_path = Path(__file__).resolve().parent / ".env"
-    if dotenv_path.exists():
-        load_dotenv(dotenv_path)      # injects keys into os.environ
+
+    dotenv_file = Path(__file__).resolve().parent / ".env"
+    if dotenv_file.exists():
+        load_dotenv(dotenv_file)
 except ModuleNotFoundError:
-    # python-dotenv not installed in prod image → ignore
     pass
 
-# ── 1. Required ENV vars ────────────────────────────────────────────────
-REQUIRED = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PLANT_ID"]
-missing = [k for k in REQUIRED if k not in os.environ]
-if missing:
-    sys.exit(f"❌ Missing ENV vars: {', '.join(missing)}")
+# ── 1. Validate environment ─────────────────────────────────────────────
+if "PLANT_ID" not in os.environ:
+    sys.exit("❌ Missing PLANT_ID env var")
 
-PGHOST      = os.environ["PGHOST"]
-PGPORT      = int(os.environ["PGPORT"])
-PGUSER      = os.environ["PGUSER"]
-PGPASSWORD  = os.environ["PGPASSWORD"]
-PGDATABASE  = os.environ["PGDATABASE"]
-PLANT_ID    = int(os.environ["PLANT_ID"])
+# Option A: full DSN
+DSN = os.environ.get("DATABASE_URL")
 
-# ── 2. Load snapshot JSON ───────────────────────────────────────────────
+# Option B: parts
+PG_VARS = ["PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE"]
+have_parts = all(v in os.environ for v in PG_VARS)
+
+if not DSN and not have_parts:
+    vars_needed = "DATABASE_URL  or  " + " ".join(PG_VARS)
+    sys.exit(f"❌ Missing Postgres connection vars: {vars_needed}")
+
+PLANT_ID = int(os.environ["PLANT_ID"])
+
+# ── 2. Build connect parameters (DSN wins) ──────────────────────────────
+if DSN:
+    connect_kwargs: dict[str, object] = {"dsn": DSN}
+else:
+    connect_kwargs = dict(
+        host=os.environ["PGHOST"],
+        port=int(os.environ["PGPORT"]),
+        user=os.environ["PGUSER"],
+        password=os.environ["PGPASSWORD"],
+        dbname=os.environ["PGDATABASE"],
+    )
+
+# ── 3. Load snapshot JSON ───────────────────────────────────────────────
 SNAP_PATH = "plant_flow.json"
 try:
     with open(SNAP_PATH, "r") as f:
@@ -49,7 +71,7 @@ except FileNotFoundError:
 except Exception as e:
     sys.exit(f"❌ Could not parse {SNAP_PATH}: {e}")
 
-# ── 3. Compose row dict ────────────────────────────────────────────────
+# ── 4. Assemble row dict ────────────────────────────────────────────────
 now_utc = datetime.now(timezone.utc)
 row = {
     "plant_id":            PLANT_ID,
@@ -80,7 +102,7 @@ row = {
     "raw_json":            Json(snap),   # JSONB column
 }
 
-# ── 4. Insert into Postgres (schema solark) ────────────────────────────
+# ── 5. SQL (schema solark) ──────────────────────────────────────────────
 SQL = """
 INSERT INTO solark.plant_flow (
     plant_id, ts,
@@ -101,11 +123,9 @@ INSERT INTO solark.plant_flow (
 );
 """
 
+# ── 6. Execute insert ───────────────────────────────────────────────────
 try:
-    with psycopg2.connect(
-        host=PGHOST, port=PGPORT,
-        dbname=PGDATABASE, user=PGUSER, password=PGPASSWORD
-    ) as conn, conn.cursor() as cur:
+    with psycopg2.connect(**connect_kwargs) as conn, conn.cursor() as cur:
         cur.execute(SQL, row)
         conn.commit()
         print(f"✅ Inserted snapshot @ {now_utc.isoformat()}")
