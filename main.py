@@ -1,5 +1,4 @@
 # File: main.py
-# Directory: .
 # Purpose: FastAPI entrypoint for Relay Command Center (ask, control, status, docs, webhooks)
 # Notes:
 # - Loads .env in local dev
@@ -20,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# ─── Local dev: load .env ────────────────────────────────────────────────────
+# ── Local dev: load .env ─────────────────────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:
         from dotenv import load_dotenv
@@ -29,18 +28,18 @@ if os.getenv("ENV", "local") == "local":
     except ImportError:
         logging.warning("⚠️ python-dotenv not installed; skipping .env load")
 
-# ─── Paths & ENV ─────────────────────────────────────────────────────────────
+# ── Paths & ENV ──────────────────────────────────────────────────────────────
 ENV_NAME = os.getenv("ENV", "local")
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.append(str(PROJECT_ROOT))
 
-# ─── Basic logging ───────────────────────────────────────────────────────────
+# ── Basic logging ────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
-# ─── Optional: OpenTelemetry → Jaeger ────────────────────────────────────────
+# ── Optional: OpenTelemetry → Jaeger ─────────────────────────────────────────
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.resources import SERVICE_NAME, Resource
@@ -64,11 +63,11 @@ except Exception as ex:
     OTEL_ENABLED = False
     logging.warning(f"OTel disabled ({ex.__class__.__name__}: {ex})")
 
-# ─── Ensure working dirs exist ───────────────────────────────────────────────
+# ── Ensure working dirs exist ────────────────────────────────────────────────
 for sub in ("docs/imported", "docs/generated", "logs/sessions"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ─── App ─────────────────────────────────────────────────────────────────────
+# ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
@@ -81,7 +80,7 @@ if OTEL_ENABLED:
     except Exception as ex:
         logging.warning(f"OTel FastAPI instrumentation failed: {ex}")
 
-# ─── CORS (prefer FRONTEND_ORIGIN; fallback to regex; dev=* ) ────────────────
+# ── CORS (prefer FRONTEND_ORIGIN; fallback to regex; dev='*') ────────────────
 cors_origins: list[str] = []
 origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")
 override_origin = os.getenv("FRONTEND_ORIGIN")
@@ -108,7 +107,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-# ─── Routers ─────────────────────────────────────────────────────────────────
+# ── Routers ──────────────────────────────────────────────────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
@@ -143,7 +142,7 @@ if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
 else:
     logging.info("Admin tools disabled")
 
-# ─── Startup: validate KB index (non-blocking best-effort) ───────────────────
+# ── Startup: validate KB index (non‑blocking) ────────────────────────────────
 from services import kb
 
 @app.on_event("startup")
@@ -157,7 +156,7 @@ def ensure_kb_index():
     except Exception as ex:
         logging.error(f"KB index check failed: {ex}")
 
-# ─── Health & misc endpoints ─────────────────────────────────────────────────
+# ── Health & misc endpoints ──────────────────────────────────────────────────
 @app.get("/")
 def root():
     return JSONResponse({"message": "Relay Agent is Online"})
@@ -193,7 +192,7 @@ def version():
         commit = "unknown"
     return {"git_commit": commit, "env": ENV_NAME}
 
-# ─── Dev entrypoint ──────────────────────────────────────────────────────────
+# ── Dev entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
