@@ -1,33 +1,25 @@
 # File: main.py
-# Directory: .
-# Purpose: # Purpose: Serve as the entry point for the web application, initializing the server and routing requests to appropriate handlers.
-#
-# Upstream:
-#   - ENV: ENABLE_ADMIN_TOOLS, ENV, FRONTEND_ORIGIN, FRONTEND_ORIGIN_REGEX, JAEGER_HOST, JAEGER_PORT, PORT
-#   - Imports: __future__, dotenv, fastapi, fastapi.middleware.cors, fastapi.responses, logging, opentelemetry, opentelemetry.exporter.jaeger.thrift, opentelemetry.instrumentation.fastapi, opentelemetry.sdk.resources, opentelemetry.sdk.trace, opentelemetry.sdk.trace.export, os, pathlib, routes.admin, routes.ask, routes.codex, routes.control, routes.debug, routes.docs, routes.kb, routes.logs, routes.mcp, routes.oauth, routes.search, routes.status, services, subprocess, sys, uvicorn
-#
-# Downstream:
-#   - —
-#
-# Contents:
-#   - ensure_kb_index()
-#   - health_check()
-#   - root()
-#   - test_cors()
-#   - version()
-
+# Purpose: FastAPI entrypoint for Relay Command Center (ask, control, status, docs, webhooks)
+# Notes:
+# - Loads .env in local dev
+# - Sets up CORS (static OR regex)
+# - Optional OpenTelemetry tracing to Jaeger
+# - Registers all routers, including GitHub webhooks (/webhooks/github)
+# - Validates KB index on startup
+# - Adds health, version, and CORS test endpoints
 
 from __future__ import annotations
 
 import os
-import logging
 import sys
+import logging
 from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-# ─── Load local environment (only in dev) ─────────────────────────────────────
+# ── Local dev: load .env ─────────────────────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:
         from dotenv import load_dotenv
@@ -36,87 +28,74 @@ if os.getenv("ENV", "local") == "local":
     except ImportError:
         logging.warning("⚠️ python-dotenv not installed; skipping .env load")
 
+# ── Paths & ENV ──────────────────────────────────────────────────────────────
 ENV_NAME = os.getenv("ENV", "local")
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.append(str(PROJECT_ROOT))
 
-# ─── OpenTelemetry Tracing Setup (Bulletproof, Inserted Here) ─────────────────
+# ── Basic logging ────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+# ── Optional: OpenTelemetry → Jaeger ─────────────────────────────────────────
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.resources import SERVICE_NAME, Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
     SERVICE = "relay-backend"
     JAEGER_HOST = os.getenv("JAEGER_HOST", "localhost")
     JAEGER_PORT = int(os.getenv("JAEGER_PORT", 6831))
 
-    # Initialize the tracer provider with service name for full context
     trace.set_tracer_provider(
-        TracerProvider(
-            resource=Resource.create({SERVICE_NAME: SERVICE})
-        )
+        TracerProvider(resource=Resource.create({SERVICE_NAME: SERVICE}))
     )
-
-    # Configure Jaeger exporter for trace data
-    jaeger_exporter = JaegerExporter(
-        agent_host_name=JAEGER_HOST,
-        agent_port=JAEGER_PORT,
-    )
-    trace.get_tracer_provider().add_span_processor(
-        BatchSpanProcessor(jaeger_exporter)
-    )
-
-    tracer = trace.get_tracer(__name__)
-    logging.info(f"🟣 OpenTelemetry tracing enabled for service: {SERVICE} (Jaeger: {JAEGER_HOST}:{JAEGER_PORT})")
-except ImportError as e:
-    logging.warning(f"⚠️ OpenTelemetry tracing not enabled (missing packages): {e}")
+    jaeger_exporter = JaegerExporter(agent_host_name=JAEGER_HOST, agent_port=JAEGER_PORT)
+    trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(jaeger_exporter))
+    OTEL_ENABLED = True
+    logging.info(f"🟣 OpenTelemetry on → Jaeger {JAEGER_HOST}:{JAEGER_PORT}")
 except Exception as ex:
-    logging.error(f"❌ OpenTelemetry setup failed: {ex}")
+    OTEL_ENABLED = False
+    logging.warning(f"OTel disabled ({ex.__class__.__name__}: {ex})")
 
-# ─── Validate required ENV vars ──────────────────────────────────────────────
-for key in ("API_KEY", "OPENAI_API_KEY"):
-    if not os.getenv(key):
-        logging.error(f"❌ Missing required env var: {key}")
-
-# ─── Ensure working directories exist ────────────────────────────────────────
-for sub in ("docs/imported", "docs/generated"):
+# ── Ensure working dirs exist ────────────────────────────────────────────────
+for sub in ("docs/imported", "docs/generated", "logs/sessions"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ─── Initialize FastAPI ──────────────────────────────────────────────────────
+# ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
     version="1.0.0",
     description="Backend API for Relay agent – ask, control, status, docs, admin",
 )
 
-# ─── Instrument FastAPI with OpenTelemetry (All Requests Become Traces) ──────
-try:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-    FastAPIInstrumentor().instrument_app(app)
-    logging.info("🟣 OpenTelemetry FastAPI instrumentation active")
-except ImportError:
-    logging.warning("⚠️ opentelemetry-instrumentation-fastapi not installed; API traces will NOT be captured")
-except Exception as ex:
-    logging.error(f"❌ FastAPI OTel instrumentation failed: {ex}")
+if OTEL_ENABLED:
+    try:
+        FastAPIInstrumentor().instrument_app(app)
+    except Exception as ex:
+        logging.warning(f"OTel FastAPI instrumentation failed: {ex}")
 
-# ─── Configure CORS (support static or regex origin) ─────────────────────────
-cors_origins = []
+# ── CORS (prefer FRONTEND_ORIGIN; fallback to regex; dev='*') ────────────────
+cors_origins: list[str] = []
 origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")
 override_origin = os.getenv("FRONTEND_ORIGIN")
 
 if override_origin:
     cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
     allow_creds = True
-    logging.info(f"🔒 CORS restricted to: {cors_origins}")
+    logging.info(f"🔒 CORS allow_origins: {cors_origins}")
 elif origin_regex:
     allow_creds = True
-    logging.info(f"🔒 CORS regex restriction: {origin_regex}")
+    logging.info(f"🔒 CORS allow_origin_regex: {origin_regex}")
 else:
     cors_origins = ["*"]
     allow_creds = False
-    logging.warning("🔓 CORS DEBUG MODE ENABLED: allow_origins='*', allow_credentials=False")
+    logging.warning("🔓 CORS DEBUG: allow_origins='*' (set FRONTEND_ORIGIN in prod)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -128,7 +107,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-# ─── Import and mount routes ─────────────────────────────────────────────────
+# ── Routers ──────────────────────────────────────────────────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
@@ -141,6 +120,8 @@ from routes.admin import router as admin_router
 from routes.codex import router as codex_router
 from routes.mcp import router as mcp_router
 from routes.logs import router as logs_router
+# Webhooks (GitHub): includes GET probe + signed POST handler
+from routes.webhooks_github import router as gh_webhooks
 
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -153,25 +134,29 @@ app.include_router(search_router)
 app.include_router(codex_router)
 app.include_router(mcp_router)
 app.include_router(logs_router)
+app.include_router(gh_webhooks)
 
 if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
     app.include_router(admin_router)
     logging.info("🛠️ Admin tools enabled")
 else:
-    logging.info("Admin tools disabled (ENABLE_ADMIN_TOOLS not set)")
+    logging.info("Admin tools disabled")
 
-# ─── Startup: validate knowledge base ─────────────────────────────────────────
+# ── Startup: validate KB index (non‑blocking) ────────────────────────────────
 from services import kb
 
 @app.on_event("startup")
 def ensure_kb_index():
-    if not kb.index_is_valid():
-        logging.warning("📚 KB index missing or invalid — triggering rebuild…")
-        logging.info("Reindex result: %s", kb.api_reindex())
-    else:
-        logging.info("✅ KB index validated on startup")
+    try:
+        if not kb.index_is_valid():
+            logging.warning("📚 KB index missing/invalid — triggering rebuild…")
+            logging.info("Reindex result: %s", kb.api_reindex())
+        else:
+            logging.info("✅ KB index validated on startup")
+    except Exception as ex:
+        logging.error(f"KB index check failed: {ex}")
 
-# ─── Health & CORS test routes ───────────────────────────────────────────────
+# ── Health & misc endpoints ──────────────────────────────────────────────────
 @app.get("/")
 def root():
     return JSONResponse({"message": "Relay Agent is Online"})
@@ -179,7 +164,7 @@ def root():
 @app.get("/health")
 def health_check():
     ok = True
-    details: dict[str, bool] = {}
+    details: dict[str, bool | str] = {}
 
     for key in ("API_KEY", "OPENAI_API_KEY"):
         present = bool(os.getenv(key))
@@ -191,10 +176,8 @@ def health_check():
         details[sub] = exists
         ok &= exists
 
-    return JSONResponse(
-        {"status": "ok" if ok else "error", "details": details},
-        status_code=200 if ok else 503,
-    )
+    details["env"] = ENV_NAME
+    return JSONResponse({"status": "ok" if ok else "error", "details": details}, status_code=200 if ok else 503)
 
 @app.options("/test-cors")
 def test_cors():
@@ -209,13 +192,12 @@ def version():
         commit = "unknown"
     return {"git_commit": commit, "env": ENV_NAME}
 
-# ─── Dev entrypoint ──────────────────────────────────────────────────────────
+# ── Dev entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=int(os.getenv("PORT", 8080)),
-        reload=ENV_NAME == "local",
+        reload=(ENV_NAME == "local"),
     )
