@@ -120,7 +120,6 @@ from routes.admin import router as admin_router
 from routes.codex import router as codex_router
 from routes.mcp import router as mcp_router
 from routes.logs import router as logs_router
-# Webhooks (GitHub): includes GET probe + signed POST handler
 from routes.webhooks_github import router as gh_webhooks
 
 app.include_router(ask_router)
