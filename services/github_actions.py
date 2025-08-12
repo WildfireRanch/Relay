@@ -5,13 +5,14 @@ from typing import Optional, Dict, Any, Set
 
 from github import Github
 from github.GithubException import GithubException
+from github.InputGitAuthor import InputGitAuthor
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 if not GITHUB_TOKEN:
     raise RuntimeError("Missing GITHUB_TOKEN")
 
-# Short timeout so calls never hang the server
-gh = Github(GITHUB_TOKEN, timeout=5)
+# Short timeout so calls never hang the server (can override via env)
+gh = Github(GITHUB_TOKEN, timeout=float(os.getenv("GITHUB_TIMEOUT", "5")))
 
 ALLOWLIST: Set[str] = {
     s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()
@@ -43,28 +44,44 @@ def put_file(
     branch: str,
     sha: Optional[str] = None,
 ):
+    """
+    Create or update a file on a branch.
+    - Accepts base64 content; converts to UTF-8 string (PyGithub expects str).
+    - Uses InputGitAuthor for author/committer to avoid silent failures.
+    """
     repo = _repo(repo_full)
-    content = base64.b64decode(content_b64)
+
+    # Decode to *string* (PyGithub wants str, not bytes)
+    content_bytes = base64.b64decode(content_b64)
+    content_str = content_bytes.decode("utf-8", errors="replace")
+
+    author = InputGitAuthor(AUTHOR_NAME, AUTHOR_EMAIL)
+
     try:
+        # If file exists on that branch → update
         current = repo.get_contents(path, ref=branch)
         return repo.update_file(
-            path,
-            message,
-            content,
-            sha or current.sha,
+            path=path,
+            message=message,
+            content=content_str,
+            sha=sha or current.sha,
             branch=branch,
-            author={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
-            committer={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
+            author=author,
+            committer=author,
         )
-    except GithubException:
-        return repo.create_file(
-            path,
-            message,
-            content,
-            branch=branch,
-            author={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
-            committer={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
-        )
+    except GithubException as e:
+        # 404 = file not found on that branch → create
+        if getattr(e, "status", None) == 404:
+            return repo.create_file(
+                path=path,
+                message=message,
+                content=content_str,
+                branch=branch,
+                author=author,
+                committer=author,
+            )
+        # Any other GitHub error: re-raise so the router can surface details
+        raise
 
 def create_branch(repo_full: str, base: str, new_branch: str):
     repo = _repo(repo_full)
@@ -72,7 +89,12 @@ def create_branch(repo_full: str, base: str, new_branch: str):
     return repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_ref.object.sha)
 
 def open_pr(
-    repo_full: str, title: str, head: str, base: str, body: str = "", draft: bool = False
+    repo_full: str,
+    title: str,
+    head: str,
+    base: str,
+    body: str = "",
+    draft: bool = False,
 ):
     repo = _repo(repo_full)
     pr = repo.create_pull(title=title, body=body, head=head, base=base, draft=draft)
