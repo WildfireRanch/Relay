@@ -5,8 +5,8 @@
 # - Returns 2xx quickly; heavy work runs in BackgroundTasks
 # - In-memory de-dupe on X-GitHub-Delivery to avoid reprocessing retries
 # - Dispatches common events (pull_request, issue_comment, push)
-# - Queues a Control action via /control/queue_action if available, else logs to logs/events.log
-# - Does NOT execute repo writes; that’s Step 4 (/gh action endpoints)
+# - Queues a Control action via in-process queue first; falls back to HTTP; else logs
+# - Does NOT execute repo writes; those live in /gh action endpoints
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ log = logging.getLogger("webhooks.github")
 CONTROL_BASE_URL = os.getenv("CONTROL_BASE_URL", "http://127.0.0.1:8080")
 API_KEY = os.getenv("API_KEY", "")
 EVENT_LOG_PATH = os.getenv("EVENT_LOG_PATH", "logs/events.log")
+MAX_EVENT_BYTES = int(os.getenv("GITHUB_WEBHOOK_MAX_BYTES", "1048576"))  # 1 MiB default
 
 # ────────────────────────── Helpers ──────────────────────────
 
@@ -38,11 +39,13 @@ async def github_probe():
 
 @router.get("/github/debug")
 async def github_debug():
-    # Do not return the actual secret, just its presence.
+    # Do not return the actual secret, just its presence and cache size.
     return {
         "ok": True,
         "has_secret": bool(os.getenv("GITHUB_WEBHOOK_SECRET")),
         "env": os.getenv("ENV", "local"),
+        "delivery_cache_size": len(_seen),
+        "max_event_bytes": MAX_EVENT_BYTES,
     }
 
 def _verify_sig(req: Request, body: bytes, secret: str):
@@ -108,7 +111,16 @@ def _append_event_log(record: dict[str, Any]) -> None:
         log.warning("Failed to write event log: %s", e)
 
 def _queue_control_action(kind: str, payload: dict[str, Any]) -> bool:
-    """Try to hand off to your Control ActionQueue; fall back to logfile."""
+    """Prefer in-process queue (Codespaces-safe). Fallback to HTTP; else log."""
+    # 1) In-process queue
+    try:
+        from services.action_queue import enqueue_action
+        enqueue_action(kind, payload)
+        return True
+    except Exception as e:
+        log.info("Local queue unavailable (%s); trying HTTP fallback", e.__class__.__name__)
+
+    # 2) HTTP fallback (works when Control runs as a separate service)
     url = f"{CONTROL_BASE_URL.rstrip('/')}/control/queue_action"
     body = json.dumps({
         "action_type": kind,
@@ -116,17 +128,17 @@ def _queue_control_action(kind: str, payload: dict[str, Any]) -> bool:
         "payload": payload,
         "queued_at": datetime.now(timezone.utc).isoformat()
     }).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {API_KEY}" if API_KEY else "",
-    }
+    headers = {"Content-Type": "application/json"}
+    if API_KEY:
+        headers["Authorization"] = f"Bearer {API_KEY}"
+
     try:
         req = urllib.request.Request(url, data=body, headers=headers, method="POST")
         with urllib.request.urlopen(req, timeout=3) as resp:
             resp.read()  # drain
         return True
-    except Exception as e:
-        log.info("Control queue not available, logging instead: %s", e)
+    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError) as e:
+        log.info("HTTP queue fallback failed: %s", getattr(e, "reason", e))
         _append_event_log({"kind": kind, "payload": payload, "note": "queued_to_log"})
         return False
 
@@ -137,6 +149,10 @@ async def github(req: Request, bg: BackgroundTasks):
     secret = os.getenv("GITHUB_WEBHOOK_SECRET", "")
     body = await req.body()
 
+    # Body size guard
+    if len(body) > MAX_EVENT_BYTES:
+        raise HTTPException(status_code=413, detail="Payload too large")
+
     _verify_sig(req, body, secret)
 
     event    = req.headers.get("X-GitHub-Event", "unknown")
@@ -146,6 +162,7 @@ async def github(req: Request, bg: BackgroundTasks):
         return {"ok": True, "event": event, "delivery": delivery, "deduped": True}
 
     payload = _safe_json_loads(body)
+
     # process async; keep GitHub happy with a fast 2xx
     bg.add_task(_dispatch_event, event, payload, delivery)
     return {"ok": True, "event": event, "delivery": delivery, "queued": True}
@@ -154,6 +171,9 @@ async def github(req: Request, bg: BackgroundTasks):
 
 def _dispatch_event(event: str, p: dict[str, Any], delivery: str):
     try:
+        if event == "ping":
+            _append_event_log({"event": "ping", "delivery": delivery})
+            return
         if event == "pull_request":
             _on_pull_request(p, delivery)
         elif event == "issue_comment":
@@ -176,7 +196,7 @@ def _on_pull_request(p: dict[str, Any], delivery: str):
     data = {"repo": repo, "number": number, "branch": head_branch, "action": action, "delivery": delivery}
 
     # Example triage: label/notify for branches created by our bot
-    if head_branch.startswith("echo/") and action in {"opened", "reopened", "synchronize"}:
+    if head_branch and head_branch.startswith("echo/") and action in {"opened", "reopened", "synchronize"}:
         _queue_control_action("pr_triage", data)
     else:
         _append_event_log({"event": "pull_request", **data})
