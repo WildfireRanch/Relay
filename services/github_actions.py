@@ -1,101 +1,167 @@
-# File: services/github_actions.py
-import os
-import base64
-from typing import Optional, Dict, Any, Set
-
-from github import Github
+# File: routes/github_proxy.py
+import os, hmac, hashlib, json
+from typing import Optional
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 from github.GithubException import GithubException
-from github.InputGitAuthor import InputGitAuthor
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-if not GITHUB_TOKEN:
-    raise RuntimeError("Missing GITHUB_TOKEN")
+router = APIRouter(prefix="/gh", tags=["github"])
 
-# Short timeout so calls never hang the server (can override via env)
-gh = Github(GITHUB_TOKEN, timeout=float(os.getenv("GITHUB_TIMEOUT", "5")))
+# ── Auth (API_KEY or API_KEYS, comma-separated) ──────────────────────────
+_API_KEYS = {tok.strip() for tok in (os.getenv("API_KEY","")+","+os.getenv("API_KEYS","")).split(",") if tok.strip()}
 
-ALLOWLIST: Set[str] = {
-    s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()
-}
-AUTHOR_NAME = os.getenv("COMMIT_AUTHOR_NAME", "Relay Bot")
-AUTHOR_EMAIL = os.getenv("COMMIT_AUTHOR_EMAIL", "relay@wildfireranch.us")
+def require_api_key(authorization: str = Header(None)):
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    if not any(hmac.compare_digest(token, k) for k in _API_KEYS):
+        raise HTTPException(status_code=403, detail="Bad token")
 
-def _repo(repo_full: str):
-    if ALLOWLIST and repo_full not in ALLOWLIST:
-        raise PermissionError(f"Repo {repo_full} not in REPO_ALLOWLIST")
-    return gh.get_repo(repo_full)
+@router.get("/debug/api-key")
+def debug_api_key(authorization: Optional[str] = Header(None)):
+    def sha8(s: str) -> str: return hashlib.sha256(s.encode()).hexdigest()[:8]
+    provided = ""
+    if authorization and authorization.lower().startswith("bearer "):
+        provided = authorization.split(" ", 1)[1].strip()
+    server = next(iter(_API_KEYS), "")
+    return {
+        "keys_count": len(_API_KEYS),
+        "server_key_len": len(server) if server else 0,
+        "server_key_sha256_8": sha8(server) if server else None,
+        "provided_len": len(provided),
+        "provided_sha256_8": sha8(provided) if provided else None,
+        "match": any(hmac.compare_digest(provided,k) for k in _API_KEYS),
+    }
 
-def list_repos():
-    # Avoid broad list calls; show the allowlist if present
-    if ALLOWLIST:
-        return [{"full_name": r} for r in sorted(ALLOWLIST)]
-    return [{"full_name": r.full_name} for r in gh.get_user().get_repos()]
-
-def get_file(repo_full: str, path: str, ref: Optional[str] = None) -> Dict[str, Any]:
-    repo = _repo(repo_full)
-    f = repo.get_contents(path, ref=ref) if ref else repo.get_contents(path)
-    return {"sha": f.sha, "encoding": f.encoding, "content_b64": f.content}
-
-def put_file(
-    repo_full: str,
-    path: str,
-    content_b64: str,
-    message: str,
-    branch: str,
-    sha: Optional[str] = None,
-):
-    """
-    Create or update a file on a branch.
-    - Accepts base64 content; converts to UTF-8 string (PyGithub expects str).
-    - Uses InputGitAuthor for author/committer to avoid silent failures.
-    """
-    repo = _repo(repo_full)
-
-    # Decode to *string* (PyGithub wants str, not bytes)
-    content_bytes = base64.b64decode(content_b64)
-    content_str = content_bytes.decode("utf-8", errors="replace")
-
-    author = InputGitAuthor(AUTHOR_NAME, AUTHOR_EMAIL)
-
+def _ga():
     try:
-        # If file exists on that branch → update
-        current = repo.get_contents(path, ref=branch)
-        return repo.update_file(
-            path=path,
-            message=message,
-            content=content_str,
-            sha=sha or current.sha,
-            branch=branch,
-            author=author,
-            committer=author,
-        )
+        from services import github_actions as ga
+        return ga
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"github_actions import failed: {e}")
+
+# ── Models ───────────────────────────────────────────────────────────────
+class FileGetReq(BaseModel):
+    repo: str
+    path: str
+    ref: Optional[str] = None
+
+class FilePutReq(BaseModel):
+    repo: str
+    path: str
+    content_b64: str
+    message: str
+    branch: str
+    sha: Optional[str] = None
+
+class BranchReq(BaseModel):
+    repo: str
+    base: str
+    new_branch: str
+
+class PRReq(BaseModel):
+    repo: str
+    title: str
+    head: str
+    base: str
+    body: Optional[str] = None
+    draft: bool = False
+
+class ApplyDiffReq(BaseModel):
+    repo: str
+    base_branch: str
+    new_branch: str
+    commit_message: str
+    diff: str
+    allow_deletes: bool = False
+    dry_run: bool = False
+
+# ── Endpoints ────────────────────────────────────────────────────────────
+@router.get("/health")
+def gh_health(_: None = Depends(require_api_key)):
+    ga = _ga()
+    try:
+        me = ga.gh.get_user().login  # type: ignore[attr-defined]
+        return {"ok": True, "user": me, "allowlist": sorted(list(ga.ALLOWLIST))}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+@router.get("/repos")
+def list_repos(_: None = Depends(require_api_key)):
+    ga = _ga()
+    return ga.list_repos()
+
+@router.post("/file/get")
+def file_get(req: FileGetReq, _: None = Depends(require_api_key)):
+    ga = _ga()
+    try:
+        return ga.get_file(req.repo, req.path, req.ref)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
     except GithubException as e:
-        # 404 = file not found on that branch → create
-        if getattr(e, "status", None) == 404:
-            return repo.create_file(
-                path=path,
-                message=message,
-                content=content_str,
-                branch=branch,
-                author=author,
-                committer=author,
-            )
-        # Any other GitHub error: re-raise so the router can surface details
-        raise
+        detail = e.data if getattr(e, "data", None) else {"message": str(e)}
+        raise HTTPException(status_code=e.status or 500, detail=json.dumps(detail))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-def create_branch(repo_full: str, base: str, new_branch: str):
-    repo = _repo(repo_full)
-    base_ref = repo.get_git_ref(f"heads/{base}")
-    return repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_ref.object.sha)
+@router.post("/file/put")
+def file_put(req: FilePutReq, _: None = Depends(require_api_key)):
+    ga = _ga()
+    try:
+        return ga.put_file(req.repo, req.path, req.content_b64, req.message, req.branch, req.sha)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except GithubException as e:
+        detail = e.data if getattr(e, "data", None) else {"message": str(e)}
+        raise HTTPException(status_code=e.status or 500, detail=json.dumps(detail))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-def open_pr(
-    repo_full: str,
-    title: str,
-    head: str,
-    base: str,
-    body: str = "",
-    draft: bool = False,
-):
-    repo = _repo(repo_full)
-    pr = repo.create_pull(title=title, body=body, head=head, base=base, draft=draft)
-    return {"number": pr.number, "html_url": pr.html_url}
+@router.post("/branch/create")
+def branch_create(req: BranchReq, _: None = Depends(require_api_key)):
+    ga = _ga()
+    try:
+        return ga.create_branch(req.repo, req.base, req.new_branch)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except GithubException as e:
+        detail = e.data if getattr(e, "data", None) else {"message": str(e)}
+        raise HTTPException(status_code=e.status or 500, detail=json.dumps(detail))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/pr/open")
+def pr_open(req: PRReq, _: None = Depends(require_api_key)):
+    ga = _ga()
+    try:
+        return ga.open_pr(req.repo, req.title, req.head, req.base, req.body or "", req.draft)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except GithubException as e:
+        detail = e.data if getattr(e, "data", None) else {"message": str(e)}
+        raise HTTPException(status_code=e.status or 500, detail=json.dumps(detail))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/apply-diff")
+def apply_diff(req: ApplyDiffReq, _: None = Depends(require_api_key)):
+    ga = _ga()
+    try:
+        return ga.apply_diff(
+            req.repo,
+            req.base_branch,
+            req.new_branch,
+            req.commit_message,
+            req.diff,
+            allow_deletes=req.allow_deletes,
+            dry_run=req.dry_run,
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except GithubException as e:
+        detail = e.data if getattr(e, "data", None) else {"message": str(e)}
+        raise HTTPException(status_code=e.status or 500, detail=json.dumps(detail))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
