@@ -1,5 +1,5 @@
 # File: routes/github_proxy.py
-import os, hmac
+import os, hmac, hashlib
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -18,7 +18,6 @@ def require_api_key(authorization: str = Header(None)):
 
 @router.get("/debug/api-key")
 def debug_api_key(authorization: Optional[str] = Header(None)):
-    import hashlib
     def sha8(s: str) -> str: return hashlib.sha256(s.encode()).hexdigest()[:8]
     provided = ""
     if authorization and authorization.lower().startswith("bearer "):
@@ -86,19 +85,39 @@ def list_repos(_: None = Depends(require_api_key)):
 @router.post("/file/get")
 def file_get(req: FileGetReq, _: None = Depends(require_api_key)):
     ga = _ga()
-    return ga.get_file(req.repo, req.path, req.ref)
+    try:
+        return ga.get_file(req.repo, req.path, req.ref)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/file/put")
 def file_put(req: FilePutReq, _: None = Depends(require_api_key)):
     ga = _ga()
-    return ga.put_file(req.repo, req.path, req.content_b64, req.message, req.branch, req.sha)
+    try:
+        return ga.put_file(req.repo, req.path, req.content_b64, req.message, req.branch, req.sha)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/branch/create")
 def branch_create(req: BranchReq, _: None = Depends(require_api_key)):
     ga = _ga()
-    return ga.create_branch(req.repo, req.base, req.new_branch)
+    try:
+        return ga.create_branch(req.repo, req.base, req.new_branch)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/pr/open")
 def pr_open(req: PRReq, _: None = Depends(require_api_key)):
     ga = _ga()
-    return ga.open_pr(req.repo, req.title, req.head, req.base, req.body or "", req.draft)
+    try:
+        return ga.open_pr(req.repo, req.title, req.head, req.base, req.body or "", req.draft)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

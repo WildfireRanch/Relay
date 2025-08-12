@@ -16,7 +16,7 @@ gh = Github(GITHUB_TOKEN, timeout=5)
 ALLOWLIST: Set[str] = {
     s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()
 }
-AUTHOR_NAME  = os.getenv("COMMIT_AUTHOR_NAME", "Relay Bot")
+AUTHOR_NAME = os.getenv("COMMIT_AUTHOR_NAME", "Relay Bot")
 AUTHOR_EMAIL = os.getenv("COMMIT_AUTHOR_EMAIL", "relay@wildfireranch.us")
 
 def _repo(repo_full: str):
@@ -45,7 +45,6 @@ def put_file(
 ):
     repo = _repo(repo_full)
     content = base64.b64decode(content_b64)
-
     try:
         current = repo.get_contents(path, ref=branch)
         return repo.update_file(
@@ -72,7 +71,9 @@ def create_branch(repo_full: str, base: str, new_branch: str):
     base_ref = repo.get_git_ref(f"heads/{base}")
     return repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_ref.object.sha)
 
-def open_pr(repo_full: str, title: str, head: str, base: str, body: str = "", draft: bool = False):
+def open_pr(
+    repo_full: str, title: str, head: str, base: str, body: str = "", draft: bool = False
+):
     repo = _repo(repo_full)
     pr = repo.create_pull(title=title, body=body, head=head, base=base, draft=draft)
     return {"number": pr.number, "html_url": pr.html_url}
