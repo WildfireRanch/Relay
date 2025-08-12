@@ -1,20 +1,21 @@
 # File: services/github_actions.py
-from github import Github
-from github.GithubException import GithubException
-from __future__ import annotations
-import os, base64
-from typing import Optional, Dict, Any
-from github import Github
-from github.GithubException import GithubException
+import os
+import base64
+from typing import Optional, Dict, Any, Set
 
+from github import Github
+from github.GithubException import GithubException
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 if not GITHUB_TOKEN:
     raise RuntimeError("Missing GITHUB_TOKEN")
 
-gh = Github(GITHUB_TOKEN)
+# Short timeout so calls never hang the server
+gh = Github(GITHUB_TOKEN, timeout=5)
 
-ALLOWLIST = {s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()}
+ALLOWLIST: Set[str] = {
+    s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()
+}
 AUTHOR_NAME  = os.getenv("COMMIT_AUTHOR_NAME", "Relay Bot")
 AUTHOR_EMAIL = os.getenv("COMMIT_AUTHOR_EMAIL", "relay@wildfireranch.us")
 
@@ -24,6 +25,9 @@ def _repo(repo_full: str):
     return gh.get_repo(repo_full)
 
 def list_repos():
+    # Avoid broad list calls; show the allowlist if present
+    if ALLOWLIST:
+        return [{"full_name": r} for r in sorted(ALLOWLIST)]
     return [{"full_name": r.full_name} for r in gh.get_user().get_repos()]
 
 def get_file(repo_full: str, path: str, ref: Optional[str] = None) -> Dict[str, Any]:
@@ -31,21 +35,34 @@ def get_file(repo_full: str, path: str, ref: Optional[str] = None) -> Dict[str, 
     f = repo.get_contents(path, ref=ref) if ref else repo.get_contents(path)
     return {"sha": f.sha, "encoding": f.encoding, "content_b64": f.content}
 
-def put_file(repo_full: str, path: str, content_b64: str, message: str, branch: str, sha: Optional[str] = None):
+def put_file(
+    repo_full: str,
+    path: str,
+    content_b64: str,
+    message: str,
+    branch: str,
+    sha: Optional[str] = None,
+):
     repo = _repo(repo_full)
     content = base64.b64decode(content_b64)
+
     try:
-        # update
         current = repo.get_contents(path, ref=branch)
         return repo.update_file(
-            path, message, content, sha or current.sha, branch=branch,
+            path,
+            message,
+            content,
+            sha or current.sha,
+            branch=branch,
             author={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
             committer={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
         )
     except GithubException:
-        # create
         return repo.create_file(
-            path, message, content, branch=branch,
+            path,
+            message,
+            content,
+            branch=branch,
             author={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
             committer={"name": AUTHOR_NAME, "email": AUTHOR_EMAIL},
         )
