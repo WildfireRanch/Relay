@@ -122,9 +122,8 @@ from routes.mcp import router as mcp_router
 from routes.logs import router as logs_router
 from routes.webhooks_github import router as gh_webhooks
 from routes.github_proxy import router as gh_proxy_router
+
 app.include_router(gh_proxy_router)
-
-
 app.include_router(ask_router)
 app.include_router(status_router)
 app.include_router(control_router)
@@ -193,6 +192,11 @@ def version():
     except Exception:
         commit = "unknown"
     return {"git_commit": commit, "env": ENV_NAME}
+
+@app.get("/debug/routes")
+def debug_routes():
+    return [{"path": r.path, "name": r.name} for r in app.router.routes]
+
 
 # ── Dev entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
