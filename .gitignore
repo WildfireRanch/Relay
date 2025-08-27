@@ -101,6 +101,9 @@ docs/imported/
 docs/generated/
 vectorstore/
 index_backup_*.zip
+# Ignore all files under /data/index
+/data/index/*
+!/.gitkeep
 
 # =========================
 # === Python/Node Requirements Lockfiles ===
