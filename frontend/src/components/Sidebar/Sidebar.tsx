@@ -1,7 +1,7 @@
 // File: src/components/Sidebar/Sidebar.tsx
 "use client";
 
-console.log("Sidebar mounted");
+
 
 import Image from "next/image";
 import Link from "next/link";
@@ -17,6 +17,8 @@ const links = [
   { href: "/email", label: "Email", icon: "/blackbeard earing.png" },
   { href: "/action-queue", label: "ActionQueue", icon: "/beanie and smoke.png" },
   { href: "/janitor", label: "Janitor", icon: "/sunglass shadow.png" },
+    { href: "/status", label: "Status", icon: "/globe.svg" },
+
 
 ];
 
