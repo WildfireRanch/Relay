@@ -1,24 +1,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # File: services/semantic_retriever.py
 # Purpose:
-#   Safe, self-healing LlamaIndex storage & retriever setup.
-#   - Ensures persisted index can always be loaded or rebuilt.
-#   - Provides compatibility layer for semantic retrieval in context_injector.
-#   - Re-exports robust tiered semantic search (services.kb.search) as
-#     get_semantic_context so downstream callers never break.
-#
-# Upstream:
-#   - ENV: INDEX_ROOT (default "./data/index")
-#   - Imports: llama_index.core, services.kb
-#
-# Downstream:
-#   - services.context_injector (calls get_semantic_context)
-#   - agents.mcp_agent (through context_injector)
-#
-# Notes:
-#   - If the index is missing or corrupt, this module falls back to building
-#     a minimal empty index so the API never crashes.
-#   - get_semantic_context is the canonical entrypoint for semantic retrieval.
+#   Compatibility + safety layer for semantic retrieval.
+#   - Keeps persisted index safety helpers available (get_index/get_retriever)
+#   - Re-exports a robust, planner-friendly get_semantic_context that:
+#       * accepts both `top_k` and `k` (prefers `k`)
+#       * calls services.kb.search(...)
+#       * renders hits into readable markdown for prompts
+#   - Never crashes the API: logs and returns a placeholder on failure
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -33,38 +22,22 @@ from llama_index.core.readers import SimpleDirectoryReader
 
 log = logging.getLogger("semantic_retriever")
 
-# Where to persist the index on disk
+# ===== Persisted-index safety (unchanged) ====================================
+
 INDEX_ROOT = os.getenv("INDEX_ROOT", "./data/index")
-
-# Candidate docs directories for fallback index build
-DOCS_DIRS: List[str] = [
-    "./docs",
-    "./docs/imported",
-    "./docs/generated",
-]
-
-# Files that typically exist in a persisted LlamaIndex store
-REQUIRED_FILES = {
-    "docstore.json",
-    "index_store.json",
-    "default__vector_store.json",
-}
-
-# ─── Utility helpers ─────────────────────────────────────────────────────────
+DOCS_DIRS: List[str] = ["./docs", "./docs/imported", "./docs/generated"]
+REQUIRED_FILES = {"docstore.json", "index_store.json", "default__vector_store.json"}
 
 def _ensure_dir(path: str) -> None:
-    """Ensure directory exists for persisted index."""
     Path(path).mkdir(parents=True, exist_ok=True)
 
 def _persist_exists(root: str) -> bool:
-    """Check whether a persisted index exists and is valid."""
     if not Path(root).exists():
         return False
     present = {p.name for p in Path(root).glob("*.json")}
     return REQUIRED_FILES.issubset(present)
 
 def _load_docs() -> List[Document]:
-    """Load all documents from candidate doc directories."""
     docs: List[Document] = []
     for d in DOCS_DIRS:
         p = Path(d)
@@ -78,14 +51,12 @@ def _load_docs() -> List[Document]:
     return docs
 
 def _build_and_persist_empty(root: str):
-    """Create and persist an empty index if no docs available."""
     log.warning("No docs found; creating EMPTY index at %s", root)
     index = VectorStoreIndex.from_documents([])
     index.storage_context.persist(persist_dir=root)
     return index
 
 def _build_and_persist_from_docs(root: str):
-    """Build and persist an index from docs, or fallback to empty."""
     docs = _load_docs()
     if not docs:
         return _build_and_persist_empty(root)
@@ -95,57 +66,77 @@ def _build_and_persist_from_docs(root: str):
     log.info("Index persisted to %s", root)
     return index
 
-# ─── Public Index Accessors ───────────────────────────────────────────────────
-
 def get_index():
-    """
-    Load existing index or build one if missing; never crash.
-    If load/build fails, returns an empty index to keep API alive.
-    """
+    """Load existing index or build one if missing; never crash."""
     _ensure_dir(INDEX_ROOT)
     try:
         if _persist_exists(INDEX_ROOT):
             log.info("Loading index from %s", INDEX_ROOT)
             storage = StorageContext.from_defaults(persist_dir=INDEX_ROOT)
             return load_index_from_storage(storage)
-        # Fresh build
         return _build_and_persist_from_docs(INDEX_ROOT)
     except Exception as e:
-        # Absolute last resort: empty index so API stays up
         log.exception("Index load/build failed; falling back to EMPTY index: %s", e)
         return _build_and_persist_empty(INDEX_ROOT)
 
 _INDEX = None
 def get_retriever():
-    """
-    Provide a shared retriever instance (LlamaIndex native).
-    Use this if you want direct node retrieval instead of tiered kb.search.
-    """
+    """LLM-native retriever (kept for callers that want nodes instead of tiered search)."""
     global _INDEX
     if _INDEX is None:
         _INDEX = get_index()
-    # adjust search kwargs to your needs
     return _INDEX.as_retriever(search_top_k=8)
 
-# ─── Canonical Semantic Context Function ──────────────────────────────────────
+# ===== Compat wrapper for kb.search ==========================================
 
-try:
-    # Import robust tiered search from services.kb
-    from services.kb import search as get_semantic_context
-    log.info("✅ get_semantic_context wired to services.kb.search (tiered semantic search)")
-except Exception as e:
-    log.exception("⚠️ Failed to import services.kb.search, falling back to retriever: %s", e)
+from services.kb import search as _kb_search
 
-    def get_semantic_context(query: str, top_k: int = 6) -> str:
-        """
-        Fallback: Use retriever directly if kb.search is unavailable.
-        Returns concatenated text snippets.
-        """
+_SUPPORTED_FORWARD = {"k", "search_type", "score_threshold", "user_id", "explain", "min_global"}
+
+def _render_hits_markdown(hits: list) -> str:
+    """Turn kb.search hits into planner-friendly markdown."""
+    if not isinstance(hits, list) or not hits:
+        return "[No semantic matches]"
+    lines = []
+    for i, h in enumerate(hits, 1):
+        title = h.get("title") or h.get("path") or "Snippet"
+        path = h.get("path") or ""
+        snippet = (h.get("snippet") or "").strip()
+        meta_tier = h.get("tier") or "unknown"
+        sim = h.get("similarity")
+        sim_s = f"{sim:.3f}" if isinstance(sim, (int, float)) else ""
+        path_s = f" ({path})" if path else ""
+        lines.append(f"{i}. **{title}**{path_s}  — _tier: {meta_tier}{(', score: ' + sim_s) if sim_s else ''}_\n{snippet}")
+    return "\n\n".join(lines)
+
+def get_semantic_context(query: str, **kwargs) -> str:
+    """
+    Compatibility entrypoint for context_injector:
+      - Accepts `top_k` or `k` (prefers `k`)
+      - Forwards only supported kwargs to kb.search(...)
+      - Renders list of hits → markdown string for prompt consumption
+      - Returns a safe placeholder on any failure
+    """
+    # Normalize kwarg names: allow callers to pass top_k
+    if "k" not in kwargs and "top_k" in kwargs:
+        kwargs["k"] = kwargs.pop("top_k")
+
+    # Whitelist supported kwargs to avoid TypeError from unknown keys
+    forward = {k: v for k, v in kwargs.items() if k in _SUPPORTED_FORWARD}
+
+    try:
+        hits = _kb_search(query=query, **forward)
+        return _render_hits_markdown(hits)
+    except TypeError as e:
+        # Last-ditch stripping of anything weird and retry once
+        log.warning("kb.search bad kwargs (%s); retrying with minimal set", e)
+        minimal = {k: forward[k] for k in ("k",) if k in forward}
         try:
-            retriever = get_retriever()
-            results = retriever.retrieve(query)
-            snippets = [n.node.text for n in results[:top_k]]
-            return "\n\n".join(snippets)
+            hits = _kb_search(query=query, **minimal)
+            return _render_hits_markdown(hits)
         except Exception as inner:
-            log.error("Semantic retrieval fallback failed: %s", inner)
+            log.error("Semantic retrieval failed after retry: %s", inner)
             return "[Semantic retrieval unavailable]"
+    except Exception as e:
+        log.error("Semantic retrieval failure: %s", e)
+        return "[Semantic retrieval unavailable]"
