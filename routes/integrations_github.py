@@ -10,7 +10,7 @@
 #     Pull requests: Read/Write (if you want to open PRs)
 #     Issues: Read/Write (if you want to open issues)
 #     Commit statuses: Read/Write (optional for setting statuses)
-# - Errors are raised as HTTPException with the upstream message to avoid Railway 502s.
+# - Errors are raised as HTTPException with the upstream message to avoid Railway 502s.x
 
 from __future__ import annotations
 
