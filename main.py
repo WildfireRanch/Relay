@@ -1,12 +1,13 @@
 # File: main.py
-# Purpose: FastAPI entrypoint for Relay Command Center (ask, control, status, docs, webhooks)
+# Purpose: FastAPI entrypoint for Relay Command Center (ask, control, status, docs, webhooks, integrations)
 # Notes:
 # - Loads .env in local dev
-# - Sets up CORS (static OR regex)
-# - Optional OpenTelemetry tracing to Jaeger
-# - Registers all routers, including GitHub webhooks (/webhooks/github)
-# - Validates KB index on startup
-# - Adds health, version, and CORS test endpoints
+# - Hardened CORS (list and/or regex), strips stray delimiters
+# - Optional OpenTelemetry → Jaeger (best-effort, never blocks)
+# - Global JSON error handlers (prevents opaque 502s)
+# - GZip compression
+# - Startup: warm semantic index; validate KB index
+# - Health: /live (liveness), /ready (readiness), /health (legacy), /version, /debug/routes
 
 from __future__ import annotations
 
@@ -14,10 +15,14 @@ import os
 import sys
 import logging
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 # ── Local dev: load .env ─────────────────────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
@@ -25,8 +30,8 @@ if os.getenv("ENV", "local") == "local":
         from dotenv import load_dotenv
         load_dotenv()
         logging.info("✅ Loaded .env for local development")
-    except ImportError:
-        logging.warning("⚠️ python-dotenv not installed; skipping .env load")
+    except Exception:
+        logging.warning("⚠️ python-dotenv not installed or failed; skipping .env load")
 
 # ── Paths & ENV ──────────────────────────────────────────────────────────────
 ENV_NAME = os.getenv("ENV", "local")
@@ -38,8 +43,10 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+log = logging.getLogger("relay.main")
 
-# ── Optional: OpenTelemetry → Jaeger ─────────────────────────────────────────
+# ── Optional: OpenTelemetry → Jaeger (best-effort) ───────────────────────────
+OTEL_ENABLED = False
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.resources import SERVICE_NAME, Resource
@@ -58,13 +65,12 @@ try:
     jaeger_exporter = JaegerExporter(agent_host_name=JAEGER_HOST, agent_port=JAEGER_PORT)
     trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(jaeger_exporter))
     OTEL_ENABLED = True
-    logging.info(f"🟣 OpenTelemetry on → Jaeger {JAEGER_HOST}:{JAEGER_PORT}")
+    log.info("🟣 OpenTelemetry on → Jaeger %s:%s", JAEGER_HOST, JAEGER_PORT)
 except Exception as ex:
-    OTEL_ENABLED = False
-    logging.warning(f"OTel disabled ({ex.__class__.__name__}: {ex})")
+    log.warning("OTel disabled (%s: %s)", ex.__class__.__name__, ex)
 
 # ── Ensure working dirs exist ────────────────────────────────────────────────
-for sub in ("docs/imported", "docs/generated", "logs/sessions"):
+for sub in ("docs/imported", "docs/generated", "logs/sessions", "data/index"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
 # ── App ──────────────────────────────────────────────────────────────────────
@@ -74,28 +80,43 @@ app = FastAPI(
     description="Backend API for Relay agent – ask, control, status, docs, admin",
 )
 
+# GZip large responses (safe default)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 if OTEL_ENABLED:
     try:
         FastAPIInstrumentor().instrument_app(app)
     except Exception as ex:
-        logging.warning(f"OTel FastAPI instrumentation failed: {ex}")
+        log.warning("OTel FastAPI instrumentation failed: %s", ex)
 
 # ── CORS (prefer FRONTEND_ORIGIN; fallback to regex; dev='*') ────────────────
-cors_origins: list[str] = []
-origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")
-override_origin = os.getenv("FRONTEND_ORIGIN")
+def _parse_origins(raw: Optional[str]) -> List[str]:
+    """
+    Parse comma/space/semicolon-separated origins safely.
+    """
+    if not raw:
+        return []
+    seps = [",", ";", " "]
+    val = raw
+    for s in seps:
+        val = val.replace(s, ",")
+    origins = [o.strip() for o in val.split(",") if o.strip()]
+    return origins
 
-if override_origin:
-    cors_origins = [o.strip() for o in override_origin.split(",") if o.strip()]
+origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")  # e.g. ^https://.*\.wildfireranch\.us$
+override_origin = os.getenv("FRONTEND_ORIGIN")     # e.g. https://status.wildfireranch.us,http://localhost:3000
+cors_origins: List[str] = _parse_origins(override_origin)
+
+if cors_origins:
     allow_creds = True
-    logging.info(f"🔒 CORS allow_origins: {cors_origins}")
+    log.info("🔒 CORS allow_origins: %s", cors_origins)
 elif origin_regex:
     allow_creds = True
-    logging.info(f"🔒 CORS allow_origin_regex: {origin_regex}")
+    log.info("🔒 CORS allow_origin_regex: %s", origin_regex)
 else:
     cors_origins = ["*"]
     allow_creds = False
-    logging.warning("🔓 CORS DEBUG: allow_origins='*' (set FRONTEND_ORIGIN in prod)")
+    log.warning("🔓 CORS DEBUG: allow_origins='*' (set FRONTEND_ORIGIN or FRONTEND_ORIGIN_REGEX in prod)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,7 +128,7 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
-# ── Routers ──────────────────────────────────────────────────────────────────
+# ── Routers (import after app init to avoid circulars) ───────────────────────
 from routes.ask import router as ask_router
 from routes.status import router as status_router
 from routes.control import router as control_router
@@ -124,6 +145,7 @@ from routes.webhooks_github import router as gh_webhooks
 from routes.github_proxy import router as gh_proxy_router
 from routes.integrations_github import router as gh_router
 
+# Register routers (proxy first; then app core; then webhooks/integrations)
 app.include_router(gh_proxy_router)
 app.include_router(ask_router)
 app.include_router(status_router)
@@ -141,46 +163,79 @@ app.include_router(gh_router)
 
 if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
     app.include_router(admin_router)
-    logging.info("🛠️ Admin tools enabled")
+    log.info("🛠️ Admin tools enabled")
 else:
-    logging.info("Admin tools disabled")
+    log.info("Admin tools disabled")
 
-# ── Startup: validate KB index (non‑blocking) ────────────────────────────────
+# ── Global exception handlers (clean JSON; prevents opaque 502) ──────────────
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse({"status": "error", "code": exc.status_code, "detail": exc.detail}, status_code=exc.status_code)
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    return JSONResponse({"status": "error", "code": 422, "detail": exc.errors()}, status_code=422)
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    log.exception("Unhandled error at %s %s", request.method, request.url.path)
+    return JSONResponse({"status": "error", "code": 500, "detail": "Internal server error"}, status_code=500)
+
+# ── Startup: warm semantic index; validate KB index (non-blocking) ───────────
 from services import kb
 
 @app.on_event("startup")
-def ensure_kb_index():
+def on_startup():
+    # Self-heal semantic index (never crash if missing)
+    try:
+        from services.semantic_retriever import get_retriever
+        get_retriever()  # warm-up/build if missing
+        log.info("✅ Semantic index ready")
+    except Exception as ex:
+        log.error("❌ Semantic index warmup failed: %s", ex)
+
+    # Validate KB index (best-effort)
     try:
         if not kb.index_is_valid():
-            logging.warning("📚 KB index missing/invalid — triggering rebuild…")
-            logging.info("Reindex result: %s", kb.api_reindex())
+            log.warning("📚 KB index missing/invalid — triggering rebuild…")
+            log.info("Reindex result: %s", kb.api_reindex())
         else:
-            logging.info("✅ KB index validated on startup")
+            log.info("✅ KB index validated on startup")
     except Exception as ex:
-        logging.error(f"KB index check failed: {ex}")
+        log.error("KB index check failed: %s", ex)
 
 # ── Health & misc endpoints ──────────────────────────────────────────────────
 @app.get("/")
 def root():
     return JSONResponse({"message": "Relay Agent is Online"})
 
-@app.get("/health")
-def health_check():
+@app.get("/live")
+def live():
+    # Liveness: if process is up, return OK
+    return JSONResponse({"status": "ok", "env": ENV_NAME})
+
+@app.get("/ready")
+def ready():
+    # Readiness: ensure basic env and dirs exist; deeper checks can be added
     ok = True
-    details: dict[str, bool | str] = {}
+    details: Dict[str, Any] = {}
 
     for key in ("API_KEY", "OPENAI_API_KEY"):
         present = bool(os.getenv(key))
         details[key] = present
         ok &= present
 
-    for sub in ("docs/imported", "docs/generated"):
+    for sub in ("docs/imported", "docs/generated", "data/index"):
         exists = (PROJECT_ROOT / sub).exists()
         details[sub] = exists
         ok &= exists
 
-    details["env"] = ENV_NAME
     return JSONResponse({"status": "ok" if ok else "error", "details": details}, status_code=200 if ok else 503)
+
+@app.get("/health")
+def health():
+    # Backward-compatible health endpoint (aggregated)
+    return ready()
 
 @app.options("/test-cors")
 def test_cors():
@@ -198,7 +253,6 @@ def version():
 @app.get("/debug/routes")
 def debug_routes():
     return [{"path": r.path, "name": r.name} for r in app.router.routes]
-
 
 # ── Dev entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
