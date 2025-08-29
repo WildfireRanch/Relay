@@ -1,62 +1,86 @@
 # File: test_planner_agent.py
 # Directory: tests
-# Purpose: # Purpose: Provides unit tests for the planner agent's behavior when encountering invalid GPT labels.
+# Purpose: Validate Planner JSON-mode behavior and coercion fallback.
 #
 # Upstream:
-#   - ENV: —
-#   - Imports: agents, llama_index.core.settings, pytest, unittest.mock
+#   - ENV: (none; OpenAI calls are monkeypatched)
+#   - Imports: pytest, importlib
 #
 # Downstream:
-#   - —
+#   - agents.planner_agent (ask → JSON parse/coerce, route selection)
 #
 # Contents:
-#   - test_critic_fallback_on_invalid_gpt_label()
+#   - fixtures: FakeOpenAI helpers (inline)
+#   - test_planner_json_ok()
+#   - test_planner_coercion()
 
-
-
-
-
-
-
+import json
+import types
+import importlib
 import pytest
-from unittest.mock import AsyncMock, patch
-from agents import planner_agent
-from llama_index.core.settings import Settings
-Settings.llm = None
+
+# ---- Minimal fake OpenAI client --------------------------------------------------------------
+
+class _Msg:
+    def __init__(self, content: str):
+        self.content = content
+
+class _Choice:
+    def __init__(self, content: str):
+        self.message = _Msg(content)
+
+class _Resp:
+    def __init__(self, content: str):
+        self.choices = [_Choice(content)]
+
+class FakeChatCompletions:
+    def __init__(self, payload: str):
+        self._payload = payload
+    async def create(self, **kwargs):
+        return _Resp(self._payload)
+
+class FakeOpenAI:
+    def __init__(self, payload: str):
+        self.chat = types.SimpleNamespace(completions=FakeChatCompletions(payload))
+
 
 @pytest.mark.asyncio
-async def test_critic_fallback_on_invalid_gpt_label(monkeypatch):
-    user_id = "test-user"
-    query = "please banana my system"
+async def test_planner_json_ok(monkeypatch):
+    """Planner returns strict JSON (response_format json_object), parsed without coercion."""
+    payload = json.dumps({
+        "objective": "Answer the definition.",
+        "steps": [{"type": "analysis", "summary": "Use provided context."}],
+        "recommendation": "Answer directly.",
+        "route": "echo",
+        "final_answer": "Relay Command Center is the AI-assisted control plane for solar + miner ops."
+    })
+    fake = FakeOpenAI(payload)
 
-    # Mock ContextEngine
-    monkeypatch.setattr(
-        planner_agent,
-        "ContextEngine",
-        lambda user_id: type("MockEngine", (), {
-            "build_context": lambda self, q, **kwargs: {"prompt": "", "files_used": []}
-        })("")
-    )
+    planner_mod = importlib.import_module("agents.planner_agent")
+    monkeypatch.setattr(planner_mod, "_openai", fake, raising=True)
 
-    # Mock GPT classification to return invalid label
-    mock_client = AsyncMock()
-    mock_client.chat.completions.create.return_value.choices = [
-        type("Choice", (), {"message": type("Message", (), {"content": "banana"})})()
-    ]
-    monkeypatch.setattr(planner_agent, "AsyncOpenAI", lambda api_key: mock_client)
+    plan = await planner_mod.planner_agent.ask("What is Relay?", "CTX")
+    assert isinstance(plan, dict)
+    assert plan.get("route") == "echo"
+    assert isinstance(plan.get("plan_id"), str) and len(plan["plan_id"]) > 0
+    assert isinstance(plan.get("final_answer"), str) and len(plan["final_answer"]) > 0
 
-    # Mock echo agent response
-    monkeypatch.setattr(planner_agent.echo_agent, "handle", AsyncMock(return_value={"response": "[echoed]"}))
 
-    # Mock critic agent
-    monkeypatch.setattr(planner_agent, "critic_agent", __import__("agents.critic_agent"))
-    monkeypatch.setattr(planner_agent.critic_agent, "handle_routing_error", AsyncMock(return_value={
-        "response": "[critic detected banana]",
-        "action": None
-    }))
+@pytest.mark.asyncio
+async def test_planner_coercion(monkeypatch):
+    """Planner returns text-wrapped JSON; parser should coerce the first JSON object."""
+    wrapped = "Here is the plan:\n```json\n" + json.dumps({
+        "objective": "Coercible JSON",
+        "steps": [],
+        "recommendation": "",
+        "route": "echo"
+    }) + "\n```"
+    fake = FakeOpenAI(wrapped)
 
-    result = await planner_agent.handle_query(user_id, query)
+    planner_mod = importlib.import_module("agents.planner_agent")
+    monkeypatch.setattr(planner_mod, "_openai", fake, raising=True)
 
-    assert "banana" not in result["response"]  # it was rewritten
-    assert "[critic detected banana]" in result["response"]
-    assert "[echoed]" in result["response"]
+    plan = await planner_mod.planner_agent.ask("Explain something", "CTX")
+    assert isinstance(plan, dict)
+    assert plan.get("route") == "echo"
+    assert "objective" in plan
