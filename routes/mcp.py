@@ -58,7 +58,7 @@ MCPRunResponse = Dict[str, Any]  # passthrough shape from agents.mcp_agent.run_m
 @router.post("/run")
 async def mcp_run(
     request: Request,
-    x_user_id: Annotated[Optional[str], Header(None, alias="X-User-Id")] = None,
+    x_user_id: Optional[str] = Header(default=None, alias="X-User-Id"),
 ) -> MCPRunResponse:
     """
     Direct endpoint for invoking the MCP agent orchestrator (run_mcp).
