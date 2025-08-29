@@ -2,23 +2,27 @@
 # Directory: services
 # Purpose: Thin wrapper around KB search that supports both `k` and `top_k`,
 #          applies an optional score_threshold, and renders readable snippets.
+#          Includes legacy shims: get_semantic_context() and get_retriever().
 #
 # Upstream:
 #   - ENV (optional): SEMANTIC_DEFAULT_K (default 6)
 #   - Imports: typing, os, core.logging.log_event, services.kb.search
 #
 # Downstream:
-#   - agents.echo_agent (for answer synthesis)
-#   - services.context_injector (to build CONTEXT sections)
+#   - services.context_injector (build_context)
+#   - agents.echo_agent (answer synthesis)
+#   - main.lifespan (optional warmup via get_retriever)
 #
 # Contents:
 #   - search(q, *, top_k=None, k=None, score_threshold=None, **kwargs) -> list[dict]
 #   - render_markdown(results: list[dict]) -> str
+#   - get_semantic_context(query, top_k=6, score_threshold=None, **kwargs) -> str  [shim]
+#   - get_retriever() -> callable                                                  [shim]
 
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Callable
 
 from core.logging import log_event
 from services.kb import search as kb_search
@@ -68,7 +72,6 @@ def search(
         log_event("semantic_search_error", {"q_head": q[:180], "error": str(e)})
         return []
 
-    # Normalize each hit
     rows = [_mk_row(h) for h in results if isinstance(h, dict)]
     log_event("semantic_search_done", {"k": use_k, "rows": len(rows), "thresh": score_threshold})
     return rows
@@ -100,3 +103,31 @@ def render_markdown(results: List[Dict[str, Any]]) -> str:
         meta_str = f" ({', '.join(meta)})" if meta else ""
         lines.append(f"• **{title}** — _{path}_{meta_str}: {tail}")
     return "\n".join(lines)
+
+
+# ---- Legacy shims (retain backward compatibility) -------------------------------------------
+
+def get_semantic_context(
+    query: str,
+    *,
+    top_k: int = DEFAULT_K,
+    score_threshold: Optional[float] = None,
+    **kwargs: Any,
+) -> str:
+    """
+    Legacy helper used by context_injector: returns markdown bullets for the query.
+    Internally calls `search()` then `render_markdown()`.
+    """
+    rows = search(query, top_k=top_k, score_threshold=score_threshold, **kwargs)
+    md = render_markdown(rows)
+    return md or "[No semantic results]"
+
+
+def get_retriever() -> Callable[[str], List[Dict[str, Any]]]:
+    """
+    Legacy warmup hook used by main startup: returns a callable retriever.
+    """
+    def _retriever(q: str, **kw) -> List[Dict[str, Any]]:
+        return search(q, **kw)
+    log_event("semantic_retriever_ready", {"default_k": DEFAULT_K})
+    return _retriever
