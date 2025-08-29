@@ -1,7 +1,7 @@
 # File: ask.py
 # Directory: routes
-# Purpose: FastAPI endpoint for /ask — validates input, runs MCP pipeline, normalizes output,
-#          and returns a stable response shape (with JSON-safe values).
+# Purpose: FastAPI endpoints for /ask — validates input, runs MCP pipeline, normalizes output,
+#          provides GET compatibility and streaming shims, and guarantees JSON-safe responses.
 #
 # Upstream:
 #   - ENV: (none specific; downstream agents/services may use their own env)
@@ -9,42 +9,57 @@
 #
 # Downstream:
 #   - agents.mcp_agent.run_mcp (planner → route dispatch → echo/critics)
-#   - tests.test_ask_* (expected stable response shape)
+#   - agents.echo_agent.stream (optional; /ask/stream)
+#   - agents.codex_agent.stream (optional; /ask/codex_stream)
 #
 # Contents:
-#   - AskRequest (Pydantic)
-#   - AskResponse (Pydantic)
-#   - _json_safe(obj) helper
-#   - _normalize_result(wrapper) helper
-#   - POST /ask (ask)
+#   - AskRequest / AskResponse (Pydantic)
+#   - StreamRequest (Pydantic)
+#   - _json_safe(), _normalize_result()
+#   - POST /ask
+#   - GET  /ask  (legacy shim: ?question=...)
+#   - POST /ask/stream (Echo stream shim)
+#   - POST /ask/codex_stream (Codex stream shim)
 
 from __future__ import annotations
 
 import traceback
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, constr
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 
 from core.logging import log_event
 from agents.mcp_agent import run_mcp
 
+# Optional streaming agents
+try:
+    from agents.echo_agent import stream as echo_stream
+except Exception:  # pragma: no cover
+    echo_stream = None  # type: ignore
+
+try:
+    from agents.codex_agent import stream as codex_stream
+except Exception:  # pragma: no cover
+    codex_stream = None  # type: ignore
+
 router = APIRouter()
+
 
 # ---- Request / Response models ---------------------------------------------------------------
 
-# imports — add Annotated, drop constr
-from typing import Annotated
-from pydantic import BaseModel, Field
-# ...
-
 class AskRequest(BaseModel):
-    query: Annotated[str, Field(min_length=3, description="User question/prompt.")] = ...
-    role: str | None = Field("planner", description="Planner (default) or a specific route key.")
-    files: list[str] | None = Field(default=None, description="Optional file IDs/paths to include.")
-    topics: list[str] | None = Field(default=None, description="Optional topical tags/labels.")
+    """Validated payload for /ask (POST). Supports legacy 'question' alias."""
+    model_config = {"populate_by_name": True}
+    # Accept both {"query": "..."} and {"question": "..."} via alias:
+    query: Annotated[str, Field(min_length=3, description="User question/prompt.", alias="question")] = ...
+    role: Optional[str] = Field("planner", description="Planner (default) or a specific route key.")
+    files: Optional[List[str]] = Field(default=None, description="Optional file IDs/paths to include.")
+    topics: Optional[List[str]] = Field(default=None, description="Optional topical tags/labels.")
     user_id: str = Field("anonymous", description="Caller identity for logging/metrics.")
     debug: bool = Field(False, description="Enable extra debug output where supported.")
+
 
 class AskResponse(BaseModel):
     """Normalized response from the MCP pipeline."""
@@ -54,6 +69,14 @@ class AskResponse(BaseModel):
     context: str
     files_used: List[Dict[str, Any]] = []
     meta: Dict[str, Any] = {}
+
+
+class StreamRequest(BaseModel):
+    """Payload for streaming endpoints; mirrors AskRequest but minimal."""
+    model_config = {"populate_by_name": True}
+    query: Annotated[str, Field(min_length=3, alias="question")] = ...
+    context: Optional[str] = Field(default="", description="Optional prebuilt context")
+    user_id: str = Field("anonymous")
 
 
 # ---- Helpers ---------------------------------------------------------------------------------
@@ -87,7 +110,7 @@ def _normalize_result(result_or_wrapper: Dict[str, Any]) -> Dict[str, Any]:
     return result_or_wrapper
 
 
-# ---- Route -----------------------------------------------------------------------------------
+# ---- Routes ----------------------------------------------------------------------------------
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(payload: AskRequest):
@@ -95,7 +118,7 @@ async def ask(payload: AskRequest):
     Run the MCP pipeline for a validated query and return a normalized response.
     On internal failures, return structured 500 errors; planner/echo fallbacks preserve 200s upstream.
     """
-    q = payload.query.strip()
+    q = (payload.query or "").strip()
     if not q:
         raise HTTPException(
             status_code=400,
@@ -176,3 +199,59 @@ async def ask(payload: AskRequest):
         files_used=files_used if isinstance(files_used, list) else [],
         meta={"role": role, "debug": debug},
     )
+
+
+@router.get("/ask")
+async def ask_get(question: Annotated[str, Query(min_length=3)]):
+    """
+    Legacy GET shim: /ask?question=...
+    Reuses POST logic by constructing an AskRequest, so behavior stays identical.
+    """
+    payload = AskRequest.model_validate({"question": question})
+    return await ask(payload)
+
+
+@router.post("/ask/stream")
+async def ask_stream(payload: StreamRequest):
+    """
+    Streamed answer via Echo. Returns 501 if echo streaming is unavailable.
+    """
+    if echo_stream is None:
+        raise HTTPException(status_code=501, detail={"error": "not_implemented", "message": "Echo streaming not available."})
+
+    q = (payload.query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail={"error": "bad_request", "hint": "query must be non-empty"})
+
+    async def gen() -> AsyncGenerator[bytes, None]:
+        try:
+            async for chunk in echo_stream(query=q, context=payload.context or "", user_id=payload.user_id):
+                yield chunk.encode("utf-8")
+        except Exception as e:
+            log_event("ask_stream_error", {"error": str(e)})
+            yield f"[stream error] {str(e)}".encode("utf-8")
+
+    return StreamingResponse(gen(), media_type="text/plain")
+
+
+@router.post("/ask/codex_stream")
+async def ask_codex_stream(payload: StreamRequest):
+    """
+    Streamed code/patch output via Codex agent. Returns 501 if codex streaming is unavailable.
+    """
+    if codex_stream is None:
+        raise HTTPException(status_code=501, detail={"error": "not_implemented", "message": "Codex streaming not available."})
+
+    q = (payload.query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail={"error": "bad_request", "hint": "query must be non-empty"})
+
+    async def gen() -> AsyncGenerator[bytes, None]:
+        try:
+            async for chunk in codex_stream(query=q, context=payload.context or "", user_id=payload.user_id):
+                yield chunk.encode("utf-8")
+        except Exception as e:
+            log_event("ask_codex_stream_error", {"error": str(e)})
+            yield f"[stream error] {str(e)}".encode("utf-8")
+
+    return StreamingResponse(gen(), media_type="text/plain")

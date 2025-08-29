@@ -1,3 +1,4 @@
+# File: .github/workflows/tests.yml
 name: Relay Tests
 
 on:
@@ -9,59 +10,51 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         python-version: ["3.11", "3.12"]
 
     steps:
-    - name: Checkout repo
-  name: Relay Tests
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            pip-${{ runner.os }}-${{ matrix.python-version }}-
 
-    strategy:
-      matrix:
-        python-version: ["3.11", "3.12"]
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # install project deps if present
+          pip install -r requirements.txt || true
+          pip install -r requirements-dev.txt || true
+          # ensure test deps
+          pip install pytest pytest-asyncio pytest-cov httpx fastapi pydantic openai
 
-    steps:
-    - name: Checkout repo
-      uses: actions/checkout@v4
+      - name: Run pytest with coverage
+        env:
+          OPENAI_API_KEY: "test"  # calls are monkeypatched in tests
+        run: |
+          pytest -q --maxfail=1 --disable-warnings --cov=. --cov-report=xml
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml-${{ matrix.python-version }}
+          path: coverage.xml
 
-    - name: Install Poetry
-      run: pip install poetry
-
-    - name: Install dependencies
-      run: |
-        poetry install
-        # ensure test deps like pytest are present
-        poetry run pip install pytest pytest-asyncio
-
-    - name: Run pytest
-      run: poetry run pytest -q --maxfail=1 --disable-warnings
-
-    - name: Upload to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: coverage.xml
-        fail_ci_if_error: true
-    - name: Upload to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: coverage.xml
-        fail_ci_if_error: true
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          fail_ci_if_error: true
