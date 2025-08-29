@@ -1,125 +1,185 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# File: agents/mcp_agent.py
-# Purpose:
-#   MCP coordinator: builds context, gets a plan (planner or explicit role),
-#   routes to the chosen specialist agent, runs critics, logs/ingests results,
-#   and always returns a structured result (echo fallback on failure).
+# File: mcp_agent.py
+# Directory: agents
+# Purpose: Orchestrates the MCP pipeline for /ask:
+#          1) Build context
+#          2) Plan (JSON-mode) and meta-route suggestion
+#          3) Dispatch to route handler (codex/docs/control/echo/etc.)
+#          4) Run critics (non-fatal) and optionally queue actions
 #
-# Changes in this version:
-#   - FIX: critics now receive (artifact, context) instead of (artifact, query)
-#   - Pass `plan` to routed handlers (optional kwarg; ignored if not used)
-#   - Stronger logging/telemetry (plan_id, route, files_used, context_len)
-#   - Optional queue_action() if a handler returns {"action": {...}}
-#   - Safer context handling across dict/string shapes
-#   - Non-breaking output schema preserved
-# ──────────────────────────────────────────────────────────────────────────────
+# Upstream:
+#   - ENV (optional): none specific (agents it calls may use their own env)
+#   - Imports:
+#       - agents.planner_agent.planner_agent
+#       - agents.echo_agent.run
+#       - agents.codex_agent.handle (if present)
+#       - agents.docs_agent.analyze (if present)
+#       - agents.control_agent.run (if present)
+#       - agents.metaplanner_agent.suggest_route (optional)
+#       - agents.critic_agent.run.run_critics (optional)
+#       - agents.memory_agent.run (optional)
+#       - agents.janitor_agent (optional)
+#       - services.context_injector.build_context
+#       - services.queue.queue_action (optional)
+#       - core.logging.log_event
+#
+# Downstream:
+#   - routes.ask (expects dict with keys: plan, routed_result, critics, context, files_used)
+#
+# Contents:
+#   - run_mcp(query, role="planner", files=None, topics=None, user_id="anonymous", debug=False)
+
+from __future__ import annotations
 
 import traceback
 import uuid
-from typing import Optional, List, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from agents.planner_agent import planner_agent
-from agents.control_agent import control_agent
-from agents.docs_agent import docs_agent
-from agents.codex_agent import codex_agent
-from agents.echo_agent import run as echo_agent_run
-from agents.simulation_agent import run as simulate_runner
-from agents.trainer_agent import trainer_agent
-from agents.metaplanner_agent import suggest_route, run as meta_runner
-from agents.critic_agent.run import run_critics, run as critic_runner
-from agents.memory_agent import run as memory_runner
-from agents.janitor_agent import run as janitor_agent
-
-from services.context_injector import build_context
-from services.queue import queue_action
 from core.logging import log_event
+from services.context_injector import build_context
 
-# === Agent Dispatch Map ===
+# --- Optional agent imports (keep loose to avoid hard failures if some are not present) -------
+try:
+    from agents.planner_agent import planner_agent
+except Exception:  # pragma: no cover
+    planner_agent = None  # type: ignore
+
+try:
+    from agents.echo_agent import run as echo_agent_run  # final-answer / fallback
+except Exception:  # pragma: no cover
+    echo_agent_run = None  # type: ignore
+
+# Routing candidates (may not all exist in every deployment)
+try:
+    from agents.codex_agent import handle as codex_handle
+except Exception:  # pragma: no cover
+    codex_handle = None  # type: ignore
+
+try:
+    from agents.docs_agent import analyze as docs_analyze
+except Exception:  # pragma: no cover
+    docs_analyze = None  # type: ignore
+
+try:
+    from agents.control_agent import run as control_run
+except Exception:  # pragma: no cover
+    control_run = None  # type: ignore
+
+try:
+    from agents.memory_agent import run as memory_run
+except Exception:  # pragma: no cover
+    memory_run = None  # type: ignore
+
+try:
+    from agents.simulation_agent import run as simulate_run
+except Exception:  # pragma: no cover
+    simulate_run = None  # type: ignore
+
+try:
+    from agents.janitor_agent import run as janitor_run
+except Exception:  # pragma: no cover
+    janitor_run = None  # type: ignore
+
+try:
+    from agents.metaplanner_agent import suggest_route
+except Exception:  # pragma: no cover
+    suggest_route = None  # type: ignore
+
+try:
+    from agents.critic_agent.run import run_critics
+except Exception:  # pragma: no cover
+    run_critics = None  # type: ignore
+
+try:
+    from services.queue import queue_action
+except Exception:  # pragma: no cover
+    queue_action = None  # type: ignore
+
+
+# --- Routing table ----------------------------------------------------------------------------
+
 ROUTING_TABLE = {
-    "codex":     codex_agent.handle,
-    "docs":      docs_agent.analyze,
-    "control":   control_agent.run,
-    "echo":      echo_agent_run,
-    "train":     trainer_agent.run,
-    "meta":      meta_runner,
-    "critic":    critic_runner,
-    "memory":    memory_runner,
-    "simulate":  simulate_runner,
-    "janitor":   janitor_agent,
+    "codex": codex_handle,
+    "docs": docs_analyze,
+    "control": control_run,
+    "memory": memory_run,
+    "simulate": simulate_run,
+    "janitor": janitor_run,
+    # "echo" is handled explicitly to pass `plan` through to echo_agent
 }
 
-def extract_plan_for_critics(route: str, routed_result: dict) -> dict:
+
+def _handler_exists(fn) -> bool:
+    return callable(fn)
+
+
+def _extract_artifact_for_critics(route: str, routed_result: Any) -> Dict[str, Any]:
     """
-    Choose what artifact to critique based on route output shape.
-    Fallback: return the entire routed_result if unknown.
+    Map routed_result into an artifact suitable for critics. Best-effort / resilient.
     """
     if not isinstance(routed_result, dict):
-        return {"result": routed_result}
+        return {"result": str(routed_result)}
 
+    # Heuristics for common agent shapes
     if route == "codex" and "action" in routed_result:
         return routed_result["action"]
     if route == "docs" and "analysis" in routed_result:
         return routed_result["analysis"]
-    if route == "planner" and "plan" in routed_result:
+    if "plan" in routed_result and isinstance(routed_result["plan"], dict):
         return routed_result["plan"]
 
-    # Unknown shape → warn and critique the whole result
-    log_event("mcp_critic_warning", {
-        "route": route,
-        "routed_result_keys": list(routed_result.keys()),
-    })
     return routed_result
 
-# === MCP Main Loop ===
+
+# --- Public API ------------------------------------------------------------------------------
+
+
 async def run_mcp(
     query: str,
+    role: str = "planner",
     files: Optional[List[str]] = None,
     topics: Optional[List[str]] = None,
-    role: str = "planner",
     user_id: str = "anonymous",
     debug: bool = False,
 ) -> Dict[str, Any]:
     """
-    Main MCP entry point.
+    Execute the MCP flow for a user query.
 
-    1) Build context
-    2) If role == 'planner': generate plan, allow MetaPlanner override, route accordingly
-       Else: route directly to the specified agent role
-    3) Run critics on the appropriate artifact
-    4) Ingest to trainer
-    5) Echo fallback on any failure
-
-    Returns a dict with keys:
-      plan | routed_result | critics | context | files_used | [error]
+    Returns:
+      {
+        "plan": dict|None,
+        "routed_result": dict|Any,
+        "critics": list|None,
+        "context": str,
+        "files_used": list,
+        "error": str|None
+      }
     """
+    request_id = str(uuid.uuid4())
     files = files or []
     topics = topics or []
-    request_id = str(uuid.uuid4())
+    log_event(
+        "mcp_start",
+        {"request_id": request_id, "role": role, "files": len(files), "topics": len(topics), "debug": debug},
+    )
 
-    # === STEP 1: Build Context ===
+    # 1) Build context (robust; fall back to echo on failure)
     try:
-        context_data = await build_context(query, files, topics, debug=debug)
-        if isinstance(context_data, dict):
-            context = context_data.get("context", "") or ""
-            files_used = context_data.get("files_used", []) or []
+        ctx_res = await build_context(query=query, files=files, topics=topics, debug=debug)
+        if isinstance(ctx_res, dict):
+            context = ctx_res.get("context", "") or ""
+            files_used = ctx_res.get("files_used", []) or []
         else:
-            context = str(context_data) if context_data is not None else ""
+            context = str(ctx_res)
             files_used = []
-
-        log_event("mcp_context_loaded", {
-            "request_id": request_id,
-            "user": user_id,
-            "files_used": files_used,
-            "context_len": len(context),
-        })
     except Exception as e:
-        log_event("mcp_context_error", {
-            "request_id": request_id,
-            "error": str(e),
-            "trace": traceback.format_exc(),
-        })
-        # Fallback: Echo agent with empty context if context building fails
-        routed_result = await echo_agent_run(query=query, context="", user_id=user_id)
+        log_event(
+            "mcp_context_error",
+            {"request_id": request_id, "error": str(e), "trace": traceback.format_exc()},
+        )
+        if _handler_exists(echo_agent_run):
+            routed_result = await echo_agent_run(query=query, context="", user_id=user_id)
+        else:
+            routed_result = {"error": "Context failed and echo unavailable."}
         return {
             "plan": None,
             "routed_result": routed_result,
@@ -129,114 +189,94 @@ async def run_mcp(
             "error": "Failed to build context.",
         }
 
-    # === STEP 2: AGENT ROUTING AND EXECUTION ===
+    # 2) Routing
     try:
-        # === PLANNER MODE: default path ===
         if role == "planner":
-            # 1) Generate plan
-            plan = await planner_agent.ask(query=query, context=context)
-            plan_id = plan.get("plan_id") or str(uuid.uuid4())
+            # 2a) Plan (JSON mode, with retries) — planner is optional but expected
+            if planner_agent is None:
+                log_event("mcp_missing_planner", {"request_id": request_id})
+                plan = {"route": "echo", "objective": "[no planner available]"}
+            else:
+                plan = await planner_agent.ask(query=query, context=context)
 
-            # 2) MetaPlanner suggestion
-            try:
-                suggested = await suggest_route(query=query, plan=plan, user_id=user_id)
-                route = suggested if suggested and suggested != plan.get("route") else plan.get("route")
-                plan["meta_override"] = route if route and route != plan.get("route") else None
-            except Exception as meta_exc:
-                log_event("mcp_metaplanner_error", {
-                    "request_id": request_id,
-                    "plan_id": plan_id,
-                    "error": str(meta_exc),
-                    "trace": traceback.format_exc(),
-                })
-                route = plan.get("route")
+            plan_id = plan.get("plan_id")
+            route = plan.get("route", "echo")
 
-            if not route:
-                route = "echo"
+            # 2b) Meta-planner may override route (non-fatal)
+            if suggest_route:
+                try:
+                    suggested = await suggest_route(query=query, plan=plan, user_id=user_id)
+                    if suggested and suggested != route:
+                        log_event(
+                            "mcp_meta_override",
+                            {"request_id": request_id, "from": route, "to": suggested, "plan_id": plan_id},
+                        )
+                        route = suggested
+                        plan["meta_override"] = route
+                except Exception as meta_exc:  # non-fatal
+                    log_event(
+                        "mcp_metaplanner_error",
+                        {"request_id": request_id, "error": str(meta_exc), "plan_id": plan_id},
+                    )
 
-            log_event("mcp_dispatch", {
-                "request_id": request_id,
-                "role": role,
-                "planner_route": plan.get("route"),
-                "meta_override": plan.get("meta_override"),
-                "final_route": route,
-                "plan_id": plan_id,
-            })
-
-            # 3) Route to handler (pass plan optionally)
-            handler = ROUTING_TABLE.get(route)
-            try:
-                if handler:
-                    # Handlers may accept **kwargs; pass plan for richer context
+            # 2c) Dispatch
+            if route in ROUTING_TABLE and _handler_exists(ROUTING_TABLE[route]):
+                try:
+                    handler = ROUTING_TABLE[route]
                     routed_result = await handler(query=query, context=context, user_id=user_id, plan=plan)
+                except Exception as agent_exc:
+                    log_event(
+                        "mcp_agent_handler_error",
+                        {
+                            "request_id": request_id,
+                            "route": route,
+                            "error": str(agent_exc),
+                            "trace": traceback.format_exc(),
+                            "plan_id": plan_id,
+                        },
+                    )
+                    if _handler_exists(echo_agent_run):
+                        routed_result = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
+                    else:
+                        routed_result = {"error": f"Route '{route}' failed and echo unavailable."}
+            else:
+                # Explicit echo path (or unknown route): pass plan so echo can use `final_answer`
+                if _handler_exists(echo_agent_run):
+                    routed_result = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
                 else:
-                    log_event("mcp_fallback_echo", {
-                        "request_id": request_id,
-                        "reason": f"No handler for route '{route}'",
-                        "plan_id": plan_id,
-                    })
-                    routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
-            except Exception as agent_exc:
-                log_event("mcp_agent_handler_error", {
-                    "request_id": request_id,
-                    "role": role,
-                    "route": route,
-                    "error": str(agent_exc),
-                    "trace": traceback.format_exc(),
-                    "plan_id": plan_id,
-                })
-                routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
+                    routed_result = {"error": f"Unknown or unsupported route '{route}', echo unavailable."}
 
-            # Optional: enqueue control actions if present
-            try:
-                if isinstance(routed_result, dict) and "action" in routed_result:
+            # 2d) Critics (best-effort, non-fatal)
+            critics = None
+            if run_critics:
+                try:
+                    artifact = _extract_artifact_for_critics(route, routed_result)
+                    critics = await run_critics(artifact=artifact, context=context)
+                except Exception as crit_exc:
+                    log_event(
+                        "mcp_critics_error",
+                        {"request_id": request_id, "route": route, "error": str(crit_exc)},
+                    )
+
+            # 2e) Optional queue action (non-fatal)
+            if queue_action and isinstance(routed_result, dict) and "action" in routed_result:
+                try:
                     queue_action(routed_result["action"])
-                    log_event("mcp_action_queued", {
-                        "request_id": request_id,
-                        "route": route,
-                        "action_keys": list(routed_result["action"].keys()),
-                    })
-            except Exception as qerr:
-                log_event("mcp_action_queue_error", {
-                    "request_id": request_id,
-                    "route": route,
-                    "error": str(qerr),
-                    "trace": traceback.format_exc(),
-                })
+                    log_event(
+                        "mcp_action_queued",
+                        {
+                            "request_id": request_id,
+                            "route": route,
+                            "action_keys": list(routed_result["action"].keys()),
+                        },
+                    )
+                except Exception as qerr:
+                    log_event(
+                        "mcp_action_queue_error",
+                        {"request_id": request_id, "route": route, "error": str(qerr)},
+                    )
 
-            # 4) Critics (FIX: pass CONTEXT, not query)
-            try:
-                artifact = extract_plan_for_critics(route, routed_result)
-                critics = await run_critics(artifact, context)
-            except Exception as critic_exc:
-                log_event("mcp_critics_error", {
-                    "request_id": request_id,
-                    "route": route,
-                    "error": str(critic_exc),
-                    "trace": traceback.format_exc(),
-                    "plan_id": plan_id,
-                })
-                critics = None
-
-            # 5) Trainer ingestion (best-effort, non-fatal)
-            try:
-                await trainer_agent.ingest_results(
-                    query=query,
-                    plan=plan,
-                    routed_result=routed_result,
-                    critics=critics,
-                    feedback=None,
-                    user_id=user_id,
-                )
-            except Exception as train_exc:
-                log_event("mcp_trainer_ingest_error", {
-                    "request_id": request_id,
-                    "error": str(train_exc),
-                    "trace": traceback.format_exc(),
-                    "plan_id": plan_id,
-                })
-
-            result = {
+            return {
                 "plan": plan,
                 "routed_result": routed_result,
                 "critics": critics,
@@ -244,27 +284,27 @@ async def run_mcp(
                 "files_used": files_used,
             }
 
-        # === EXPLICIT ROLE MODE: direct dispatch ===
-        elif role in ROUTING_TABLE:
-            handler = ROUTING_TABLE[role]
-            log_event("mcp_dispatch", {
-                "request_id": request_id,
-                "role": role,
-                "context_len": len(context),
-            })
+        # role != "planner": direct dispatch if available, else echo
+        if role in ROUTING_TABLE and _handler_exists(ROUTING_TABLE[role]):
             try:
+                handler = ROUTING_TABLE[role]
                 routed_result = await handler(query=query, context=context, user_id=user_id)
             except Exception as agent_exc:
-                log_event("mcp_agent_handler_error", {
-                    "request_id": request_id,
-                    "role": role,
-                    "route": role,
-                    "error": str(agent_exc),
-                    "trace": traceback.format_exc(),
-                })
-                routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
-
-            result = {
+                log_event(
+                    "mcp_agent_handler_error",
+                    {
+                        "request_id": request_id,
+                        "role": role,
+                        "route": role,
+                        "error": str(agent_exc),
+                        "trace": traceback.format_exc(),
+                    },
+                )
+                if _handler_exists(echo_agent_run):
+                    routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
+                else:
+                    routed_result = {"error": f"Role '{role}' failed and echo unavailable."}
+            return {
                 "plan": None,
                 "routed_result": routed_result,
                 "critics": None,
@@ -272,49 +312,35 @@ async def run_mcp(
                 "files_used": files_used,
             }
 
-        # === UNKNOWN ROLE → echo fallback ===
-        else:
-            log_event("mcp_fallback_echo", {
-                "request_id": request_id,
-                "reason": f"Unknown role '{role}'",
-            })
+        # Unknown role → echo
+        if _handler_exists(echo_agent_run):
             routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
-            result = {
-                "plan": None,
-                "routed_result": routed_result,
-                "critics": None,
-                "context": context,
-                "files_used": files_used,
-                "error": f"Unknown role: {role}",
-            }
-
-        # === FINAL LOG ===
-        log_event("mcp_result", {
-            "request_id": request_id,
-            "user": user_id,
-            "role": role,
-            "has_plan": bool(result.get("plan")),
-            "route": result.get("plan", {}).get("meta_override") or result.get("plan", {}).get("route"),
-            "critics_count": None if result.get("critics") is None else len(result["critics"]),
-            "context_len": len(context),
-        })
-
-        return {"result": result, "context": context, "files_used": files_used} if debug else result
-
-    # === MCP FATAL → echo fallback ===
-    except Exception as e:
-        log_event("mcp_agent_error", {
-            "request_id": request_id,
-            "role": role,
-            "error": str(e),
-            "trace": traceback.format_exc(),
-        })
-        routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
+        else:
+            routed_result = {"error": f"Unknown role '{role}', echo unavailable."}
         return {
             "plan": None,
             "routed_result": routed_result,
             "critics": None,
             "context": context,
             "files_used": files_used,
-            "error": f"Failed to execute {role} agent.",
+            "error": f"Unknown role: {role}",
+        }
+
+    except Exception as e:
+        # Final safety net: log and try echo with available context
+        log_event(
+            "mcp_exception",
+            {"request_id": request_id, "role": role, "error": str(e), "trace": traceback.format_exc()},
+        )
+        if _handler_exists(echo_agent_run):
+            routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
+        else:
+            routed_result = {"error": "MCP failed and echo unavailable."}
+        return {
+            "plan": None,
+            "routed_result": routed_result,
+            "critics": None,
+            "context": context,
+            "files_used": files_used,
+            "error": f"Failed to execute role '{role}'.",
         }

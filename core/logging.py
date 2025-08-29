@@ -1,47 +1,52 @@
 # File: logging.py
 # Directory: core
-# Purpose: # Purpose: Provide centralized logging functionality for system events and errors.
+# Purpose: Structured JSON logging helper for all agents/routes. Ensures payloads
+#          are always serializable and timestamped.
 #
 # Upstream:
-#   - ENV: —
 #   - Imports: datetime, json
+#   - Callers: agents.*, routes.ask, services.*, tests.*
 #
 # Downstream:
-#   - agents.codex_agent
-#   - agents.control_agent
-#   - agents.critic_agent.run
-#   - agents.docs_agent
-#   - agents.echo_agent
-#   - agents.mcp_agent
-#   - agents.memory_agent
-#   - agents.metaplanner_agent
-#   - agents.planner_agent
-#   - agents.simulation_agent
-#   - agents.trainer_agent
-#   - routes.codex
-#   - services.graph
-#   - services.neo4j_driver
-#   - utils.logger
+#   - stdout (log aggregation / container logs)
 #
 # Contents:
-#   - log_event()
-
-
-
-
-
-
-
-
+#   - log_event(event_type: str, payload: dict)
 
 import datetime
 import json
+from typing import Any, Dict
 
-def log_event(event_type: str, payload: dict):
-    """Log key events to stdout or later to file/db/analytics."""
-    timestamp = datetime.datetime.utcnow().isoformat()
-    print(json.dumps({
-        "timestamp": timestamp,
+
+def _safe(obj: Any) -> Any:
+    """
+    Ensure object is JSON-serializable.
+    If not, fall back to str() wrapped in a dict.
+    """
+    try:
+        json.dumps(obj)
+        return obj
+    except Exception:
+        try:
+            return {"_repr": str(obj)}
+        except Exception:
+            return {"_repr": "<unserializable>"}
+
+
+def log_event(event_type: str, payload: Dict[str, Any]) -> None:
+    """
+    Emit a structured log line to stdout.
+    Example:
+      {"timestamp":"2025-08-28T20:11:02.123Z","event":"ask_received","details":{...}}
+    """
+    ts = datetime.datetime.utcnow().isoformat() + "Z"
+    record = {
+        "timestamp": ts,
         "event": event_type,
-        "details": payload
-    }))
+        "details": _safe(payload),
+    }
+    try:
+        print(json.dumps(record, ensure_ascii=False))
+    except Exception:
+        # Last resort: print a minimal fallback
+        print(f'{{"timestamp":"{ts}","event":"{event_type}","details":"<logging failure>"}}')

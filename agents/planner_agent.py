@@ -1,207 +1,175 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# File: agents/planner_agent.py
-# Purpose:
-#   Robust Planner agent that turns a user query + context into a structured plan.
-#   - JSON-mode with graceful fallback/coercion
-#   - Retries with exponential backoff
-#   - Timeouts, token ceilings, strong logging
-#   - Runs critic agents and annotates result
+# File: planner_agent.py
+# Directory: agents
+# Purpose: Orchestrates LLM planning for /ask; returns a structured JSON "plan"
+#          with an optional `final_answer` for definition-style queries.
 #
 # Upstream:
-#   ENV: PLANNER_MODEL, PLANNER_MAX_TOKENS, PLANNER_TEMPERATURE
-#   Imports: utils.openai_client (AsyncOpenAI), agents.critic_agent.run_critics
+#   - ENV (required): OPENAI_API_KEY
+#   - ENV (optional):
+#       PLANNER_MODEL         (default "gpt-4o")
+#       PLANNER_MAX_TOKENS    (default 800)
+#       PLANNER_TEMPERATURE   (default 0.2)
+#       PLANNER_TIMEOUT_S     (default 45)
+#       PLANNER_MAX_RETRIES   (default 3)  # logical retries here (not httpx transport)
+#       OPENAI_MAX_RETRIES    (fallback for PLANNER_MAX_RETRIES if set)
+#   - Imports: asyncio, json, os, uuid, typing, openai, utils.openai_client, core.logging
 #
 # Downstream:
-#   agents.mcp_agent (via planner_agent.ask)
-# ──────────────────────────────────────────────────────────────────────────────
+#   - agents.mcp_agent (calls PlannerAgent.ask)
+#
+# Contents:
+#   - PlannerAgent
+#   - planner_agent (singleton)
 
-import os
+from __future__ import annotations
+
+import asyncio
 import json
-import time
+import os
 import uuid
-import traceback
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 
-from openai import AsyncOpenAI, OpenAIError
-
+from openai import APIError as OpenAIError
 from core.logging import log_event
-from agents.critic_agent import run_critics
 from utils.openai_client import create_openai_client
 
-# === Model & generation config ===
-MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")  # set to a JSON-capable model in prod
+# ---- Model / generation config ---------------------------------------------------------------
+
+MODEL = os.getenv("PLANNER_MODEL", "gpt-4o")
 MAX_OUT_TOKENS = int(os.getenv("PLANNER_MAX_TOKENS", "800"))
 TEMPERATURE = float(os.getenv("PLANNER_TEMPERATURE", "0.2"))
 REQUEST_TIMEOUT_S = int(os.getenv("PLANNER_TIMEOUT_S", "45"))
+MAX_RETRIES = int(os.getenv("PLANNER_MAX_RETRIES", os.getenv("OPENAI_MAX_RETRIES", "3")))
 
-openai: AsyncOpenAI = create_openai_client()
+_openai = create_openai_client()
 
-# === System Prompt: schema and behavior ===
-SYSTEM_PROMPT = """
-You are the Planner inside the Relay system. Produce a concise JSON plan only.
-
-Rules:
-- Return strictly valid JSON (no markdown, no commentary).
-- Keys: "objective": string, "steps": [{"type":"analysis|action|docs|control","summary":string}], "recommendation": string, "route": "echo|codex|docs|control"
-- Keep steps short and executable. Do not implement code.
-""".strip()
-
-
-def _schema_ok(d: Dict[str, Any]) -> bool:
-    return (
-        isinstance(d, dict)
-        and "objective" in d
-        and "steps" in d
-        and isinstance(d["steps"], list)
-        and "route" in d
-    )
+# System prompt instructs the model to:
+#  - Return STRICT JSON (no markdown)
+#  - Include a definition fast-path via `final_answer` when applicable
+SYSTEM_PROMPT = (
+    "You are the Planner inside the Relay system. Produce a concise JSON object only.\n\n"
+    "Rules:\n"
+    '- Return strictly valid JSON (no markdown, no commentary).\n'
+    '- Keys:\n'
+    '  "objective": str,\n'
+    '  "steps": [{"type": "analysis|action|docs|control", "summary": str}],\n'
+    '  "recommendation": str,\n'
+    '  "route": "echo" | "codex" | "docs" | "control".\n'
+    "- If the user question is a direct definition/what/describe and the provided CONTEXT contains "
+    'enough information, set "final_answer" to a concise 2–4 sentence answer and choose route "echo".\n'
+    "- Keep plans short and executable; do not write code."
+)
 
 
-def _coerce_plan(raw_text: str) -> Optional[Dict[str, Any]]:
-    """Try to parse JSON from a messy response."""
+def _coerce_json_object(text: str) -> Optional[Dict[str, Any]]:
+    """
+    Best-effort extraction of the first JSON object from a text blob.
+    Returns dict or None.
+    """
     try:
-        start = raw_text.find("{")
-        end = raw_text.rfind("}")
+        start = text.find("{")
+        end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
-            return json.loads(raw_text[start : end + 1])
+            return json.loads(text[start : end + 1])
     except Exception:
         pass
     return None
 
 
-def _prompt(query: str, context: str) -> List[Dict[str, str]]:
-    """Build ChatML messages; keep context reasonable (pre-truncated upstream)."""
-    return [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Query: {query}\n\nContext:\n{context}"},
-    ]
-
-
 class PlannerAgent:
-    async def _call_llm(self, messages: List[Dict[str, str]]) -> str:
-        """Call the LLM with retries and JSON mode; return text content."""
-        last_err = None
-        for attempt in range(3):
+    async def _call_llm(self, messages: list[dict]) -> str:
+        """
+        Invoke OpenAI with JSON mode and logical retries.
+        Retries backoff: 1s, 2s, 4s (configurable via MAX_RETRIES).
+        """
+        last_err: Optional[Exception] = None
+        for attempt in range(1, MAX_RETRIES + 1):
             try:
-                resp = await openai.chat.completions.create(
+                resp = await _openai.chat.completions.create(
                     model=MODEL,
                     messages=messages,
                     temperature=TEMPERATURE,
                     max_tokens=MAX_OUT_TOKENS,
-                    # Use JSON mode if the model supports it. If it doesn't, the API
-                    # returns a 400 and we fall back to coercion on the next attempt.
                     response_format={"type": "json_object"},
-                    timeout=REQUEST_TIMEOUT_S,
+                    timeout=REQUEST_TIMEOUT_S,  # per-request timeout (client also has timeouts)
                 )
-                content = getattr(resp.choices[0].message, "content", "") if resp and resp.choices else ""
+                content = (resp.choices[0].message.content or "").strip()
                 if not content:
-                    raise OpenAIError("Empty content from model")  # triggers retry
+                    raise OpenAIError("Empty content from model")
                 return content
-            except OpenAIError as e:
-                last_err = e
-                wait = 2 ** attempt
-                log_event("planner_llm_retry", {"attempt": attempt + 1, "error": str(e), "wait_s": wait})
-                time.sleep(wait)
             except Exception as e:
                 last_err = e
-                wait = 2 ** attempt
-                log_event("planner_llm_retry_unknown", {"attempt": attempt + 1, "error": str(e), "wait_s": wait})
-                time.sleep(wait)
+                wait = min(8, 2 ** (attempt - 1))
+                log_event(
+                    "planner_llm_retry",
+                    {"attempt": attempt, "wait_s": wait, "error": str(e)},
+                )
+                await asyncio.sleep(wait)
+        # Exhausted retries
+        raise OpenAIError(f"Planner LLM failed after {MAX_RETRIES} attempts: {last_err}")
 
-        # After retries, raise a descriptive error
-        raise RuntimeError(f"Planner LLM call failed after retries: {last_err}")
-
-    async def ask(self, query: str, context: str) -> dict:
+    async def ask(self, query: str, context: str) -> Dict[str, Any]:
         """
-        Generate a structured plan for (query, context).
-        Returns a dict with keys objective/steps/recommendation/route/critics/passes/plan_id.
-        Never raises; returns a safe failure object on error.
+        Build a plan for the given query using the provided (possibly-truncated) context.
+
+        Returns a dict with at least:
+          { "objective": str, "steps": [], "recommendation": str, "route": "echo|codex|docs|control",
+            "plan_id": str, ["final_answer": str]? }
         """
         plan_id = str(uuid.uuid4())
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"QUESTION:\n{query}\n\nCONTEXT:\n{context or '[none]'}"},
+        ]
+
         try:
-            messages = _prompt(query, context)
-            raw_text = await self._call_llm(messages)
-            log_event("planner_response_raw", {"plan_id": plan_id, "sample": raw_text[:800]})
+            raw = await self._call_llm(messages)
+            log_event("planner_response_raw", {"plan_id": plan_id, "sample": raw[:800]})
 
-            # Primary parse
+            # Parse with strict JSON first, then coerce if needed
             try:
-                plan = json.loads(raw_text)
+                plan = json.loads(raw)
             except Exception:
-                plan = _coerce_plan(raw_text)
+                plan = _coerce_json_object(raw)
 
-            if not plan:
-                log_event("planner_parse_error", {
-                    "plan_id": plan_id,
-                    "query": query,
-                    "raw_head": raw_text[:1500],
-                    "trace": traceback.format_exc(),
-                })
+            if not isinstance(plan, dict):
+                log_event("planner_parse_error", {"plan_id": plan_id, "head": raw[:1200]})
                 plan = {
-                    "objective": "[invalid JSON returned by planner]",
+                    "objective": "[invalid JSON from model]",
                     "steps": [],
                     "recommendation": "",
                     "route": "echo",
                 }
 
-            # Minimal schema enforcement
+            # Minimal schema normalization
             plan.setdefault("objective", "")
             plan.setdefault("steps", [])
             plan.setdefault("recommendation", "")
             plan.setdefault("route", "echo")
 
-            # Truncate overly verbose step summaries
+            # Optional fast-path (when present, Echo will surface it as the direct answer)
+            if "final_answer" in plan and isinstance(plan["final_answer"], str):
+                plan["final_answer"] = plan["final_answer"].strip()
+
+            # Trim step summaries to keep logs/prompts tidy
             for s in plan.get("steps", []):
-                if isinstance(s, dict) and isinstance(s.get("summary"), str) and len(s["summary"]) > 500:
-                    s["summary"] = s["summary"][:500] + "…"
+                if isinstance(s, dict) and isinstance(s.get("summary"), str):
+                    s["summary"] = s["summary"][:300]
 
-            plan["plan_id"] = plan_id
-
-            # === Run critics ===
-            try:
-                critic_results = await run_critics(plan, context)
-                plan["critics"] = critic_results
-                plan["passes"] = all(c.get("passes", False) for c in critic_results)
-                log_event("planner_critique", {
-                    "plan_id": plan_id,
-                    "objective": plan.get("objective"),
-                    "passes": plan["passes"],
-                    "issues": [c for c in critic_results if not c.get("passes", True)],
-                })
-            except Exception as critic_error:
-                log_event("planner_critic_fail", {
-                    "plan_id": plan_id,
-                    "error": str(critic_error),
-                    "trace": traceback.format_exc(),
-                })
-                plan["critics"] = [{"name": "system", "passes": False, "issues": ["Critic system failed"]}]
-                plan["passes"] = False
-
-            if not plan.get("objective"):
-                log_event("planner_empty_objective", {"plan_id": plan_id, "plan": plan, "query": query})
-
+            plan["plan_id"] = plan.get("plan_id") or plan_id
             return plan
 
         except Exception as e:
-            # Final safety: never bubble an exception beyond Ask route.
-            log_event("planner_exception", {
-                "plan_id": plan_id,
-                "query": query,
-                "error": str(e),
-                "trace": traceback.format_exc(),
-                "model": MODEL,
-                "temp": TEMPERATURE,
-                "max_tokens": MAX_OUT_TOKENS,
-            })
+            # Safe failure: return an echo-route plan so the MCP can still answer
+            log_event("planner_failed", {"plan_id": plan_id, "error": str(e)})
             return {
-                "objective": "[planner failed to generate a response]",
+                "objective": "[planner failed]",
                 "steps": [],
                 "recommendation": "",
                 "route": "echo",
-                "critics": [],
-                "passes": False,
                 "plan_id": plan_id,
             }
 
 
-# === Exported instance ===
+# Export singleton (imported by agents.mcp_agent)
 planner_agent = PlannerAgent()
