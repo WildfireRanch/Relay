@@ -3,7 +3,7 @@
 # Purpose: Final answer synthesis for /ask. Prefer concise, answer-first replies.
 #          Honors Planner fast-path via `plan.final_answer`. If the model parrots
 #          (e.g., "Define what ...", "What is ..."), synthesize a definition from
-#          provided CONTEXT instead of returning the parrot.
+#          provided CONTEXT or the KB instead of returning the parrot.
 #
 # Upstream:
 #   - ENV (required): OPENAI_API_KEY
@@ -13,6 +13,7 @@
 #       ECHO_TEMPERATURE   (default 0.2)
 #       ECHO_TIMEOUT_S     (default 45)
 #       ECHO_MAX_RETRIES   (default 2)
+#       ECHO_MAX_CHARS     (default 600)
 #   - Imports: os, asyncio, typing, re, openai, utils.openai_client, core.logging
 #
 # Downstream:
@@ -33,6 +34,11 @@ from typing import Dict, Optional, AsyncGenerator, List
 from openai import APIError as OpenAIError
 from core.logging import log_event
 from utils.openai_client import create_openai_client
+# KB helper to guarantee a definition even when the LLM parrots
+try:
+    from services.kb import definition_from_kb
+except Exception:  # pragma: no cover
+    definition_from_kb = None  # type: ignore
 
 # ---- Model / generation config ---------------------------------------------------------------
 
@@ -41,6 +47,7 @@ MAX_TOKENS = int(os.getenv("ECHO_MAX_TOKENS", "700"))
 TEMPERATURE = float(os.getenv("ECHO_TEMPERATURE", "0.2"))
 TIMEOUT_S = int(os.getenv("ECHO_TIMEOUT_S", "45"))
 MAX_RETRIES = int(os.getenv("ECHO_MAX_RETRIES", "2"))
+MAX_CHARS = int(os.getenv("ECHO_MAX_CHARS", "600"))  # hard cap for the final text
 
 _openai = create_openai_client()
 
@@ -54,11 +61,13 @@ SYSTEM_PROMPT = (
 
 # ---- Helpers ---------------------------------------------------------------------------------
 
-_DEFN_PREFIXES = ("what is", "who is", "define", "describe")
-_PARROT_PAT = re.compile(r"^\s*(what\s+is|who\s+is|define|describe)\b", re.I)
+_DEFN_PREFIXES = ("what is", "who is", "define", "describe", "explain")
+_PARROT_PAT = re.compile(r"^\s*(what\s+is|who\s+is|define|describe|explain)\b", re.I)
+_GENERIC_PAT = re.compile(r"^\s*(it\s+is|this\s+is|that\s+is)\b", re.I)
 
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 _TITLE_LINE = re.compile(r"^\s*(#+\s*)?(.+?):\s*$")
+_FENCE_PAT = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
 
 def _is_definitional(q: str) -> bool:
     return (q or "").strip().lower().startswith(_DEFN_PREFIXES)
@@ -66,37 +75,45 @@ def _is_definitional(q: str) -> bool:
 def _split_paragraphs(text: str) -> List[str]:
     if not text:
         return []
-    # Prefer double-newline paragraphing; fallback to single
     parts = [p.strip() for p in text.split("\n\n") if p.strip()]
     if parts:
         return parts
     return [p.strip() for p in text.split("\n") if p.strip()]
 
-def _synthesize_definition_from_context(query: str, context: str, max_chars: int = 550) -> Optional[str]:
+def _clean_text(t: str) -> str:
+    """Strip fences/headers, collapse whitespace, cap length."""
+    if not t:
+        return ""
+    t = _FENCE_PAT.sub("", t).strip()
+    # strip leading headers like "## Overview:"
+    lines = [ln for ln in t.splitlines() if not _TITLE_LINE.match(ln)]
+    t = " ".join(" ".join(lines).split())
+    if len(t) > MAX_CHARS:
+        t = t[:MAX_CHARS].rstrip() + "…"
+    return t
+
+def _synthesize_definition_from_context(query: str, context: str, max_chars: int = MAX_CHARS) -> Optional[str]:
     """
     Deterministic definition extractor from CONTEXT:
     - Find a paragraph mentioning the first 3 meaningful words of the query (case-insensitive).
-    - If none, try first non-empty paragraph under a header like 'Overview'/'Summary'.
-    - Return 2–4 sentences, trimmed to max_chars.
+    - If none, try first non-empty paragraph under a header like 'Overview'/'Summary'/'Definition'.
+    - Return 2–4 sentences, trimmed to max_chars, not a parrot.
     """
     if not context:
         return None
 
-    # derive a simple key from query
     q_words = re.findall(r"[A-Za-z0-9\-_/]+", query or "")
     key = " ".join(q_words[:3]).lower()
 
     paras = _split_paragraphs(context)
     cand = None
 
-    # 1) direct mention of the key
     if key:
         for p in paras:
             if key in p.lower():
                 cand = p
                 break
 
-    # 2) look for an 'Overview'/'Summary' block if no direct hit
     if not cand:
         for i, p in enumerate(paras):
             if _TITLE_LINE.match(p) and any(h in p.lower() for h in ("overview", "summary", "definition")):
@@ -104,14 +121,12 @@ def _synthesize_definition_from_context(query: str, context: str, max_chars: int
                     cand = paras[i + 1]
                     break
 
-    # 3) fallback to first paragraph
     if not cand and paras:
         cand = paras[0]
 
     if not cand:
         return None
 
-    # compose 2–4 sentences
     sents = [s.strip() for s in _SENT_SPLIT.split(cand) if s.strip()]
     if not sents:
         return None
@@ -119,16 +134,16 @@ def _synthesize_definition_from_context(query: str, context: str, max_chars: int
     if len(out) > max_chars:
         out = out[:max_chars].rstrip() + "…"
 
-    # must not be a parrot
     if _PARROT_PAT.match(out):
         return None
-    return out or None
+    return _clean_text(out) or None
 
 def _looks_like_parrot(text: str) -> bool:
-    """Heuristic: starts with 'what is/define/describe' and mentions the same noun."""
+    """Heuristic: starts with 'what is/define/describe/explain' or generic 'It is…' reply."""
     if not text:
         return False
-    return bool(_PARROT_PAT.match(text))
+    t = text.strip()
+    return bool(_PARROT_PAT.match(t) or GENERIC_PAT.match(t))
 
 async def _chat_once(messages: list[dict]) -> str:
     resp = await _openai.chat.completions.create(
@@ -150,13 +165,13 @@ async def run(
 ) -> Dict[str, str]:
     """
     Produce a concise answer. If planner provided `final_answer`, surface it immediately.
-    If the model parrots, synthesize an answer from CONTEXT instead.
+    If the model parrots or gives generic non-answer, synthesize from CONTEXT or KB.
     Returns both 'answer' and 'response' for backward compatibility.
     """
     try:
         # 1) Planner fast-path (no extra LLM call)
         if isinstance(plan, dict) and isinstance(plan.get("final_answer"), str):
-            ans = plan["final_answer"].strip()
+            ans = _clean_text(plan["final_answer"].strip())
             if ans:
                 log_event("echo_fastpath_plan_answer", {"user": user_id, "len": len(ans)})
                 return {"answer": ans, "response": ans, "route": "echo"}
@@ -192,14 +207,33 @@ async def run(
         if not reply and last_err:
             raise OpenAIError(f"Echo LLM failed after {MAX_RETRIES} attempts: {last_err}")
 
-        # 4) Anti-parrot guard: if reply is a restated prompt, synthesize from CONTEXT
+        # Normalize and cap
+        reply = _clean_text(reply)
+
+        # 4) Anti-parrot / anti-generic guard
         if _looks_like_parrot(reply):
+            # Try to synthesize from CONTEXT first
             synth = _synthesize_definition_from_context(query, context)
             if synth:
-                log_event("echo_antiparrot_synth", {"user": user_id, "chars": len(synth)})
+                log_event("echo_antiparrot_synth_context", {"user": user_id, "chars": len(synth)})
                 reply = synth
+            # If still empty, try the KB directly (if available)
+            elif definition_from_kb is not None:
+                kb_def = definition_from_kb(query)
+                if kb_def:
+                    log_event("echo_antiparrot_synth_kb", {"user": user_id, "chars": len(kb_def)})
+                    reply = _clean_text(kb_def)
 
-        # 5) Finalize
+        # 5) If we *still* have nothing useful, give a tiny honest answer
+        if not reply:
+            fallback = "I couldn’t find a clear definition in the available context."
+            if definition_from_kb is not None:
+                kb_def = definition_from_kb(query)
+                if kb_def:
+                    reply = _clean_text(kb_def)
+            if not reply:
+                reply = fallback
+
         log_event("echo_agent_reply", {"user": user_id, "reply_head": reply[:500]})
         return {"answer": reply, "response": reply, "route": "echo"}
 
