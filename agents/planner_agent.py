@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import uuid
 from typing import Any, Dict, Optional
 
@@ -43,9 +44,9 @@ MAX_RETRIES = int(os.getenv("PLANNER_MAX_RETRIES", os.getenv("OPENAI_MAX_RETRIES
 
 _openai = create_openai_client()
 
-# System prompt instructs the model to:
-#  - Return STRICT JSON (no markdown)
-#  - Include a definition fast-path via `final_answer` when applicable
+# System prompt:
+#  - STRICT JSON (no markdown)
+#  - Definition fast-path via `final_answer` must be used when applicable
 SYSTEM_PROMPT = (
     "You are the Planner inside the Relay system. Produce a concise JSON object only.\n\n"
     "Rules:\n"
@@ -55,17 +56,19 @@ SYSTEM_PROMPT = (
     '  "steps": [{"type": "analysis|action|docs|control", "summary": str}],\n'
     '  "recommendation": str,\n'
     '  "route": "echo" | "codex" | "docs" | "control".\n'
-    "- If the user question is a direct definition/what/describe and the provided CONTEXT contains "
-    'enough information, set "final_answer" to a concise 2–4 sentence answer and choose route "echo".\n'
+    "- If the user question is a DEFINITION-STYLE prompt (starts with what/who/define/describe) "
+    "AND the CONTEXT contains descriptive information (Overview/Definition/Summary), then:\n"
+    "    • Populate \"final_answer\" with a concise 2–4 sentence factual answer.\n"
+    "    • Prefer a direct answer over rephrasing the question.\n"
+    "    • Set route to \"echo\".\n"
     "- Keep plans short and executable; do not write code."
 )
 
+# ---- Helpers ---------------------------------------------------------------------------------
+
 
 def _coerce_json_object(text: str) -> Optional[Dict[str, Any]]:
-    """
-    Best-effort extraction of the first JSON object from a text blob.
-    Returns dict or None.
-    """
+    """Best-effort extraction of the first JSON object from a text blob. Returns dict or None."""
     try:
         start = text.find("{")
         end = text.rfind("}")
@@ -74,6 +77,62 @@ def _coerce_json_object(text: str) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
     return None
+
+
+_DEFN_PREFIXES = ("what is", "who is", "define ", "describe ")
+
+
+def _is_definitional(q: str) -> bool:
+    ql = (q or "").strip().lower()
+    return ql.startswith(_DEFN_PREFIXES)
+
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _extract_definition_from_context(query: str, context: str, max_chars: int = 550) -> Optional[str]:
+    """
+    Deterministic fallback: if the model doesn't give final_answer but the query is definitional
+    and the context likely contains a definition, synthesize 2–4 sentences from context.
+    Heuristics:
+      - Prefer a paragraph that contains the main noun phrase from the query (first 3 words)
+      - Else, take the first non-empty paragraph
+      - Return up to ~2–4 sentences (<= max_chars)
+    """
+    if not context:
+        return None
+
+    # Rough noun phrase from query: first 3 words
+    q_words = [w for w in re.sub(r"[^a-zA-Z0-9\s\-_/]", " ", (query or "")).split() if w]
+    key = " ".join(q_words[:3]).lower() if q_words else ""
+
+    # Split context into paragraphs, then pick a candidate
+    paras = [p.strip() for p in context.split("\n\n") if p.strip()]
+    cand = None
+    if key:
+        for p in paras:
+            if key in p.lower():
+                cand = p
+                break
+    if not cand and paras:
+        cand = paras[0]
+
+    if not cand:
+        return None
+
+    # Trim to 2–4 sentences
+    sents = _SENTENCE_SPLIT.split(cand)
+    sents = [s.strip() for s in sents if s.strip()]
+    if not sents:
+        return None
+    take = sents[:4]
+    out = " ".join(take).strip()
+    if len(out) > max_chars:
+        out = out[:max_chars].rstrip() + "…"
+    # Must look like an answer, not a restatement
+    if any(out.lower().startswith(p) for p in _DEFN_PREFIXES):
+        return None
+    return out or None
 
 
 class PlannerAgent:
@@ -100,10 +159,7 @@ class PlannerAgent:
             except Exception as e:
                 last_err = e
                 wait = min(8, 2 ** (attempt - 1))
-                log_event(
-                    "planner_llm_retry",
-                    {"attempt": attempt, "wait_s": wait, "error": str(e)},
-                )
+                log_event("planner_llm_retry", {"attempt": attempt, "wait_s": wait, "error": str(e)})
                 await asyncio.sleep(wait)
         # Exhausted retries
         raise OpenAIError(f"Planner LLM failed after {MAX_RETRIES} attempts: {last_err}")
@@ -117,9 +173,18 @@ class PlannerAgent:
             "plan_id": str, ["final_answer": str]? }
         """
         plan_id = str(uuid.uuid4())
+        is_def = _is_definitional(query)
+
+        # Add a tiny, explicit hint in the USER content for definition queries
+        def_hint = (
+            "\n\nINSTRUCTION: If this is a definition-style question and the CONTEXT contains a definition, "
+            "populate final_answer with a concise 2–4 sentence factual answer and set route to \"echo\"."
+            if is_def else ""
+        )
+
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"QUESTION:\n{query}\n\nCONTEXT:\n{context or '[none]'}"},
+            {"role": "user", "content": f"QUESTION:\n{query}\n\nCONTEXT:\n{context or '[none]'}{def_hint}"},
         ]
 
         try:
@@ -134,12 +199,7 @@ class PlannerAgent:
 
             if not isinstance(plan, dict):
                 log_event("planner_parse_error", {"plan_id": plan_id, "head": raw[:1200]})
-                plan = {
-                    "objective": "[invalid JSON from model]",
-                    "steps": [],
-                    "recommendation": "",
-                    "route": "echo",
-                }
+                plan = {"objective": "[invalid JSON from model]", "steps": [], "recommendation": "", "route": "echo"}
 
             # Minimal schema normalization
             plan.setdefault("objective", "")
@@ -150,6 +210,15 @@ class PlannerAgent:
             # Optional fast-path (when present, Echo will surface it as the direct answer)
             if "final_answer" in plan and isinstance(plan["final_answer"], str):
                 plan["final_answer"] = plan["final_answer"].strip()
+
+            # If still no final_answer but this is definitional and context has a definition,
+            # synthesize deterministically to prevent parroting.
+            if is_def and not plan.get("final_answer"):
+                extracted = _extract_definition_from_context(query, context)
+                if extracted:
+                    plan["final_answer"] = extracted
+                    plan["route"] = "echo"
+                    log_event("planner_final_answer_synthesized", {"plan_id": plan_id, "chars": len(extracted)})
 
             # Trim step summaries to keep logs/prompts tidy
             for s in plan.get("steps", []):
