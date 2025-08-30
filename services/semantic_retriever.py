@@ -54,20 +54,17 @@ def search(
     score_threshold: Optional[float] = None,
     **kwargs: Any,
 ) -> List[Dict[str, Any]]:
-    """
-    Compatibility wrapper for KB search:
-      - Accepts either `k` or `top_k` (prefers top_k if provided).
-      - Forwards score_threshold where supported (optional).
-      - Returns a normalized list of rows with title/path/tier/score/snippet/meta.
-    """
     use_k = int(top_k or k or DEFAULT_K)
     try:
-        results = kb_search(
-            q=q,
-            k=use_k,
-            score_threshold=score_threshold,
-            **kwargs,
-        ) or []
+        # 1) Try full features (newer KB adapters)
+        results = kb_search(q=q, k=use_k, score_threshold=score_threshold, **kwargs) or []
+    except TypeError as te:
+        # 2) Fallback: drop score_threshold/extra kwargs for older adapters
+        try:
+            results = kb_search(q=q, k=use_k) or []
+        except Exception as e:
+            log_event("semantic_search_error", {"q_head": q[:180], "error": str(e)})
+            return []
     except Exception as e:
         log_event("semantic_search_error", {"q_head": q[:180], "error": str(e)})
         return []
