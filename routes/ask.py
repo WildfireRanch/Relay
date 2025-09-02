@@ -2,29 +2,11 @@
 # Directory: routes
 # Purpose: FastAPI endpoints for /ask — validates input, runs MCP pipeline, normalizes output,
 #          provides GET compatibility and streaming shims, and guarantees JSON-safe responses.
-#
-# Upstream:
-#   - ENV: (none specific; downstream agents/services may use their own env)
-#   - Imports: fastapi, pydantic, typing, agents.mcp_agent.run_mcp, core.logging.log_event
-#
-# Downstream:
-#   - agents.mcp_agent.run_mcp (planner → route dispatch → echo/critics)
-#   - agents.echo_agent.stream (optional; /ask/stream)
-#   - agents.codex_agent.stream (optional; /ask/codex_stream)
-#
-# Contents:
-#   - AskRequest / AskResponse (Pydantic)
-#   - StreamRequest (Pydantic)
-#   - _json_safe(), _normalize_result()
-#   - POST /ask
-#   - GET  /ask  (legacy shim: ?question=...)
-#   - POST /ask/stream (Echo stream shim)
-#   - POST /ask/codex_stream (Codex stream shim)
 
 from __future__ import annotations
 
 import traceback
-from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator
+from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator, Union
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -47,12 +29,11 @@ except Exception:  # pragma: no cover
 router = APIRouter()
 
 
-# ---- Request / Response models ---------------------------------------------------------------
+# ── Request / Response models ────────────────────────────────────────────────
 
 class AskRequest(BaseModel):
     """Validated payload for /ask (POST). Supports legacy 'question' alias."""
     model_config = {"populate_by_name": True}
-    # Accept both {"query": "..."} and {"question": "..."} via alias:
     query: Annotated[str, Field(min_length=3, description="User question/prompt.", alias="question")] = ...
     role: Optional[str] = Field("planner", description="Planner (default) or a specific route key.")
     files: Optional[List[str]] = Field(default=None, description="Optional file IDs/paths to include.")
@@ -62,13 +43,15 @@ class AskRequest(BaseModel):
 
 
 class AskResponse(BaseModel):
-    """Normalized response from the MCP pipeline."""
+    """Normalized response from the MCP pipeline (UI should read final_text)."""
     plan: Optional[Dict[str, Any]] = None
-    routed_result: Dict[str, Any]
+    routed_result: Union[Dict[str, Any], str, None] = None
     critics: Optional[List[Dict[str, Any]]] = None
     context: str
     files_used: List[Dict[str, Any]] = []
     meta: Dict[str, Any] = {}
+    # Canonical field for UI rendering:
+    final_text: str = ""
 
 
 class StreamRequest(BaseModel):
@@ -79,7 +62,7 @@ class StreamRequest(BaseModel):
     user_id: str = Field("anonymous")
 
 
-# ---- Helpers ---------------------------------------------------------------------------------
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _json_safe(obj: Any) -> Any:
     """Best-effort coercion of arbitrary objects into JSON-serializable structures."""
@@ -110,7 +93,31 @@ def _normalize_result(result_or_wrapper: Dict[str, Any]) -> Dict[str, Any]:
     return result_or_wrapper
 
 
-# ---- Routes ----------------------------------------------------------------------------------
+def _extract_final_text(plan: Any, routed_result: Any) -> str:
+    """
+    Canonical extraction of the user-facing text:
+      1) routed_result.response
+      2) routed_result.answer
+      3) plan.final_answer
+      4) "" (never None)
+    """
+    # routed_result may be dict/str/None
+    if isinstance(routed_result, dict):
+        text = routed_result.get("response") or routed_result.get("answer") or ""
+        if isinstance(text, str) and text.strip():
+            return text
+    elif isinstance(routed_result, str) and routed_result.strip():
+        return routed_result
+
+    if isinstance(plan, dict):
+        fa = plan.get("final_answer")
+        if isinstance(fa, str) and fa.strip():
+            return fa
+
+    return ""
+
+
+# ── Routes ──────────────────────────────────────────────────────────────────
 
 @router.post("/ask", response_model=AskResponse)
 async def ask(payload: AskRequest):
@@ -142,6 +149,7 @@ async def ask(payload: AskRequest):
         },
     )
 
+    # Run MCP
     try:
         mcp_raw = await run_mcp(
             query=q,
@@ -165,10 +173,13 @@ async def ask(payload: AskRequest):
     try:
         normalized = _normalize_result(mcp_raw)
         plan = _json_safe(normalized.get("plan"))
-        routed_result = _json_safe(normalized.get("routed_result", {}))
+        routed_result = normalized.get("routed_result", {})
         critics = _json_safe(normalized.get("critics"))
         context = str(normalized.get("context") or "")
         files_used = _json_safe(normalized.get("files_used") or [])
+        upstream_meta = normalized.get("meta") or {}
+        # Final text for UI
+        final_text = _extract_final_text(plan, routed_result)
     except Exception as e:
         log_event(
             "ask_normalize_exception",
@@ -179,25 +190,33 @@ async def ask(payload: AskRequest):
             detail={"error": "normalize_failed", "message": "Failed to normalize MCP result."},
         )
 
+    # Ensure routed_result is JSON-safe (after final_text extraction to avoid losing non-serializable fields prematurely)
+    routed_result_safe = _json_safe(routed_result)
+
+    # Merge meta/provenance coming from MCP
+    meta: Dict[str, Any] = {"role": role, "debug": debug}
+    if isinstance(upstream_meta, dict):
+        # upstream meta may include origin, antiparrot, timings_ms, request_id, etc.
+        meta.update(_json_safe(upstream_meta))
+
+    # Quick ops summary for parity with UI
     log_event(
-        "ask_completed",
+        "ask_response_summary",
         {
             "user": user_id,
-            "role": role,
-            "has_plan": bool(plan),
-            "critics_len": None if critics is None else (len(critics) if isinstance(critics, list) else -1),
-            "context_len": len(context),
-            "routed_keys": list(routed_result.keys()) if isinstance(routed_result, dict) else str(type(routed_result)),
+            "origin": meta.get("origin"),
+            "final_text_head": (final_text or "")[:200],
         },
     )
 
     return AskResponse(
-        plan=plan,
-        routed_result=routed_result,
+        plan=plan if isinstance(plan, dict) else None,
+        routed_result=routed_result_safe if isinstance(routed_result_safe, (dict, str)) else {},
         critics=critics if critics is not None else None,
         context=context,
         files_used=files_used if isinstance(files_used, list) else [],
-        meta={"role": role, "debug": debug},
+        meta=meta,
+        final_text=final_text,
     )
 
 
