@@ -62,7 +62,6 @@ INDEX_ROOT.mkdir(parents=True, exist_ok=True)
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 # Remove stale model subfolders so we don’t load wrong-dimension stores.
-# (Do this before we build the embedder to cut down on surprises.)
 for path in INDEX_ROOT.iterdir():
     if path.is_dir() and path.name != MODEL_NAME:
         logger.warning("Removing stale index folder %s", path)
@@ -109,6 +108,7 @@ def should_index_file(filepath: str, tier: str) -> bool:
 # ─── Index cache & dimension helpers ────────────────────────────────────────
 _INDEX_CACHE: Optional[VectorStoreIndex] = None
 EXPECTED_DIM: Optional[int] = None
+DIM_FILE = INDEX_DIR / "dim.json"  # sidecar to persist embed dim reliably
 
 def _vector_dim_current() -> int:
     # Single call to avoid warmup thrash; guarded by try/except at caller.
@@ -121,6 +121,10 @@ def _vector_dim_current() -> int:
         return 0
 
 def _vector_dim_stored() -> int:
+    """
+    Legacy best-effort probe of older vector store shapes.
+    May return -1 on newer formats; that's OK (we'll use dim.json).
+    """
     vs_file = INDEX_DIR / "vector_store.json"
     if not vs_file.exists():
         return -1
@@ -131,6 +135,21 @@ def _vector_dim_stored() -> int:
                 return len(rec["embedding"])
     except Exception as e:
         logger.warning("[vector_dim_stored] unable to read %s: %s", vs_file, e)
+    return -1
+
+def _write_dim_meta(dim: int) -> None:
+    try:
+        DIM_FILE.write_text(json.dumps({"dim": int(dim)}))
+    except Exception as e:
+        logger.warning("[dim_meta] write failed: %s", e)
+
+def _read_dim_meta() -> int:
+    try:
+        if DIM_FILE.exists():
+            data = json.loads(DIM_FILE.read_text() or "{}")
+            return int(data.get("dim", -1))
+    except Exception as e:
+        logger.warning("[dim_meta] read failed: %s", e)
     return -1
 
 def ensure_vector_dim_initialized() -> None:
@@ -171,11 +190,13 @@ INGEST_PIPELINE = IngestionPipeline(
 # ─── Public helpers ────────────────────────────────────────────────────────
 def index_is_valid() -> bool:
     """
-    Returns True when a persisted index exists and matches the current embedder dimension.
-    Logs using %s to avoid type errors.
+    True if a persisted index exists and matches the current embedder dimension.
+    Uses dim.json sidecar as source of truth; falls back to legacy probe.
     """
     ensure_vector_dim_initialized()
-    stored = _vector_dim_stored()
+    stored = _read_dim_meta()
+    if stored <= 0:
+        stored = _vector_dim_stored()  # legacy fallback
     valid = stored > 0 and EXPECTED_DIM is not None and stored == EXPECTED_DIM
     logger.info("[index_is_valid] stored=%s current=%s → %s", stored, EXPECTED_DIM, valid)
     return valid
@@ -197,8 +218,7 @@ def _iter_docs() -> List[Any]:
         ("code", CODE_DIRS),
     ]
 
-    # Late import to avoid unnecessary import overhead during module import
-    from llama_index.core import Document
+    from llama_index.core import Document  # late import to keep module import light
 
     for tier, paths in tier_paths:
         for path in paths:
@@ -272,6 +292,8 @@ def embed_all(verbose: bool = False) -> None:
         logger.info("Generated %s vector nodes", len(nodes))
         index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
         index.storage_context.persist(persist_dir=str(INDEX_DIR))
+        # write dimension sidecar so index_is_valid is stable on future boots
+        _write_dim_meta(EXPECTED_DIM or 0)
         logger.info("✅ Index persisted → %s (%.2fs)", INDEX_DIR, time.time() - t0)
     except Exception:
         logger.exception("[KB] Failed during ingest/index/persist")
@@ -331,7 +353,6 @@ def search(
     # Normalize possible response shapes
     source_nodes = getattr(raw, "source_nodes", None)
     if source_nodes is None:
-        # Some engines return dict-like or just a string; in that case, return nothing
         return []
 
     tiered: Dict[str, List[Dict[str, Any]]] = {t: [] for t in PRIORITY_TIERS}
@@ -410,7 +431,7 @@ def api_search(query: str, k: int = 4, search_type: str = "all") -> List[dict]:
 
 def query_index(query: str, k: int = 4) -> str:
     """Return formatted search snippets for a query."""
-    results = search(query, k=k)
+    results = search(query=query, k=k)
     return "\n\n".join(f"{r['title']}:\n{r['snippet']}" for r in results)
 
 def api_reindex(verbose: bool = False) -> dict:
@@ -432,8 +453,6 @@ def definition_from_kb(query: str, k: int = 6, max_chars: int = 560) -> Optional
     Used when LLM parrots (“Define what …”) or Planner missed final_answer.
     Deterministic, short, and non-parroting.
     """
-    ql = (query or "").strip().lower()
-
     hits = search(query=query, k=max(k, 6), min_global=1)
     if not hits:
         return None
@@ -467,7 +486,7 @@ def definition_from_kb(query: str, k: int = 6, max_chars: int = 560) -> Optional
             out = out[:max_chars].rstrip() + "…"
         if not out:
             continue
-        # Avoid outputs that start with the question’s directive verbs
+        # Avoid outputs that start with directive verbs (parrot-ish)
         if out.lower().startswith(_DEF_PREFIXES):
             continue
         return out
@@ -481,7 +500,7 @@ def _kb_cli():
         q = " ".join(sys.argv[2:]) or "test"
         print(f"\n[KB CLI] Query: {q}\n")
         t0 = time.time()
-        hits = search(q, k=10, explain=True)
+        hits = search(query=q, k=10, explain=True)  # fixed: use query kwarg
         print(f"⏱️  Search time: {time.time() - t0:.2f}s\n")
         for h in hits:
             sn = (h['snippet'] or "").replace("\n", " ")
