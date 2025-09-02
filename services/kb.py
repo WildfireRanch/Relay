@@ -517,3 +517,136 @@ def _kb_cli():
 
 if __name__ == "__main__":
     _kb_cli()
+# ─── CLI tools & debugging ──────────────────────────────────────────────────
+# ─── CLI tools & debugging ──────────────────────────────────────────────────
+def _kb_cli():
+    """
+    Usage:
+      python -m services.kb search "your query"
+      python -m services.kb define "What is X?"
+      python -m services.kb health            # KB health & smoke test (non-destructive)
+      python -m services.kb                   # force reindex (verbose)
+
+    Env knobs:
+      KB_HEALTH_QUERY="Relay Command Center"  # probe query for 'health'
+      KB_HEALTH_K=3                           # number of hits to show in 'health'
+      KB_HEALTH_SCAN=1                        # set 0 to skip doc scan in 'health'
+    """
+    import sys
+    import time
+    import os
+
+    # --- Small helpers (never raise on health runs) -------------------------
+
+    def _safe_read_dim() -> int:
+        """Prefer sidecar (dim.json); fall back to legacy store shape."""
+        try:
+            stored = _read_dim_meta()
+            if stored <= 0:
+                stored = _vector_dim_stored()
+            return int(stored)
+        except Exception:
+            return -1
+
+    def _print_top_hits(q: str, k: int = 3) -> None:
+        """Print a short list of top hits for a probe query."""
+        try:
+            hits = search(query=q, k=k, explain=False)
+        except Exception as e:
+            print(f"  (failed to query KB: {e})")
+            return
+
+        if not hits:
+            print("  (no hits)")
+            return
+
+        for i, h in enumerate(hits[:k], 1):
+            ti = (h.get("title") or h.get("path") or "Untitled")
+            sc = float(h.get("similarity") or 0.0)
+            sn = (h.get("snippet") or "").replace("\n", " ")[:160]
+            print(f"  {i}. {h.get('tier','unknown')}: {ti} (score={sc:.3f})")
+            print(f"     {sn}")
+
+    # --- Command parsing ----------------------------------------------------
+
+    args = sys.argv[1:]
+
+    if len(args) >= 1 and args[0] == "search":
+        q = " ".join(args[1:]) or "test"
+        print(f"\n[KB CLI] Query: {q}\n")
+
+        t0 = time.time()
+        try:
+            hits = search(query=q, k=10, explain=True)
+        except Exception as e:
+            print(f"(search failed: {e})")
+            return
+        print(f"⏱️  Search time: {time.time() - t0:.2f}s\n")
+
+        for h in hits:
+            sn = (h.get("snippet") or "").replace("\n", " ")
+            try:
+                sc = float(h.get("similarity") or 0.0)
+            except Exception:
+                sc = 0.0
+            print(f"{h.get('title') or 'Untitled'} (score={sc:.2f}): {sn[:120]}…")
+        return
+
+    if len(args) >= 1 and args[0] == "define":
+        q = " ".join(args[1:]) or "What is Relay Command Center?"
+        print(f"\n[KB CLI] Define: {q}\n")
+        try:
+            ans = definition_from_kb(q) or "[no definition found]"
+        except Exception as e:
+            ans = f"[definition lookup failed: {e}]"
+        print(ans)
+        return
+
+    if len(args) >= 1 and args[0] == "health":
+        # Health / smoke test (no rebuild)
+        print("\n[KB Health]")
+        print(f"  Model: {MODEL_NAME}")
+
+        # Preflight: warn if no API key (embeddings/index load will fail)
+        if not os.getenv("OPENAI_API_KEY"):
+            print("  Warning: OPENAI_API_KEY not set; embeddings/index load will likely fail.")
+
+        ensure_vector_dim_initialized()
+        expected = EXPECTED_DIM
+        stored = _safe_read_dim()
+        valid = False
+        try:
+            valid = index_is_valid()
+        except Exception as e:
+            print(f"  index_is_valid(): error: {e}")
+
+        print(f"  Expected dim: {expected} | Stored dim: {stored} → {'VALID ✅' if valid else 'INVALID ❌'}")
+        print(f"  Index path: {INDEX_DIR}")
+
+        # Optional: count candidate docs (can be slow on large trees)
+        do_scan = str(os.getenv("KB_HEALTH_SCAN", "1")).lower() not in {"0", "false", "no"}
+        if do_scan:
+            try:
+                t_docs = time.time()
+                docs = _iter_docs()
+                print(f"  Candidate docs (filtered & deduped): {len(docs)} (scan {time.time() - t_docs:.2f}s)")
+            except Exception as e:
+                print(f"  Candidate docs: (failed to scan: {e})")
+        else:
+            print("  Candidate docs: (scan disabled via KB_HEALTH_SCAN=0)")
+
+        # Quick top-hits probe
+        probe_q = os.getenv("KB_HEALTH_QUERY", "Relay Command Center")
+        k = int(os.getenv("KB_HEALTH_K", "3"))
+        print(f"\n  Top hits for '{probe_q}':")
+        _print_top_hits(probe_q, k=k)
+        print()
+        return
+
+    # Default: rebuild (verbose) for maintenance
+    print("[KB CLI] Rebuilding index...")
+    try:
+        embed_all(verbose=True)
+        print("Index rebuild complete.")
+    except Exception as e:
+        print(f"Index rebuild failed: {e}")
