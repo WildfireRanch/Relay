@@ -143,46 +143,61 @@ export default function AgentDebugTab({
     }
   }, [query, files, topics, role, loading, userId]);
 
-  // --- Meta → MetaBadge[] adapter (unconditional hook) ----------------------
-  const metaItems: MetaBadge[] = useMemo(() => {
-    const items: MetaBadge[] = [];
-    if (!meta) return items;
+// --- Meta → MetaBadge[] adapter (unconditional hook) ----------------------
+const metaItems: MetaBadge[] = useMemo(() => {
+  const items: MetaBadge[] = [];
+  if (!meta) return items;
 
-    const origin = typeof meta.origin === "string" ? meta.origin : undefined;
-    const requestId =
-      typeof (meta as any).request_id === "string"
-        ? (meta as any).request_id
-        : typeof (meta as any).requestId === "string"
-        ? (meta as any).requestId
-        : undefined;
-    const latency =
-      typeof (meta as any).timings_ms === "number"
-        ? `${(meta as any).timings_ms} ms`
-        : typeof (meta as any).latency_ms === "number"
-        ? `${(meta as any).latency_ms} ms`
-        : undefined;
+  // Narrow the known keys without using `any`
+  type MetaKnown = {
+    origin?: unknown;
+    request_id?: unknown;
+    requestId?: unknown;
+    timings_ms?: unknown;
+    latency_ms?: unknown;
+    [k: string]: unknown; // allow extras
+  };
 
-    if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
-    if (latency) items.push({ label: "Latency", value: latency, tone: "info", title: "end-to-end latency" });
-    if (requestId)
-      items.push({ label: "ReqID", value: requestId, tone: "neutral", title: "request identifier", hideIfEmpty: true });
+  const m = meta as MetaKnown;
 
-    // Include any other simple meta entries (skip objects/arrays/functions)
-    for (const [k, v] of Object.entries(meta)) {
-      if (["origin", "request_id", "requestId", "timings_ms", "latency_ms"].includes(k)) continue;
-      const isSimple =
-        typeof v === "string" || typeof v === "number" || typeof v === "boolean" || v == null;
-      if (isSimple) {
-        items.push({
-          label: k,
-          value: v == null ? "" : String(v),
-          tone: "neutral",
-          hideIfEmpty: true,
-        });
-      }
+  const origin = typeof m.origin === "string" ? m.origin : undefined;
+  const requestId =
+    typeof m.request_id === "string"
+      ? m.request_id
+      : typeof m.requestId === "string"
+      ? m.requestId
+      : undefined;
+
+  const latencyNum =
+    typeof m.timings_ms === "number"
+      ? m.timings_ms
+      : typeof m.latency_ms === "number"
+      ? m.latency_ms
+      : undefined;
+  const latency = latencyNum !== undefined ? `${latencyNum} ms` : undefined;
+
+  if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
+  if (latency) items.push({ label: "Latency", value: latency, tone: "info", title: "end-to-end latency" });
+  if (requestId)
+    items.push({ label: "ReqID", value: requestId, tone: "neutral", title: "request identifier", hideIfEmpty: true });
+
+  // Include other simple meta entries (skip objects/arrays/functions and known keys)
+  for (const [k, v] of Object.entries(m)) {
+    if (k === "origin" || k === "request_id" || k === "requestId" || k === "timings_ms" || k === "latency_ms") continue;
+    const isSimple = typeof v === "string" || typeof v === "number" || typeof v === "boolean" || v == null;
+    if (isSimple) {
+      items.push({
+        label: k,
+        value: v == null ? "" : String(v),
+        tone: "neutral",
+        hideIfEmpty: true,
+      });
     }
-    return items;
-  }, [meta]);
+  }
+
+  return items;
+}, [meta]);
+
 
   return (
     <section className="space-y-3">
