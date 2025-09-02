@@ -7,26 +7,13 @@
 // {
 //   plan?: { final_answer?: string, ... },
 //   routed_result?: { response?: string, ... } | string | null,
-//   critics?: any,
+//   critics?: unknown,
 //   context?: string,
-//   files_used?: any[],
-//   meta?: { origin?: string; timings_ms?: Record<string, number>; request_id?: string; [k: string]: any },
+//   files_used?: unknown[],
+//   meta?: { origin?: string; timings_ms?: Record<string, number>; request_id?: string; [k: string]: unknown },
 //   final_text?: string,
-//   final_text is the UI-safe primary answer; plan.final_answer is secondary; routed_result.response is tertiary.
 // }
-//
-// Notable behavior:
-// - POSTs to /ask (not /mcp/run) with { query, files[], topics[], role, debug }
-// - Eliminates legacy reads: plan.objective, plan.recommendation, recommendation, data.answer, etc.
-// - No “not available” placeholders; empty string means “no content”, which UI can handle gracefully.
-// - Adds robust error handling (HTTP status lines, JSON error body, network timeouts).
-// - Supports action approvals via /control/approve_action|/deny_action.
-// - Persists chat in localStorage per user/role; safely coerces markdown strings.
-//
-// Usage in UI:
-//   const { messages, input, setInput, sendMessage, loading, ... } = useAskEcho();
-//
-// Optional: pair with a renderer component that shows data.context/meta/critics when desired.
+// UI rule: final_text (primary) → plan.final_answer → routed_result.response → "" (no placeholders)
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { API_ROOT } from "@/lib/api";
@@ -38,13 +25,13 @@ import { toMDString } from "@/lib/toMDString";
 
 export type Message = {
   role: "user" | "assistant";
-  content: string;                 // already markdown-coerced
-  context?: string;                // markdown-coerced context (debug view)
+  content: string;                        // already markdown-coerced
+  context?: string;                       // markdown-coerced context (debug view)
   action?: { type: string; payload: unknown } | null;
-  id?: string | null;              // server-side action/request id
+  id?: string | null;                     // server-side action/request id
   status?: "pending" | "approved" | "denied";
-  meta?: Record<string, any> | null; // timings, origin, etc (optional)
-  error?: string | null;           // populated for error messages
+  meta?: Record<string, unknown> | null;  // timings, origin, etc (optional)
+  error?: string | null;                  // populated for error messages
 };
 
 type AskResponse = {
@@ -54,21 +41,22 @@ type AskResponse = {
   critics?: unknown;
   context?: string;
   files_used?: unknown[];
-  meta?: Record<string, unknown>;
+  meta?: Record<string, unknown> | null;
 };
+
+type NormalizedEnvelope = AskResponse | { result?: AskResponse };
+
+type Role = "planner" | "codex" | "docs" | "control";
 
 // ---------------------------
 // Config
 // ---------------------------
 
-// Wire this to your auth/session later
-const USER_ID = "bret-demo";
+const USER_ID = "bret-demo"; // wire to auth/session later
 
-// Increase uniqueness to keep histories separate per role
 const storageKey = (role: string) => `echo-chat-history-${USER_ID}-${role}`;
 
-// Network guardrails
-const REQUEST_TIMEOUT_MS = 45_000; // mirrors typical backend planner timeout
+const REQUEST_TIMEOUT_MS = 45_000; // mirrors typical backend timeouts
 const DEFAULT_DEBUG = true;
 
 // ---------------------------
@@ -79,18 +67,24 @@ const DEFAULT_DEBUG = true;
  * Pick the primary UI text from a normalized /ask result.
  * Order: final_text → plan.final_answer → routed_result.response|answer → ""
  */
-function pickFinalText(data: any): string {
-  const d = (data?.result ?? data) as AskResponse;
+function pickFinalText(data: unknown): string {
+  const body: AskResponse | undefined =
+    (data as { result?: AskResponse })?.result ?? (data as AskResponse);
 
+  const rr = body?.routed_result;
   const fromRR =
-    typeof d?.routed_result === "string"
-      ? d.routed_result
-      : (d?.routed_result as any)?.response || (d?.routed_result as any)?.answer;
+    typeof rr === "string"
+      ? rr
+      : typeof (rr as { response?: unknown })?.response === "string"
+      ? String((rr as { response?: unknown })?.response)
+      : typeof (rr as { answer?: unknown })?.answer === "string"
+      ? String((rr as { answer?: unknown })?.answer)
+      : "";
 
   return (
-    (typeof d?.final_text === "string" && d.final_text) ||
-    (typeof d?.plan?.final_answer === "string" && d.plan.final_answer) ||
-    (typeof fromRR === "string" && fromRR) ||
+    (typeof body?.final_text === "string" && body.final_text) ||
+    (typeof body?.plan?.final_answer === "string" && body.plan.final_answer) ||
+    fromRR ||
     ""
   );
 }
@@ -100,7 +94,7 @@ function safeSave<T>(key: string, value: T) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // no-op (quota, private mode, etc.)
+    // ignore quota/private-mode errors
   }
 }
 
@@ -109,8 +103,7 @@ function safeLoad<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw);
-    return parsed as T;
+    return JSON.parse(raw) as T;
   } catch {
     return fallback;
   }
@@ -125,7 +118,7 @@ function csvToArray(input: string): string[] {
 }
 
 /** Abortable fetch with timeout. */
-async function fetchWithTimeout(input: RequestInfo, init: RequestInit, timeoutMs: number) {
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit, timeoutMs: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -141,9 +134,13 @@ async function extractHttpError(res: Response): Promise<string> {
   try {
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("application/json")) {
-      const j = await res.json();
+      const j = (await res.json()) as Record<string, unknown>;
       const msg =
-        j?.error?.message || j?.message || j?.detail || j?.error || JSON.stringify(j);
+        (j?.error as { message?: string } | undefined)?.message ||
+        (j?.message as string | undefined) ||
+        (j?.detail as string | undefined) ||
+        (j?.error as string | undefined) ||
+        JSON.stringify(j);
       return `HTTP ${res.status} ${res.statusText} — ${msg}`;
     }
     const t = await res.text();
@@ -153,6 +150,43 @@ async function extractHttpError(res: Response): Promise<string> {
   }
 }
 
+/** Parse normalized response into UI fields safely. */
+function parseNormalized(data: NormalizedEnvelope) {
+  const body: AskResponse | undefined = (data as { result?: AskResponse })?.result ?? (data as AskResponse);
+  const content = toMDString(pickFinalText(data));
+  const context =
+    typeof body?.context === "string"
+      ? toMDString(body.context)
+      : typeof (data as { result?: AskResponse })?.result?.context === "string"
+      ? toMDString((data as { result?: AskResponse })?.result?.context as string)
+      : "";
+
+  const meta =
+    (body?.meta as Record<string, unknown> | null | undefined) ??
+    ((data as { result?: AskResponse })?.result?.meta as Record<string, unknown> | null | undefined) ??
+    null;
+
+  // Optional action / request id inference
+  const rr = body?.routed_result ?? (data as { result?: AskResponse })?.result?.routed_result;
+  const action =
+    rr && typeof rr === "object" && "action" in rr ? ((rr as { action?: unknown }).action ?? null) : null;
+
+  const requestId =
+    (meta && typeof meta === "object" && "request_id" in meta
+      ? (meta.request_id as string | undefined)
+      : undefined) ??
+    (rr && typeof rr === "object" && "id" in rr ? (rr as { id?: string }).id : undefined) ??
+    null;
+
+  return {
+    content,
+    context,
+    meta,
+    action: (action as { type: string; payload: unknown } | null) ?? null,
+    requestId: requestId ?? null,
+  };
+}
+
 // ---------------------------
 // Hook
 // ---------------------------
@@ -160,36 +194,46 @@ async function extractHttpError(res: Response): Promise<string> {
 export function useAskEcho() {
   // Chat state and UI controls
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [files, setFiles] = useState("");      // CSV in UI
-  const [topics, setTopics] = useState("");    // CSV in UI
-  const [role, setRole] = useState("planner"); // "planner" | "codex" | etc.
+  const [input, setInput] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+  const [files, setFiles] = useState<string>("");   // CSV in UI
+  const [topics, setTopics] = useState<string>(""); // CSV in UI
+  const [role, setRole] = useState<Role>("planner");
   const [debug, setDebug] = useState<boolean>(DEFAULT_DEBUG);
   const [showContext, setShowContext] = useState<Record<number, boolean>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Avoid setState on unmounted component
+  const isMountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Load chat history on mount or role change
   useEffect(() => {
     if (typeof window === "undefined") return;
     const persisted = safeLoad<Message[]>(storageKey(role), []);
     if (Array.isArray(persisted)) {
-      // Coerce strings to markdown, sanitize shape
       const normalized = persisted
         .filter(
           (m: unknown): m is Partial<Message> =>
-            !!m && typeof m === "object" && "content" in (m as any)
+            !!m && typeof m === "object" && "content" in (m as Record<string, unknown>)
         )
         .map((m) => ({
-          role:
-            (m.role === "user" || m.role === "assistant") ? m.role : "assistant",
-          content: toMDString((m as any).content ?? ""),
-          context: typeof (m as any).context === "string" ? toMDString((m as any).context) : undefined,
-          action: (m as any).action ?? null,
-          id: (m as any).id ?? null,
-          status: (m as any).status,
-          meta: (m as any).meta ?? null,
-          error: (m as any).error ?? null,
+          role: m.role === "user" || m.role === "assistant" ? m.role : "assistant",
+          content: toMDString((m as { content?: unknown }).content ?? ""),
+          context:
+            typeof (m as { context?: unknown }).context === "string"
+              ? toMDString((m as { context?: unknown }).context as string)
+              : undefined,
+          action: (m as { action?: { type: string; payload: unknown } | null }).action ?? null,
+          id: (m as { id?: string | null }).id ?? null,
+          status: (m as { status?: Message["status"] }).status,
+          meta: (m as { meta?: Record<string, unknown> | null }).meta ?? null,
+          error: (m as { error?: string | null }).error ?? null,
         }));
       setMessages(normalized);
     } else {
@@ -237,8 +281,13 @@ export function useAskEcho() {
           }
           return updated;
         });
-      } catch (err: any) {
-        alert(`Action ${action} failed: ${String(err?.message || err)}`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Surface as a system message instead of alert()
+        setMessages((prev) => [
+          ...prev,
+          { role: "assistant", content: toMDString(""), error: `Action ${action} failed: ${msg}`, meta: { control_error: true } },
+        ]);
       }
     },
     []
@@ -259,9 +308,9 @@ export function useAskEcho() {
       query: userMessage,
       files: files ? csvToArray(files) : [],
       topics: topics ? csvToArray(topics) : [],
-      role,            // planner, codex, etc.
+      role,            // planner, codex, docs, control
       debug,           // expose context/meta back to UI
-      user_id: USER_ID // if backend honors this
+      user_id: USER_ID // optional, if backend honors this
     };
 
     try {
@@ -280,63 +329,46 @@ export function useAskEcho() {
 
       if (!res.ok) {
         const msg = await extractHttpError(res);
+        if (!isMountedRef.current) return;
         setMessages((msgs) => [
           ...msgs,
-          {
-            role: "assistant",
-            content: toMDString(""),
-            error: msg,
-            meta: { http_error: true },
-          },
+          { role: "assistant", content: toMDString(""), error: msg, meta: { http_error: true } },
         ]);
         setLoading(false);
         return;
       }
 
       // Parse normalized response
-      const data = (await res.json()) as AskResponse | { result?: AskResponse };
-      const primary = toMDString(pickFinalText(data));
-      const context = toMDString((data as any)?.context ?? (data as any)?.result?.context ?? "");
-      const meta = (data as any)?.meta ?? (data as any)?.result?.meta ?? null;
+      const data = (await res.json()) as NormalizedEnvelope;
+      const parsed = parseNormalized(data);
 
-      // If the server attached an actionable suggestion, surface it
-      const routed = (data as any)?.routed_result ?? (data as any)?.result?.routed_result ?? null;
-      const maybeAction =
-        routed && typeof routed === "object" && "action" in routed ? (routed as any).action : null;
-      const requestId =
-        (meta && (meta as any).request_id) ||
-        (routed && typeof routed === "object" ? (routed as any).id : null) ||
-        null;
-
+      if (!isMountedRef.current) return;
       setMessages((msgs) => [
         ...msgs,
         {
           role: "assistant",
-          content: primary,          // ← canonical text
-          context: context || undefined,
-          action: maybeAction ?? null,
-          id: requestId,
-          status: requestId ? "pending" : undefined,
-          meta: meta,
+          content: parsed.content,                // canonical text
+          context: parsed.context || undefined,   // optional
+          action: parsed.action,
+          id: parsed.requestId,
+          status: parsed.requestId ? "pending" : undefined,
+          meta: parsed.meta,
           error: null,
         },
       ]);
-    } catch (err: any) {
+    } catch (err) {
       const msg =
-        err?.name === "AbortError"
+        err instanceof DOMException && err.name === "AbortError"
           ? "Request timed out."
-          : `Network error: ${String(err?.message || err)}`;
+          : `Network error: ${err instanceof Error ? err.message : String(err)}`;
+
+      if (!isMountedRef.current) return;
       setMessages((msgs) => [
         ...msgs,
-        {
-          role: "assistant",
-          content: toMDString(""),
-          error: msg,
-          meta: { network_error: true },
-        },
+        { role: "assistant", content: toMDString(""), error: msg, meta: { network_error: true } },
       ]);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
   }, [input, loading, files, topics, role, debug]);
 

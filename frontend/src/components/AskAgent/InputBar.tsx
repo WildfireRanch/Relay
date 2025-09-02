@@ -3,26 +3,24 @@
 // Updated: 2025-09-02
 //
 // Notes:
-// - Drop-in compatible: same Props (value, onChange, onSend, loading)
-// - Enter sends; Shift+Enter inserts newline (safer for longer prompts)
-// - Prevents double-send, disables while loading
-// - Accessible labels + keyboard-friendly
+// - Enter sends; Shift+Enter adds newline (IME-safe)
+// - Single disabled flag; prevents double-send
+// - A11y labels; TS-safe composition guard
 
 "use client";
 
 import React, { useCallback, useRef } from "react";
 
 type Props = {
-  value: string;                      // controlled input value
-  onChange: (val: string) => void;    // update text
-  onSend: () => void;                 // trigger send
-  loading: boolean;                   // disable while pending
+  value: string;                   // controlled input value
+  onChange: (val: string) => void; // update text
+  onSend: () => void;              // trigger send
+  loading: boolean;                // disable while pending
 };
 
 const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
   const taRef = useRef<HTMLTextAreaElement>(null);
 
-  // Send guard (no-ops if empty/whitespace or loading)
   const trySend = useCallback(() => {
     const v = value.trim();
     if (!v || loading) return;
@@ -31,9 +29,12 @@ const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      // IME safety: only act if not composing
-            if (e.nativeEvent?.isComposing) return;
+      // Some TS dom typings don’t include isComposing on KeyboardEvent.
+      const isComposing =
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (e.nativeEvent as any)?.isComposing === true;
 
+      if (isComposing) return;
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         trySend();
@@ -42,9 +43,11 @@ const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
     [trySend]
   );
 
+  const disabled = loading || value.trim().length === 0;
+
   return (
     <form
-      className="flex items-end gap-2 mt-3"
+      className="mt-3 flex items-end gap-2"
       autoComplete="off"
       onSubmit={(e) => {
         e.preventDefault();
@@ -67,12 +70,13 @@ const InputBar: React.FC<Props> = ({ value, onChange, onSend, loading }) => {
         onKeyDown={handleKeyDown}
         disabled={loading}
         rows={2}
+        aria-disabled={loading}
       />
 
       <button
         type="submit"
-        className="rounded px-4 py-2 text-sm border shadow-sm disabled:opacity-50"
-        disabled={loading || !value.trim()}
+        className="rounded border px-4 py-2 text-sm shadow-sm disabled:opacity-50"
+        disabled={disabled}
         aria-busy={loading}
         aria-label="Send message"
       >
