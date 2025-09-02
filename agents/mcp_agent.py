@@ -1,11 +1,16 @@
 # File: mcp_agent.py
 # Directory: agents
 # Purpose: Orchestrates the MCP pipeline for /ask:
-#          1) Build context
-#          2) Plan (JSON-mode) and meta-route suggestion
-#          3) Dispatch to route handler (codex/docs/control/echo/etc.)
-#          4) Run critics (non-fatal) and optionally queue actions
-#          5) Return routed result with rich meta (origin, route, timings)
+#   1) Build context
+#   2) Plan (JSON-mode) and meta-route suggestion
+#   3) Dispatch to route handler (codex/docs/control/echo/etc.)
+#   4) Run critics (non-fatal) and optionally queue actions
+#   5) Return routed result with rich meta (origin, route, timings)
+#
+# Notes:
+#   - Only passes `plan` to routes that accept/need it (not to docs).
+#   - Safe for sync/async handlers and critics.
+#   - Returns a stable envelope on all failure paths.
 
 from __future__ import annotations
 
@@ -18,14 +23,14 @@ from typing import Any, Dict, List, Optional, Callable
 from core.logging import log_event
 from services.context_injector import build_context
 
-# --- Optional agent imports (soft dependencies)
+# ── Optional agent imports (soft deps; keep startup resilient) ──────────────
 try:
     from agents.planner_agent import planner_agent
 except Exception:  # pragma: no cover
     planner_agent = None  # type: ignore
 
 try:
-    from agents.echo_agent import run as echo_agent_run  # final-answer / fallback
+    from agents.echo_agent import run as echo_agent_run
 except Exception:  # pragma: no cover
     echo_agent_run = None  # type: ignore
 
@@ -74,7 +79,7 @@ try:
 except Exception:  # pragma: no cover
     queue_action = None  # type: ignore
 
-
+# ── Route table (handlers may be None) ──────────────────────────────────────
 ROUTING_TABLE: Dict[str, Optional[Callable[..., Any]]] = {
     "codex": codex_handle,
     "docs": docs_analyze,
@@ -82,21 +87,35 @@ ROUTING_TABLE: Dict[str, Optional[Callable[..., Any]]] = {
     "memory": memory_run,
     "simulate": simulate_run,
     "janitor": janitor_run,
-    # "echo" handled explicitly to pass `plan` through
+    # "echo" is handled explicitly to pass plan when present.
 }
 
+# Routes that benefit from receiving the plan (docs is intentionally excluded)
+ROUTES_ACCEPT_PLAN = {"echo", "codex", "control", "memory", "simulate", "janitor"}
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
 def _handler_exists(fn: Optional[Callable[..., Any]]) -> bool:
     return callable(fn)
 
+def _route_accepts_plan(route: str) -> bool:
+    return route in ROUTES_ACCEPT_PLAN
+
 def _extract_artifact_for_critics(route: str, routed_result: Any) -> Dict[str, Any]:
+    """
+    Map routed_result into an artifact for critics. Best-effort / resilient.
+    """
     if not isinstance(routed_result, dict):
         return {"result": str(routed_result)}
+
+    # Known shapes by route
     if route == "codex" and "action" in routed_result:
         return routed_result["action"]
     if route == "docs" and "analysis" in routed_result:
         return routed_result["analysis"]
     if "plan" in routed_result and isinstance(routed_result["plan"], dict):
         return routed_result["plan"]
+
     return routed_result
 
 def _ms(delta_s: float) -> int:
@@ -112,6 +131,9 @@ def _merge_meta(
     upstream_meta: Optional[Dict[str, Any]] = None,
     planner_diag: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    """
+    Merge standard and upstream metadata into the outgoing envelope.
+    """
     meta: Dict[str, Any] = {
         "request_id": request_id,
         "route": route,
@@ -125,6 +147,7 @@ def _merge_meta(
         for k, v in upstream_meta.items():
             if v is None:
                 continue
+            # Prefer origin/provenance fields from downstream where present
             if k in ("origin", "antiparrot", "sources"):
                 meta[k] = v
             elif k not in meta:
@@ -134,12 +157,16 @@ def _merge_meta(
     return meta
 
 async def _call_handler(handler: Callable[..., Any], **kwargs) -> Any:
+    """
+    Call a handler that could be sync or async.
+    """
     res = handler(**kwargs)
     if asyncio.iscoroutine(res):
         return await res
     return res
 
 
+# ── Public API ──────────────────────────────────────────────────────────────
 async def run_mcp(
     query: str,
     role: str = "planner",
@@ -158,7 +185,7 @@ async def run_mcp(
         {"request_id": request_id, "role": role, "files": len(files), "topics": len(topics), "debug": debug},
     )
 
-    # 1) Build context
+    # 1) Build context (never fatal)
     t0 = monotonic()
     try:
         ctx_res = await build_context(query=query, files=files, topics=topics, debug=debug)
@@ -194,11 +221,11 @@ async def run_mcp(
         return envelope
     timings["context_ms"] = _ms(monotonic() - t0)
 
-    # 2) Routing
+    # 2) Planner + route selection
     t_plan = monotonic()
     try:
         if role == "planner":
-            # 2a) Plan
+            # 2a) Plan (JSON mode)
             if planner_agent is None:
                 log_event("mcp_missing_planner", {"request_id": request_id})
                 plan: Dict[str, Any] = {"route": "echo", "objective": "[no planner available]"}
@@ -209,7 +236,7 @@ async def run_mcp(
             plan_id = (plan or {}).get("plan_id")
             route = (plan or {}).get("route", "echo")
 
-            # 2b) Meta-planner override (non-fatal)
+            # 2b) Meta-planner suggestion (non-fatal)
             if suggest_route:
                 try:
                     suggested = await suggest_route(query=query, plan=plan, user_id=user_id)  # type: ignore
@@ -220,15 +247,18 @@ async def run_mcp(
                 except Exception as meta_exc:
                     log_event("mcp_metaplanner_error", {"request_id": request_id, "error": str(meta_exc), "plan_id": plan_id})
 
-            # 2c) Dispatch
+            # 2c) Dispatch to chosen route
             t_dispatch = monotonic()
             if route in ROUTING_TABLE and _handler_exists(ROUTING_TABLE[route]):
                 try:
                     handler = ROUTING_TABLE[route]
-                    routed_result = await _call_handler(  # type: ignore
-                        handler, query=query, context=context, user_id=user_id, plan=plan
-                    )
+                    # Build kwargs and include `plan` ONLY if this route accepts it
+                    kwargs = {"query": query, "context": context, "user_id": user_id}
+                    if _route_accepts_plan(route):
+                        kwargs["plan"] = plan
+                    routed_result = await _call_handler(handler, **kwargs)  # type: ignore
                 except Exception as agent_exc:
+                    # Handler error → fall back to Echo (best-effort)
                     log_event(
                         "mcp_agent_handler_error",
                         {"request_id": request_id, "route": route, "error": str(agent_exc), "trace": traceback.format_exc(), "plan_id": plan_id},
@@ -239,6 +269,7 @@ async def run_mcp(
                     else:
                         routed_result = {"error": f"Route '{route}' failed and echo unavailable."}
             else:
+                # Unknown/unsupported route → Echo with plan so it can use final_answer
                 if _handler_exists(echo_agent_run):
                     routed_result = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
                     route = "echo"
@@ -246,17 +277,14 @@ async def run_mcp(
                     routed_result = {"error": f"Unknown or unsupported route '{route}', echo unavailable."}
             timings["dispatch_ms"] = _ms(monotonic() - t_dispatch)
 
-            # 2d) Critics (best-effort, non-fatal) — sync or async
+            # 2d) Critics (best-effort, non-fatal; sync/async-safe)
             critics = None
             t_crit = monotonic()
             if run_critics:
                 try:
                     artifact = _extract_artifact_for_critics(route, routed_result)
                     res = run_critics(plan=artifact, query=query)  # may be sync or async
-                    if asyncio.iscoroutine(res):
-                        critics = await res  # type: ignore
-                    else:
-                        critics = res  # type: ignore
+                    critics = await res if asyncio.iscoroutine(res) else res  # type: ignore
                 except Exception as crit_exc:
                     log_event("mcp_critics_error", {"request_id": request_id, "route": route, "error": str(crit_exc)})
             timings["critics_ms"] = _ms(monotonic() - t_crit)
@@ -269,7 +297,7 @@ async def run_mcp(
                 except Exception as qerr:
                     log_event("mcp_action_queue_error", {"request_id": request_id, "route": route, "error": str(qerr)})
 
-            # Envelope + meta merge
+            # Envelope + meta
             envelope: Dict[str, Any] = {
                 "plan": plan,
                 "routed_result": routed_result,
@@ -291,7 +319,7 @@ async def run_mcp(
             )
             return envelope
 
-        # role != "planner": direct dispatch if available, else echo
+        # 3) role != "planner": direct dispatch (no plan computed)
         t_role = monotonic()
         if role in ROUTING_TABLE and _handler_exists(ROUTING_TABLE[role]):
             try:
@@ -338,8 +366,8 @@ async def run_mcp(
         )
         return envelope
 
+    # 4) Final safety net (never throw)
     except Exception as e:
-        # Final safety net
         log_event("mcp_exception", {"request_id": request_id, "role": role, "error": str(e), "trace": traceback.format_exc()})
         if _handler_exists(echo_agent_run):
             routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
