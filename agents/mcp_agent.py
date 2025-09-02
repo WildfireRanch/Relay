@@ -6,34 +6,6 @@
 #          3) Dispatch to route handler (codex/docs/control/echo/etc.)
 #          4) Run critics (non-fatal) and optionally queue actions
 #          5) Return routed result with rich meta (origin, route, timings)
-#
-# Upstream:
-#   - ENV (optional): none specific (agents it calls may use their own env)
-#   - Imports:
-#       - agents.planner_agent.planner_agent
-#       - agents.echo_agent.run
-#       - agents.codex_agent.handle (if present)
-#       - agents.docs_agent.analyze (if present)
-#       - agents.control_agent.run (if present)
-#       - agents.metaplanner_agent.suggest_route (optional)
-#       - agents.critic_agent.run.run_critics (optional; signature: run_critics(plan: Dict, query: str = "", prior_plans: List[Dict] = None))
-#       - agents.memory_agent.run (optional)
-#       - agents.janitor_agent (optional)
-#       - services.context_injector.build_context
-#       - services.queue.queue_action (optional)
-#       - core.logging.log_event
-#
-# Downstream:
-#   - routes.ask (expects dict with keys: plan, routed_result, critics, context, files_used, [meta])
-#
-# Public API:
-#   - run_mcp(query, role="planner", files=None, topics=None, user_id="anonymous", debug=False)
-#
-# Notes:
-#   - Hardened to avoid “parrot” leakage by surfacing Echo meta (origin/antiparrot) and Planner diag bits.
-#   - Critics invocation fixed to pass correct parameters and remain non-fatal.
-#   - Adds timings for each stage and bubbles to `meta.timings_ms`.
-#   - Always returns a dict (never raises) with best-effort details.
 
 from __future__ import annotations
 
@@ -46,7 +18,7 @@ from typing import Any, Dict, List, Optional, Callable
 from core.logging import log_event
 from services.context_injector import build_context
 
-# --- Optional agent imports (soft dependencies) ----------------------------------------------
+# --- Optional agent imports (soft dependencies)
 try:
     from agents.planner_agent import planner_agent
 except Exception:  # pragma: no cover
@@ -102,7 +74,7 @@ try:
 except Exception:  # pragma: no cover
     queue_action = None  # type: ignore
 
-# --- Routing table ---------------------------------------------------------------------------
+
 ROUTING_TABLE: Dict[str, Optional[Callable[..., Any]]] = {
     "codex": codex_handle,
     "docs": docs_analyze,
@@ -113,25 +85,18 @@ ROUTING_TABLE: Dict[str, Optional[Callable[..., Any]]] = {
     # "echo" handled explicitly to pass `plan` through
 }
 
-# --- Helpers ---------------------------------------------------------------------------------
 def _handler_exists(fn: Optional[Callable[..., Any]]) -> bool:
     return callable(fn)
 
 def _extract_artifact_for_critics(route: str, routed_result: Any) -> Dict[str, Any]:
-    """
-    Map routed_result into an artifact suitable for critics. Best-effort / resilient.
-    """
     if not isinstance(routed_result, dict):
         return {"result": str(routed_result)}
-
-    # Heuristics for common agent shapes
     if route == "codex" and "action" in routed_result:
         return routed_result["action"]
     if route == "docs" and "analysis" in routed_result:
         return routed_result["analysis"]
     if "plan" in routed_result and isinstance(routed_result["plan"], dict):
         return routed_result["plan"]
-
     return routed_result
 
 def _ms(delta_s: float) -> int:
@@ -147,9 +112,6 @@ def _merge_meta(
     upstream_meta: Optional[Dict[str, Any]] = None,
     planner_diag: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """
-    Merge upstream meta (e.g., echo meta: origin/antiparrot) with standard fields.
-    """
     meta: Dict[str, Any] = {
         "request_id": request_id,
         "route": route,
@@ -160,30 +122,23 @@ def _merge_meta(
         meta.setdefault("planner_diag", planner_diag)
 
     if upstream_meta and isinstance(upstream_meta, dict):
-        # Do not overwrite standard keys unless upstream provides more specific values
         for k, v in upstream_meta.items():
             if v is None:
                 continue
-            # prefer upstream origin/antiparrot if present
             if k in ("origin", "antiparrot", "sources"):
                 meta[k] = v
             elif k not in meta:
                 meta[k] = v
 
-    # Append the merged meta into base envelope too, if desired
     base["meta"] = meta
     return meta
 
 async def _call_handler(handler: Callable[..., Any], **kwargs) -> Any:
-    """
-    Call an async handler or sync fallback in a safe way.
-    """
     res = handler(**kwargs)
     if asyncio.iscoroutine(res):
         return await res
     return res
 
-# --- Public API ------------------------------------------------------------------------------
 
 async def run_mcp(
     query: str,
@@ -193,20 +148,6 @@ async def run_mcp(
     user_id: str = "anonymous",
     debug: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Execute the MCP flow for a user query.
-
-    Returns:
-      {
-        "plan": dict|None,
-        "routed_result": dict|Any,
-        "critics": list|None,
-        "context": str,
-        "files_used": list,
-        "meta": dict,              # <- added (route, plan_id, origin, antiparrot, timings_ms, planner_diag, etc.)
-        "error": str|None
-      }
-    """
     request_id = str(uuid.uuid4())
     files = files or []
     topics = topics or []
@@ -217,7 +158,7 @@ async def run_mcp(
         {"request_id": request_id, "role": role, "files": len(files), "topics": len(topics), "debug": debug},
     )
 
-    # 1) Build context (robust; fall back to echo on failure)
+    # 1) Build context
     t0 = monotonic()
     try:
         ctx_res = await build_context(query=query, files=files, topics=topics, debug=debug)
@@ -229,10 +170,7 @@ async def run_mcp(
             files_used = []
     except Exception as e:
         timings["context_ms"] = _ms(monotonic() - t0)
-        log_event(
-            "mcp_context_error",
-            {"request_id": request_id, "error": str(e), "trace": traceback.format_exc()},
-        )
+        log_event("mcp_context_error", {"request_id": request_id, "error": str(e), "trace": traceback.format_exc()})
         if _handler_exists(echo_agent_run):
             routed_result = await echo_agent_run(query=query, context="", user_id=user_id)
         else:
@@ -260,7 +198,7 @@ async def run_mcp(
     t_plan = monotonic()
     try:
         if role == "planner":
-            # 2a) Plan (JSON mode, with retries) — planner is optional but expected
+            # 2a) Plan
             if planner_agent is None:
                 log_event("mcp_missing_planner", {"request_id": request_id})
                 plan: Dict[str, Any] = {"route": "echo", "objective": "[no planner available]"}
@@ -271,22 +209,16 @@ async def run_mcp(
             plan_id = (plan or {}).get("plan_id")
             route = (plan or {}).get("route", "echo")
 
-            # 2b) Meta-planner may override route (non-fatal)
+            # 2b) Meta-planner override (non-fatal)
             if suggest_route:
                 try:
                     suggested = await suggest_route(query=query, plan=plan, user_id=user_id)  # type: ignore
                     if suggested and suggested != route:
-                        log_event(
-                            "mcp_meta_override",
-                            {"request_id": request_id, "from": route, "to": suggested, "plan_id": plan_id},
-                        )
+                        log_event("mcp_meta_override", {"request_id": request_id, "from": route, "to": suggested, "plan_id": plan_id})
                         route = suggested
                         plan["meta_override"] = route
-                except Exception as meta_exc:  # non-fatal
-                    log_event(
-                        "mcp_metaplanner_error",
-                        {"request_id": request_id, "error": str(meta_exc), "plan_id": plan_id},
-                    )
+                except Exception as meta_exc:
+                    log_event("mcp_metaplanner_error", {"request_id": request_id, "error": str(meta_exc), "plan_id": plan_id})
 
             # 2c) Dispatch
             t_dispatch = monotonic()
@@ -294,30 +226,19 @@ async def run_mcp(
                 try:
                     handler = ROUTING_TABLE[route]
                     routed_result = await _call_handler(  # type: ignore
-                        handler,
-                        query=query,
-                        context=context,
-                        user_id=user_id,
-                        plan=plan,
+                        handler, query=query, context=context, user_id=user_id, plan=plan
                     )
                 except Exception as agent_exc:
                     log_event(
                         "mcp_agent_handler_error",
-                        {
-                            "request_id": request_id,
-                            "route": route,
-                            "error": str(agent_exc),
-                            "trace": traceback.format_exc(),
-                            "plan_id": plan_id,
-                        },
+                        {"request_id": request_id, "route": route, "error": str(agent_exc), "trace": traceback.format_exc(), "plan_id": plan_id},
                     )
                     if _handler_exists(echo_agent_run):
                         routed_result = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
-                        route = "echo"  # fallback route used
+                        route = "echo"
                     else:
                         routed_result = {"error": f"Route '{route}' failed and echo unavailable."}
             else:
-                # Explicit echo path (or unknown route): pass plan so echo can use `final_answer`
                 if _handler_exists(echo_agent_run):
                     routed_result = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
                     route = "echo"
@@ -325,40 +246,30 @@ async def run_mcp(
                     routed_result = {"error": f"Unknown or unsupported route '{route}', echo unavailable."}
             timings["dispatch_ms"] = _ms(monotonic() - t_dispatch)
 
-            # 2d) Critics (best-effort, non-fatal) — FIXED signature
+            # 2d) Critics (best-effort, non-fatal) — sync or async
             critics = None
             t_crit = monotonic()
             if run_critics:
                 try:
                     artifact = _extract_artifact_for_critics(route, routed_result)
-                    # Correct signature: run_critics(plan=..., query=..., prior_plans=optional)
-                    critics = await run_critics(plan=artifact, query=query)  # type: ignore
+                    res = run_critics(plan=artifact, query=query)  # may be sync or async
+                    if asyncio.iscoroutine(res):
+                        critics = await res  # type: ignore
+                    else:
+                        critics = res  # type: ignore
                 except Exception as crit_exc:
-                    log_event(
-                        "mcp_critics_error",
-                        {"request_id": request_id, "route": route, "error": str(crit_exc)},
-                    )
+                    log_event("mcp_critics_error", {"request_id": request_id, "route": route, "error": str(crit_exc)})
             timings["critics_ms"] = _ms(monotonic() - t_crit)
 
             # 2e) Optional queue action (non-fatal)
             if queue_action and isinstance(routed_result, dict) and "action" in routed_result:
                 try:
                     queue_action(routed_result["action"])  # type: ignore
-                    log_event(
-                        "mcp_action_queued",
-                        {
-                            "request_id": request_id,
-                            "route": route,
-                            "action_keys": list(routed_result["action"].keys()),
-                        },
-                    )
+                    log_event("mcp_action_queued", {"request_id": request_id, "route": route, "action_keys": list(routed_result["action"].keys())})
                 except Exception as qerr:
-                    log_event(
-                        "mcp_action_queue_error",
-                        {"request_id": request_id, "route": route, "error": str(qerr)},
-                    )
+                    log_event("mcp_action_queue_error", {"request_id": request_id, "route": route, "error": str(qerr)})
 
-            # Envelope + meta merge (bubble up Echo/agent meta as well)
+            # Envelope + meta merge
             envelope: Dict[str, Any] = {
                 "plan": plan,
                 "routed_result": routed_result,
@@ -367,9 +278,7 @@ async def run_mcp(
                 "files_used": files_used,
             }
             upstream_meta = routed_result.get("meta") if isinstance(routed_result, dict) else None
-            planner_diag = None
-            if isinstance(plan, dict) and isinstance(plan.get("_diag"), dict):
-                planner_diag = plan["_diag"]  # e.g., final_answer_origin, parrot_rejected
+            planner_diag = plan.get("_diag") if isinstance(plan, dict) else None
 
             _merge_meta(
                 envelope,
@@ -378,7 +287,7 @@ async def run_mcp(
                 plan_id=plan_id,
                 timings_ms=timings,
                 upstream_meta=upstream_meta,
-                planner_diag=planner_diag,
+                planner_diag=planner_diag if isinstance(planner_diag, dict) else None,
             )
             return envelope
 
@@ -388,22 +297,13 @@ async def run_mcp(
             try:
                 handler = ROUTING_TABLE[role]
                 routed_result = await _call_handler(  # type: ignore
-                    handler,
-                    query=query,
-                    context=context,
-                    user_id=user_id,
+                    handler, query=query, context=context, user_id=user_id
                 )
                 route_used = role
             except Exception as agent_exc:
                 log_event(
                     "mcp_agent_handler_error",
-                    {
-                        "request_id": request_id,
-                        "role": role,
-                        "route": role,
-                        "error": str(agent_exc),
-                        "trace": traceback.format_exc(),
-                    },
+                    {"request_id": request_id, "role": role, "route": role, "error": str(agent_exc), "trace": traceback.format_exc()},
                 )
                 if _handler_exists(echo_agent_run):
                     routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
@@ -411,34 +311,14 @@ async def run_mcp(
                 else:
                     routed_result = {"error": f"Role '{role}' failed and echo unavailable."}
                     route_used = role
-            timings["dispatch_ms"] = _ms(monotonic() - t_role)
-
-            envelope = {
-                "plan": None,
-                "routed_result": routed_result,
-                "critics": None,
-                "context": context,
-                "files_used": files_used,
-            }
-            _merge_meta(
-                envelope,
-                request_id=request_id,
-                route=route_used,
-                plan_id=None,
-                timings_ms=timings,
-                upstream_meta=routed_result.get("meta") if isinstance(routed_result, dict) else None,
-            )
-            return envelope
-
-        # Unknown role → echo
-        t_unknown = monotonic()
-        if _handler_exists(echo_agent_run):
-            routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
-            route_used = "echo"
         else:
-            routed_result = {"error": f"Unknown role '{role}', echo unavailable."}
-            route_used = role
-        timings["dispatch_ms"] = _ms(monotonic() - t_unknown)
+            if _handler_exists(echo_agent_run):
+                routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
+                route_used = "echo"
+            else:
+                routed_result = {"error": f"Unknown role '{role}', echo unavailable."}
+                route_used = role
+        timings["dispatch_ms"] = _ms(monotonic() - t_role)
 
         envelope = {
             "plan": None,
@@ -446,7 +326,7 @@ async def run_mcp(
             "critics": None,
             "context": context,
             "files_used": files_used,
-            "error": f"Unknown role: {role}",
+            "error": f"Unknown role: {role}" if route_used != role and role not in ROUTING_TABLE else None,
         }
         _merge_meta(
             envelope,
@@ -459,11 +339,8 @@ async def run_mcp(
         return envelope
 
     except Exception as e:
-        # Final safety net: log and try echo with available context
-        log_event(
-            "mcp_exception",
-            {"request_id": request_id, "role": role, "error": str(e), "trace": traceback.format_exc()},
-        )
+        # Final safety net
+        log_event("mcp_exception", {"request_id": request_id, "role": role, "error": str(e), "trace": traceback.format_exc()})
         if _handler_exists(echo_agent_run):
             routed_result = await echo_agent_run(query=query, context=context, user_id=user_id)
             route_used = "echo"
