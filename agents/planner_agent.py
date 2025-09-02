@@ -42,6 +42,12 @@ TEMPERATURE = float(os.getenv("PLANNER_TEMPERATURE", "0.2"))
 REQUEST_TIMEOUT_S = int(os.getenv("PLANNER_TIMEOUT_S", "45"))
 MAX_RETRIES = int(os.getenv("PLANNER_MAX_RETRIES", os.getenv("OPENAI_MAX_RETRIES", "3")))
 
+# Output caps (defensive)
+MAX_FIELD_CHARS = 800
+MAX_FINAL_ANSWER_CHARS = 600
+
+ALLOWED_ROUTES = {"echo", "codex", "docs", "control"}
+
 _openai = create_openai_client()
 
 # System prompt:
@@ -52,11 +58,11 @@ SYSTEM_PROMPT = (
     "Rules:\n"
     '- Return strictly valid JSON (no markdown, no commentary).\n'
     '- Keys:\n'
-    '  "objective": str,\n'
-    '  "steps": [{"type": "analysis|action|docs|control", "summary": str}],\n'
-    '  "recommendation": str,\n'
-    '  "route": "echo" | "codex" | "docs" | "control".\n'
-    "- If the user question is a DEFINITION-STYLE prompt (starts with what/who/define/describe) "
+    '  \"objective\": str,\n'
+    '  \"steps\": [{\"type\": \"analysis|action|docs|control\", \"summary\": str}],\n'
+    '  \"recommendation\": str,\n'
+    '  \"route\": \"echo\" | \"codex\" | \"docs\" | \"control\".\n'
+    "- If the user question is a DEFINITION-STYLE prompt (starts with what/who/define/describe/explain) "
     "AND the CONTEXT contains descriptive information (Overview/Definition/Summary), then:\n"
     "    • Populate \"final_answer\" with a concise 2–4 sentence factual answer.\n"
     "    • Prefer a direct answer over rephrasing the question.\n"
@@ -66,6 +72,20 @@ SYSTEM_PROMPT = (
 
 # ---- Helpers ---------------------------------------------------------------------------------
 
+_FENCE_PAT = re.compile(r"^```(?:\w+)?\s*|\s*```$", re.MULTILINE)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_DEFN_PREFIXES = ("what is", "who is", "define", "describe", "explain")
+_PARROT_PAT = re.compile(r"^\s*(what\s+is|who\s+is|define|describe|explain)\b", re.I)
+
+def _clean_text(t: str, cap: int = MAX_FINAL_ANSWER_CHARS) -> str:
+    """Strip fences, collapse whitespace, cap length."""
+    if not t:
+        return ""
+    t = _FENCE_PAT.sub("", t).strip()
+    t = " ".join(t.split())
+    if len(t) > cap:
+        t = t[:cap].rstrip() + "…"
+    return t
 
 def _coerce_json_object(text: str) -> Optional[Dict[str, Any]]:
     """Best-effort extraction of the first JSON object from a text blob. Returns dict or None."""
@@ -78,19 +98,13 @@ def _coerce_json_object(text: str) -> Optional[Dict[str, Any]]:
         pass
     return None
 
-
-_DEFN_PREFIXES = ("what is", "who is", "define ", "describe ")
-
-
 def _is_definitional(q: str) -> bool:
     ql = (q or "").strip().lower()
-    return ql.startswith(_DEFN_PREFIXES)
+    # tolerate trailing punctuation
+    ql = ql.rstrip(" ?!.:")
+    return any(ql.startswith(p) for p in _DEFN_PREFIXES)
 
-
-_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
-
-
-def _extract_definition_from_context(query: str, context: str, max_chars: int = 550) -> Optional[str]:
+def _extract_definition_from_context(query: str, context: str, max_chars: int = MAX_FINAL_ANSWER_CHARS) -> Optional[str]:
     """
     Deterministic fallback: if the model doesn't give final_answer but the query is definitional
     and the context likely contains a definition, synthesize 2–4 sentences from context.
@@ -98,15 +112,14 @@ def _extract_definition_from_context(query: str, context: str, max_chars: int = 
       - Prefer a paragraph that contains the main noun phrase from the query (first 3 words)
       - Else, take the first non-empty paragraph
       - Return up to ~2–4 sentences (<= max_chars)
+      - Reject if the result looks like a parrot
     """
     if not context:
         return None
 
-    # Rough noun phrase from query: first 3 words
-    q_words = [w for w in re.sub(r"[^a-zA-Z0-9\s\-_/]", " ", (query or "")).split() if w]
-    key = " ".join(q_words[:3]).lower() if q_words else ""
+    words = [w for w in re.sub(r"[^a-zA-Z0-9\s\-_/]", " ", (query or "")).split() if w]
+    key = " ".join(words[:3]).lower() if words else ""
 
-    # Split context into paragraphs, then pick a candidate
     paras = [p.strip() for p in context.split("\n\n") if p.strip()]
     cand = None
     if key:
@@ -116,24 +129,21 @@ def _extract_definition_from_context(query: str, context: str, max_chars: int = 
                 break
     if not cand and paras:
         cand = paras[0]
-
     if not cand:
         return None
 
-    # Trim to 2–4 sentences
-    sents = _SENTENCE_SPLIT.split(cand)
-    sents = [s.strip() for s in sents if s.strip()]
+    sents = [s.strip() for s in _SENTENCE_SPLIT.split(cand) if s.strip()]
     if not sents:
         return None
-    take = sents[:4]
-    out = " ".join(take).strip()
+    out = " ".join(sents[:4]).strip()
     if len(out) > max_chars:
         out = out[:max_chars].rstrip() + "…"
-    # Must look like an answer, not a restatement
-    if any(out.lower().startswith(p) for p in _DEFN_PREFIXES):
+    out = _clean_text(out)
+    if _PARROT_PAT.match(out.lower()):
         return None
     return out or None
 
+# ---- Agent -----------------------------------------------------------------------------------
 
 class PlannerAgent:
     async def _call_llm(self, messages: list[dict]) -> str:
@@ -175,7 +185,6 @@ class PlannerAgent:
         plan_id = str(uuid.uuid4())
         is_def = _is_definitional(query)
 
-        # Add a tiny, explicit hint in the USER content for definition queries
         def_hint = (
             "\n\nINSTRUCTION: If this is a definition-style question and the CONTEXT contains a definition, "
             "populate final_answer with a concise 2–4 sentence factual answer and set route to \"echo\"."
@@ -187,15 +196,17 @@ class PlannerAgent:
             {"role": "user", "content": f"QUESTION:\n{query}\n\nCONTEXT:\n{context or '[none]'}{def_hint}"},
         ]
 
+        coercion_used = False
         try:
             raw = await self._call_llm(messages)
             log_event("planner_response_raw", {"plan_id": plan_id, "sample": raw[:800]})
 
-            # Parse with strict JSON first, then coerce if needed
+            # Parse JSON, then coerce if needed
             try:
                 plan = json.loads(raw)
             except Exception:
                 plan = _coerce_json_object(raw)
+                coercion_used = True
 
             if not isinstance(plan, dict):
                 log_event("planner_parse_error", {"plan_id": plan_id, "head": raw[:1200]})
@@ -207,25 +218,54 @@ class PlannerAgent:
             plan.setdefault("recommendation", "")
             plan.setdefault("route", "echo")
 
-            # Optional fast-path (when present, Echo will surface it as the direct answer)
-            if "final_answer" in plan and isinstance(plan["final_answer"], str):
-                plan["final_answer"] = plan["final_answer"].strip()
+            # Validate route
+            route = str(plan.get("route") or "echo").strip().lower()
+            plan["route"] = route if route in ALLOWED_ROUTES else "echo"
 
-            # If still no final_answer but this is definitional and context has a definition,
-            # synthesize deterministically to prevent parroting.
+            # Cap noisy fields
+            if isinstance(plan["objective"], str):
+                plan["objective"] = _clean_text(plan["objective"], MAX_FIELD_CHARS)
+            if isinstance(plan["recommendation"], str):
+                plan["recommendation"] = _clean_text(plan["recommendation"], MAX_FIELD_CHARS)
+
+            # Trim step summaries
+            steps = plan.get("steps") or []
+            if isinstance(steps, list):
+                norm_steps = []
+                for s in steps:
+                    if isinstance(s, dict):
+                        stype = str(s.get("type") or "analysis")
+                        summ = _clean_text(str(s.get("summary") or ""), MAX_FIELD_CHARS)
+                        norm_steps.append({"type": stype, "summary": summ})
+                plan["steps"] = norm_steps
+
+            final_answer_origin = None
+
+            # Optional fast-path from model
+            if "final_answer" in plan and isinstance(plan["final_answer"], str):
+                fa = _clean_text(plan["final_answer"].strip())
+                # Reject if it looks like a parrot
+                if fa and not _PARROT_PAT.match(fa.lower()):
+                    plan["final_answer"] = fa
+                    final_answer_origin = "model"
+                else:
+                    plan.pop("final_answer", None)
+
+            # Deterministic synth from context if definitional and missing
             if is_def and not plan.get("final_answer"):
                 extracted = _extract_definition_from_context(query, context)
                 if extracted:
                     plan["final_answer"] = extracted
                     plan["route"] = "echo"
+                    final_answer_origin = final_answer_origin or "context"
                     log_event("planner_final_answer_synthesized", {"plan_id": plan_id, "chars": len(extracted)})
 
-            # Trim step summaries to keep logs/prompts tidy
-            for s in plan.get("steps", []):
-                if isinstance(s, dict) and isinstance(s.get("summary"), str):
-                    s["summary"] = s["summary"][:300]
-
+            # Attach diagnostics for downstream (safe to ignore)
             plan["plan_id"] = plan.get("plan_id") or plan_id
+            plan["_diag"] = {
+                "coercion_used": coercion_used,
+                "final_answer_origin": final_answer_origin,
+            }
             return plan
 
         except Exception as e:
@@ -237,8 +277,8 @@ class PlannerAgent:
                 "recommendation": "",
                 "route": "echo",
                 "plan_id": plan_id,
+                "_diag": {"coercion_used": coercion_used, "final_answer_origin": None},
             }
-
 
 # Export singleton (imported by agents.mcp_agent)
 planner_agent = PlannerAgent()
