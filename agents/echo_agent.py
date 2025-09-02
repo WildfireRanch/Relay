@@ -143,7 +143,7 @@ def _looks_like_parrot(text: str) -> bool:
     if not text:
         return False
     t = text.strip()
-    return bool(_PARROT_PAT.match(t) or GENERIC_PAT.match(t))
+    return bool(_PARROT_PAT.match(t) or _GENERIC_PAT.match(t))
 
 async def _chat_once(messages: list[dict]) -> str:
     resp = await _openai.chat.completions.create(
