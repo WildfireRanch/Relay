@@ -3,32 +3,25 @@
 //          Prefers final_text (already set by the hook) and supports error,
 //          context (collapsible), meta/timings badges, and action status.
 // Updated: 2025-09-02
-//
-// Notes:
-// - Backward compatible: only `role` and `content` are required.
-// - If `error` is provided, we render an error bubble instead of content.
-// - `context` is optional; can be toggled via controlled props or internal state.
-// - `meta` may include { origin, timings_ms, request_id } — displayed compactly.
-// - `status` can be "pending" | "approved" | "denied" for action flow UI.
 
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import SafeMarkdown from "@/components/SafeMarkdown";
 import { toMDString } from "@/lib/toMDString";
-import MetaBadges from "@/components/common/MetaBadges";
+import MetaBadges, { type MetaBadge } from "@/components/common/MetaBadges";
 
 type Props = {
   role: "user" | "assistant";
-  content: unknown;                         // will be coerced to string safely
-  error?: string | null;                    // optional error text (renders a red bubble)
-  context?: string;                         // optional debug/context markdown
-  meta?: Record<string, unknown> | null;    // optional meta (origin, timings_ms, request_id)
+  content: unknown; // will be coerced to string safely
+  error?: string | null;
+  context?: string;
+  /** meta may include { origin, timings_ms, request_id } */
+  meta?: Record<string, unknown> | null;
   status?: "pending" | "approved" | "denied";
-  // Controlled context toggle (optional). If not provided, component manages its own.
   isContextOpen?: boolean;
   onToggleContext?: () => void;
-  showExtras?: boolean;                     // gate for context/meta display; defaults true
+  showExtras?: boolean;
   className?: string;
 };
 
@@ -80,6 +73,66 @@ export default function ChatMessage({
   // Coerce content to markdown-safe string
   const md = toMDString(content);
 
+  // Adapt the loose meta object into MetaBadge[]
+  const metaItems: MetaBadge[] = useMemo(() => {
+    const items: MetaBadge[] = [];
+    if (!meta) return items;
+
+    const origin = typeof meta.origin === "string" ? meta.origin : undefined;
+    const requestId =
+      typeof meta.request_id === "string"
+        ? meta.request_id
+        : typeof meta.requestId === "string"
+        ? meta.requestId
+        : undefined;
+
+    const timings =
+      typeof meta.timings_ms === "number"
+        ? `${meta.timings_ms} ms`
+        : typeof meta.latency_ms === "number"
+        ? `${meta.latency_ms} ms`
+        : undefined;
+
+    if (origin) {
+      items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
+    }
+    if (timings) {
+      items.push({ label: "Latency", value: timings, tone: "info", title: "end-to-end latency" });
+    }
+    if (requestId) {
+      items.push({
+        label: "ReqID",
+        value: requestId,
+        tone: "neutral",
+        title: "request identifier",
+        hideIfEmpty: true,
+      });
+    }
+
+    // Include any extra meta keys (briefly), skip objects/arrays/functions
+    Object.entries(meta).forEach(([k, v]) => {
+      if (k === "origin" || k === "request_id" || k === "requestId" || k === "timings_ms" || k === "latency_ms") {
+        return;
+      }
+      const isSimple =
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean" ||
+        v === null ||
+        v === undefined;
+      if (isSimple) {
+        items.push({
+          label: k,
+          value: v === undefined ? "" : String(v),
+          tone: "neutral",
+          hideIfEmpty: true,
+        });
+      }
+    });
+
+    return items;
+  }, [meta]);
+
   // Error bubble (takes precedence over content)
   if (error) {
     return (
@@ -87,7 +140,11 @@ export default function ChatMessage({
         <div className="w-fit max-w-[80ch] rounded-xl border border-red-200 bg-red-50 p-3 text-left shadow-sm">
           <div className="text-sm font-medium text-red-800">Request error</div>
           <div className="mt-1 break-words font-mono text-sm text-red-900">{error}</div>
-          <MetaBadges meta={meta ?? undefined} />
+          {metaItems.length > 0 && (
+            <div className="mt-2">
+              <MetaBadges items={metaItems} />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -104,7 +161,7 @@ export default function ChatMessage({
         {/* Status + meta badges */}
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <StatusChip status={status} />
-          <MetaBadges meta={meta ?? undefined} />
+          {metaItems.length > 0 && <MetaBadges items={metaItems} />}
         </div>
 
         {/* Context (debug) */}

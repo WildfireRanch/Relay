@@ -7,11 +7,11 @@
 "use client";
 
 import { API_ROOT } from "@/lib/api";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toMDString } from "@/lib/toMDString";
 import SafeMarkdown from "@/components/SafeMarkdown";
-import MetaBadges from "@/components/common/MetaBadges";
+import MetaBadges, { type MetaBadge } from "@/components/common/MetaBadges";
 
 // --- Types for KB docs and semantic search ---
 type KBMeta = {
@@ -111,7 +111,6 @@ export default function DocsViewer() {
 
   useEffect(() => {
     if (tab === "docs") {
-      // No await in effect; fire and forget with internal try/catch
       void loadDocs();
     }
   }, [tab]);
@@ -185,7 +184,7 @@ export default function DocsViewer() {
             files: activeDoc ? [activeDoc] : [],
             topics: [],
             role: ctxRole, // default "docs"
-            debug: true,   // return context/meta
+            debug: true, // return context/meta
           }),
         });
 
@@ -196,12 +195,13 @@ export default function DocsViewer() {
 
         const data = (await res.json()) as AskResponse | { result?: AskResponse };
         setCtxAnswer(toMDString(pickFinalText(data)));
-        // prefer top-level context, then nested result.context
+
         const ctx =
           (data as AskResponse)?.context ??
           (data as { result?: AskResponse })?.result?.context ??
           "";
         setCtxContext(toMDString(typeof ctx === "string" ? ctx : ""));
+
         const meta =
           (data as AskResponse)?.meta ??
           (data as { result?: AskResponse })?.result?.meta ??
@@ -217,6 +217,50 @@ export default function DocsViewer() {
     },
     [ctxQuestion, activeDoc, ctxRole]
   );
+
+  // --- Meta → MetaBadge[] adapter (unconditional hook) ----------------------
+  const ctxMetaItems: MetaBadge[] = useMemo(() => {
+    const items: MetaBadge[] = [];
+    if (!ctxMeta) return items;
+
+    const origin = typeof ctxMeta.origin === "string" ? ctxMeta.origin : undefined;
+    const requestId =
+      typeof (ctxMeta as Record<string, unknown>)["request_id"] === "string"
+        ? (ctxMeta as Record<string, unknown>)["request_id"] as string
+        : typeof (ctxMeta as Record<string, unknown>)["requestId"] === "string"
+        ? (ctxMeta as Record<string, unknown>)["requestId"] as string
+        : undefined;
+
+    const latencyVal =
+      typeof (ctxMeta as Record<string, unknown>)["timings_ms"] === "number"
+        ? ((ctxMeta as Record<string, unknown>)["timings_ms"] as number)
+        : typeof (ctxMeta as Record<string, unknown>)["latency_ms"] === "number"
+        ? ((ctxMeta as Record<string, unknown>)["latency_ms"] as number)
+        : undefined;
+    const latency = latencyVal !== undefined ? `${latencyVal} ms` : undefined;
+
+    if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
+    if (latency) items.push({ label: "Latency", value: latency, tone: "info", title: "end-to-end latency" });
+    if (requestId)
+      items.push({ label: "ReqID", value: requestId, tone: "neutral", title: "request identifier", hideIfEmpty: true });
+
+    // Include other simple meta entries (skip objects/arrays/functions and known keys)
+    for (const [k, v] of Object.entries(ctxMeta)) {
+      if (["origin", "request_id", "requestId", "timings_ms", "latency_ms"].includes(k)) continue;
+      const isSimple =
+        typeof v === "string" || typeof v === "number" || typeof v === "boolean" || v == null;
+      if (isSimple) {
+        items.push({
+          label: k,
+          value: v == null ? "" : String(v),
+          tone: "neutral",
+          hideIfEmpty: true,
+        });
+      }
+    }
+
+    return items;
+  }, [ctxMeta]);
 
   return (
     <div className="max-w-5xl mx-auto py-6">
@@ -394,7 +438,7 @@ export default function DocsViewer() {
             <div className="prose prose-neutral dark:prose-invert max-w-none">
               <SafeMarkdown>{ctxAnswer}</SafeMarkdown>
             </div>
-            <MetaBadges meta={ctxMeta} />
+            {ctxMetaItems.length > 0 && <MetaBadges items={ctxMetaItems} />}
           </div>
 
           {/* Context (debug) */}

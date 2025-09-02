@@ -1,7 +1,7 @@
 // File: src/components/SafeMarkdown.tsx
 // Purpose: Bulletproof, consistent, and safe Markdown rendering for all app content.
-//          Hardened against XSS, raw HTML, and rendering bugs. All code blocks are syntax-highlighted (Prism).
-//          This is the ONLY allowed way to render Markdown in the app.
+// Hardened against XSS, raw HTML, and rendering bugs. All code blocks are syntax-highlighted (Prism).
+// This is the ONLY allowed way to render Markdown in the app.
 
 import React from "react";
 import ReactMarkdown, { Components } from "react-markdown";
@@ -65,8 +65,7 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
 
   // Debug: Log if somehow a non-string is still about to render (for final #418 hunting)
   if (typeof strChildren !== "string") {
-    // eslint-disable-next-line no-console
-    console.error("SAFE-MARKDOWN-418-DEBUG", typeof strChildren, strChildren);
+        console.error("SAFE-MARKDOWN-418-DEBUG", typeof strChildren, strChildren);
   }
 
   // Ultra-safe: Escape anything that looks like raw HTML before markdown parsing

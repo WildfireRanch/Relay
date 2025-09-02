@@ -40,8 +40,7 @@ export default function StatusPanel() {
 
   useEffect(() => {
     fetchStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    }, []);
 
   async function fetchStatus() {
     if (!API_ROOT) {
