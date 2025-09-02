@@ -1,23 +1,7 @@
-# File: semantic_retriever.py
-# Directory: services
+# File: services/semantic_retriever.py
 # Purpose: Thin wrapper around KB search that supports both `k` and `top_k`,
 #          applies an optional score_threshold, and renders readable snippets.
 #          Includes legacy shims: get_semantic_context() and get_retriever().
-#
-# Upstream:
-#   - ENV (optional): SEMANTIC_DEFAULT_K (default 6)
-#   - Imports: typing, os, core.logging.log_event, services.kb.search
-#
-# Downstream:
-#   - services.context_injector (build_context)
-#   - agents.echo_agent (answer synthesis)
-#   - main.lifespan (optional warmup via get_retriever)
-#
-# Contents:
-#   - search(q, *, top_k=None, k=None, score_threshold=None, **kwargs) -> list[dict]
-#   - render_markdown(results: list[dict]) -> str
-#   - get_semantic_context(query, top_k=6, score_threshold=None, **kwargs) -> str  [shim]
-#   - get_retriever() -> callable                                                  [shim]
 
 from __future__ import annotations
 
@@ -36,11 +20,19 @@ def _clean_str(s: Any, max_len: int = 1200) -> str:
 
 
 def _mk_row(hit: Dict[str, Any]) -> Dict[str, Any]:
+    # Map KB schema → stable row fields for rendering
+    # KB emits: title, path, tier, snippet, similarity (float), meta
+    similarity = hit.get("similarity")
+    try:
+        score = float(similarity) if similarity is not None else None
+    except Exception:
+        score = None
+
     return {
         "title": _clean_str(hit.get("title") or hit.get("node_id") or hit.get("id")),
         "path": _clean_str(hit.get("path") or hit.get("uri") or hit.get("source")),
         "tier": hit.get("tier"),
-        "score": float(hit.get("score")) if hit.get("score") is not None else None,
+        "score": score,
         "snippet": _clean_str(hit.get("snippet") or hit.get("text") or hit.get("preview"), 1500),
         "meta": hit.get("meta") or {},
     }
@@ -56,12 +48,12 @@ def search(
 ) -> List[Dict[str, Any]]:
     use_k = int(top_k or k or DEFAULT_K)
     try:
-        # 1) Try full features (newer KB adapters)
-        results = kb_search(q=q, k=use_k, score_threshold=score_threshold, **kwargs) or []
-    except TypeError as te:
-        # 2) Fallback: drop score_threshold/extra kwargs for older adapters
+        # IMPORTANT: kb.search expects *query=*, not q=
+        results = kb_search(query=q, k=use_k, score_threshold=score_threshold, **kwargs) or []
+    except TypeError:
+        # Older adapters might not accept score_threshold/kwargs; fall back gracefully
         try:
-            results = kb_search(q=q, k=use_k) or []
+            results = kb_search(query=q, k=use_k) or []
         except Exception as e:
             log_event("semantic_search_error", {"q_head": q[:180], "error": str(e)})
             return []
@@ -77,7 +69,7 @@ def search(
 def render_markdown(results: List[Dict[str, Any]]) -> str:
     """
     Render compact markdown bullets suitable for prompt injection.
-    Example row:
+    Example:
       • **Title** — _path_ (tier: X, score: 0.87): snippet...
     """
     if not results:
@@ -89,20 +81,20 @@ def render_markdown(results: List[Dict[str, Any]]) -> str:
         tier = r.get("tier")
         score = r.get("score")
         tail = r.get("snippet") or ""
-        meta = []
+        meta_bits = []
         if tier is not None:
-            meta.append(f"tier: {tier}")
+            meta_bits.append(f"tier: {tier}")
         if score is not None:
             try:
-                meta.append(f"score: {float(score):.3f}")
+                meta_bits.append(f"score: {float(score):.3f}")
             except Exception:
-                meta.append(f"score: {score}")
-        meta_str = f" ({', '.join(meta)})" if meta else ""
+                meta_bits.append(f"score: {score}")
+        meta_str = f" ({', '.join(meta_bits)})" if meta_bits else ""
         lines.append(f"• **{title}** — _{path}_{meta_str}: {tail}")
     return "\n".join(lines)
 
 
-# ---- Legacy shims (retain backward compatibility) -------------------------------------------
+# ---- Legacy shims (retain backward compatibility) --------------------------
 
 def get_semantic_context(
     query: str,
