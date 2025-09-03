@@ -1,0 +1,21 @@
+### Endpoints (.post/.get) in routes
+
+### Where final_text is set (ensure finalizer present)
+
+### /mcp/run handler presence
+
+### Normalizer in MCP (answer extraction)
+
+### Echo returns text (MCP-friendly)
+
+### Docs/Codex/Control return human-friendly text
+
+### Frontend uses shared pickFinalText (no duplicates)
+
+### MetaBadges usage: old 'meta=' vs new 'items='
+
+### Defaults forcing role='docs' (bypass planner)
+
+### Planner FA + anti-parrot gates present
+
+### /ask controller finalizer present?

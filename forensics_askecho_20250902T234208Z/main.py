@@ -16,11 +16,6 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
-
-HTTPXClientInstrumentor().instrument()
-AioHttpClientInstrumentor().instrument()
 
 # ── Local dev: load .env ─────────────────────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
@@ -47,64 +42,29 @@ log = logging.getLogger("relay.main")
 for sub in ("docs/imported", "docs/generated", "logs/sessions", "data/index"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ── OpenTelemetry (OTLP) – traces + metrics; env-driven; best-effort ───────────
+# ── Optional: OpenTelemetry → Jaeger (thrift) best-effort (consider OTLP later) ───────────────
 OTEL_ENABLED = False
 try:
-    import os
-    from opentelemetry import trace, metrics
-    from opentelemetry.sdk.resources import Resource
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import SERVICE_NAME, Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-    # Optional: framework/client auto-instrumentation (safe if not installed)
-    try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # server spans
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # httpx client spans
-        from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor  # aiohttp client spans
-    except Exception:
-        FastAPIInstrumentor = HTTPXClientInstrumentor = AioHttpClientInstrumentor = None  # noqa
+    SERVICE = "relay-backend"
+    JAEGER_HOST = os.getenv("JAEGER_HOST", "localhost")
+    JAEGER_PORT = int(os.getenv("JAEGER_PORT", 6831))
 
-    SERVICE = os.getenv("OTEL_SERVICE_NAME", "relay-backend")
-
-    # Resource (service.name picked up by backends)
-    resource = Resource.create({"service.name": SERVICE})
-
-    # ---- Traces (OTLP/HTTP; reads OTEL_* env for endpoint/headers/etc.) ----
-    tp = TracerProvider(resource=resource)
-    tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    trace.set_tracer_provider(tp)
-
-    # ---- Metrics (OTLP/HTTP) ----
-    mr = PeriodicExportingMetricReader(OTLPMetricExporter())
-    mp = MeterProvider(resource=resource, metric_readers=[mr])
-    metrics.set_meter_provider(mp)
-
-    # ---- Auto-instrument (optional but recommended) ----
-    if FastAPIInstrumentor:
-        try:
-            FastAPIInstrumentor.instrument_app(app)  # server request spans
-        except Exception:
-            pass
-    if HTTPXClientInstrumentor:
-        try:
-            HTTPXClientInstrumentor().instrument()
-        except Exception:
-            pass
-    if AioHttpClientInstrumentor:
-        try:
-            AioHttpClientInstrumentor().instrument()
-        except Exception:
-            pass
-
+    trace.set_tracer_provider(
+        TracerProvider(resource=Resource.create({SERVICE_NAME: SERVICE}))
+    )
+    jaeger_exporter = JaegerExporter(agent_host_name=JAEGER_HOST, agent_port=JAEGER_PORT)
+    trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(jaeger_exporter))
     OTEL_ENABLED = True
-    log.info("🟣 OpenTelemetry on → OTLP (env-configured)")
+    log.info("🟣 OpenTelemetry on → Jaeger %s:%s", JAEGER_HOST, JAEGER_PORT)
 except Exception as ex:
     log.warning("OTel disabled (%s: %s)", ex.__class__.__name__, ex)
-
 
 # ── Request ID + timing middleware ───────────────────────────────────────────
 REQUEST_ID_HEADER = "X-Request-Id"

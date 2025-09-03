@@ -100,9 +100,13 @@ black>=24.0
 # =========================
 opentelemetry-api>=1.25.0
 opentelemetry-sdk>=1.25.0
-opentelemetry-exporter-jaeger==1.21.0
+opentelemetry-exporter-otlp-proto-http>=1.25.0
 opentelemetry-instrumentation-fastapi>=0.46b0
 opentelemetry-instrumentation-asgi>=0.46b0  # Needed for FastAPI, covers all ASGI middleware
+opentelemetry-instrumentation-httpx>=0.46b0   # traces outbound HTTPX calls
+opentelemetry-instrumentation-aiohttp-client>=0.46b0  # traces outbound aiohttp calls (if used)
+# (optional convenience meta-package; installs both grpc+http OTLP exporters)
+# opentelemetry-exporter-otlp>=1.25.0
 
 # =========================
 # === Automation        ===

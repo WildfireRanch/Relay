@@ -1,503 +1,497 @@
 # File: agents/mcp_agent.py
-# Purpose: Orchestrates the MCP pipeline for /ask:
-#   1) Build context
-#   2) Plan (JSON-mode) and meta-route suggestion
-#   3) Dispatch to route handler (codex/docs/control/echo/etc.)
-#   4) Run critics (non-fatal) and optionally queue actions
-#   5) Return routed result with rich meta (origin, route, timings)
+# Purpose: Normalize multi-agent orchestration for MCP with strong guarantees:
+#   - Stable envelope and stringification for routed results
+#   - Per-phase timeouts and limited retries with exponential backoff + jitter
+#   - Graceful degradation to 'echo' when planner/route fails
+#   - Connectivity observability: OpenTelemetry spans + metrics per dependency
 #
-# Guarantees:
-#   - Always returns a stable envelope even on failures.
-#   - routed_result is normalized to {"response": <raw>, "answer": <string|None>}.
-#   - meta includes {request_id, route, plan_id, timings_ms, origin=route}.
-#   - When planner provides a synthesized definition, meta.details.reply_head mirrors it.
+# Contract (consumed by routes/mcp.py):
+#   run_mcp(query, files, topics, role, user_id, debug, timeout_s, max_context_tokens, request_id) -> dict:
+#     {
+#       "plan": { "route": <str>, "plan_id": <str|None>, "final_answer": <str|None>, ... },
+#       "routed_result": { "text": <str>, "answer": <str>, "response": <obj|str|None>, "error": <str|None> },
+#       "meta": {
+#         "origin": "mcp",
+#         "route": <str>,
+#         "plan_id": <str|None>,
+#         "request_id": <str|None>,
+#         "timings_ms": { "total": <int>, "planner": <int>, "routed": <int> },
+#         "details": { "reply_head": <str|None> }  # mirrors planner.final_answer
+#       }
+#     }
 #
-# Notes:
-#   - Only passes `plan` to routes that accept/need it (not to docs).
-#   - Safe for sync/async handlers and critics.
+# Telemetry:
+#   - Spans: "mcp.planner", "mcp.echo", "mcp.docs", "mcp.codex", "mcp.control"
+#     Attributes: dep, request.id, {files.count, topics.count} where relevant
+#   - Metrics (services/telemetry): relay_connectivity_calls_total, relay_connectivity_latency_ms (Histogram),
+#                                   relay_connectivity_errors_total, relay_connectivity_circuit_state
+#
+# Safety & performance:
+#   - No unbounded strings (truncate very large serialized objects)
+#   - Retry only on likely transient classes (408/429/5xx, etc.)
+#   - Legacy agent signatures supported via adapters
+#
+# Dependencies expected in your repo:
+#   - agents.planner_agent, agents.echo_agent, agents.docs_agent, agents.codex_agent, agents.control_agent
+#   - core.logging.log_event
+#   - OPTIONAL: services.telemetry.{tracer, record_dep_call, set_circuit_state}
 
 from __future__ import annotations
 
 import asyncio
-import traceback
-import uuid
-from time import monotonic
-from typing import Any, Dict, List, Optional, Callable, Tuple
+import json
+import random
+import time
+from typing import Any, Dict, Optional, Callable, Awaitable
 
 from core.logging import log_event
-from services.context_injector import build_context
+from agents import planner_agent, echo_agent, docs_agent, codex_agent, control_agent
 
-# ── Optional agent imports (soft deps; keep startup resilient) ──────────────
+# Optional telemetry helper (no-op safe)
 try:
-    from agents.planner_agent import planner_agent
-except Exception:  # pragma: no cover
-    planner_agent = None  # type: ignore
-
-try:
-    from agents.echo_agent import run as echo_agent_run
-except Exception:  # pragma: no cover
-    echo_agent_run = None  # type: ignore
-
-try:
-    from agents.codex_agent import handle as codex_handle
-except Exception:  # pragma: no cover
-    codex_handle = None  # type: ignore
-
-try:
-    from agents.docs_agent import analyze as docs_analyze
-except Exception:  # pragma: no cover
-    docs_analyze = None  # type: ignore
-
-try:
-    from agents.control_agent import run as control_run
-except Exception:  # pragma: no cover
-    control_run = None  # type: ignore
-
-try:
-    from agents.memory_agent import run as memory_run
-except Exception:  # pragma: no cover
-    memory_run = None  # type: ignore
-
-try:
-    from agents.simulation_agent import run as simulate_run
-except Exception:  # pragma: no cover
-    simulate_run = None  # type: ignore
-
-try:
-    from agents.janitor_agent import run as janitor_run
-except Exception:  # pragma: no cover
-    janitor_run = None  # type: ignore
-
-try:
-    from agents.metaplanner_agent import suggest_route
-except Exception:  # pragma: no cover
-    suggest_route = None  # type: ignore
-
-try:
-    from agents.critic_agent.run import run_critics
-except Exception:  # pragma: no cover
-    run_critics = None  # type: ignore
-
-try:
-    from services.queue import queue_action
-except Exception:  # pragma: no cover
-    queue_action = None  # type: ignore
-
-# ── Route table (handlers may be None) ──────────────────────────────────────
-ROUTING_TABLE: Dict[str, Optional[Callable[..., Any]]] = {
-    "codex": codex_handle,
-    "docs": docs_analyze,
-    "control": control_run,
-    "memory": memory_run,
-    "simulate": simulate_run,
-    "janitor": janitor_run,
-    # "echo" is handled explicitly to pass plan when present.
-}
-
-# Routes that benefit from receiving the plan (docs is intentionally excluded)
-ROUTES_ACCEPT_PLAN = {"echo", "codex", "control", "memory", "simulate", "janitor"}
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-
-def _handler_exists(fn: Optional[Callable[..., Any]]) -> bool:
-    return callable(fn)
-
-def _route_accepts_plan(route: str) -> bool:
-    return route in ROUTES_ACCEPT_PLAN
-
-def _ms(delta_s: float) -> int:
-    return int(round(delta_s * 1000))
-
-def _best_string(x: Any) -> Optional[str]:
-    """
-    Extract a human-readable answer string from common LLM/agent shapes.
-    Returns None if nothing usable.
-    """
-    if isinstance(x, str):
-        s = x.strip()
-        return s if s else None
-    if not isinstance(x, dict) or x is None:
+    from services.telemetry import tracer as _otel_tracer, record_dep_call, set_circuit_state
+    from opentelemetry.trace.status import Status, StatusCode  # type: ignore
+except Exception:  # pragma: no cover - keeps import optional
+    def _otel_tracer():
         return None
+    def record_dep_call(*args, **kwargs):
+        return None
+    def set_circuit_state(*args, **kwargs):
+        return None
+    class StatusCode:  # type: ignore
+        OK = "OK"
+        ERROR = "ERROR"
+    class Status:  # type: ignore
+        def __init__(self, *_args, **_kwargs):
+            pass
 
-    # Common fields
-    for k in ("text", "message", "content"):
-        v = x.get(k)
-        if isinstance(v, str) and v.strip():
-            return v.strip()
+# ------------------------------- Utilities -------------------------------------
 
-    # OpenAI-like
-    choices = x.get("choices")
-    if isinstance(choices, list) and choices:
-        msg = (choices[0] or {}).get("message", {})
-        if isinstance(msg, dict):
-            content = msg.get("content")
-            if isinstance(content, str) and content.strip():
-                return content.strip()
+_TRANSIENT_STATUS = {408, 423, 425, 429, 500, 502, 503, 504}
+_MAX_JSON_LEN = 20000  # guardrail for stringifying bulky objects
 
-    # Anthropic-like
-    content = x.get("content")
-    if isinstance(content, list) and content:
-        first = content[0] or {}
-        text = first.get("text")
-        if isinstance(text, str) and text.strip():
-            return text.strip()
 
-    return None
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+def _jitter_backoff_sec(attempt: int, base: float = 0.25, cap: float = 2.5) -> float:
+    """Exponential backoff with full jitter (AWS style)."""
+    # min(cap, base * 2^attempt) * random[0,1)
+    return min(cap, base * (2 ** attempt)) * random.random()
+
+
+def _is_str(x: Any) -> bool:
+    return isinstance(x, str)
+
+
+def _safe_json(obj: Any) -> str:
+    try:
+        s = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        s = str(obj)
+    return s if len(s) <= _MAX_JSON_LEN else s[:_MAX_JSON_LEN] + "…"
+
+
+def _as_str(x: Any) -> str:
+    if x is None:
+        return ""
+    if isinstance(x, str):
+        return x
+    if isinstance(x, (bytes, bytearray)):
+        try:
+            return x.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+    return _safe_json(x)
+
+
+def _best_string(payload: Any) -> str:
+    """
+    Choose a human-readable string from a wide variety of payload shapes.
+    Priority: 'text' → 'answer' → response.text/content/summary → response → compact JSON.
+    """
+    if payload is None:
+        return ""
+    if isinstance(payload, dict):
+        for k in ("text", "answer"):
+            v = payload.get(k)
+            if _is_str(v) and v.strip():
+                return v.strip()
+        resp = payload.get("response")
+        if _is_str(resp) and resp.strip():
+            return resp.strip()
+        if isinstance(resp, dict):
+            for k in ("text", "content", "message", "summary", "recommendation"):
+                v = resp.get(k)
+                if _is_str(v) and v.strip():
+                    return v.strip()
+        return _as_str(payload)
+    return _as_str(payload)
+
 
 def _normalize_routed_result(raw: Any) -> Dict[str, Any]:
     """
-    Ensure routed_result is a dict with {response, answer}.
+    Normalize routed result to a stable UI-friendly shape.
+    Ensures 'text' and/or 'answer' are present and that original payload is accessible as 'response'.
     """
-    return {
-        "response": raw,
-        "answer": _best_string(raw),
-    }
+    if raw is None:
+        return {"text": "", "answer": "", "response": None, "error": None}
 
-def _extract_artifact_for_critics(route: str, routed_result: Any) -> Dict[str, Any]:
+    if isinstance(raw, dict):
+        text = _as_str(raw.get("text")) if raw.get("text") is not None else ""
+        answer = _as_str(raw.get("answer")) if raw.get("answer") is not None else ""
+        if not (text or answer):
+            derived = _best_string(raw)
+            if derived:
+                text = derived
+        response = raw if raw.get("response") is None else raw.get("response")
+        err = raw.get("error")
+        if err is not None and not _is_str(err):
+            err = _as_str(err)
+        return {
+            "text": (text or "").strip(),
+            "answer": (answer or "").strip(),
+            "response": response,
+            "error": err if err else None,
+        }
+
+    s = _best_string(raw)
+    return {"text": s, "answer": s, "response": raw, "error": None}
+
+
+def _looks_transient(exc: Exception) -> bool:
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int) and status in _TRANSIENT_STATUS:
+        return True
+    code = getattr(exc, "code", None)
+    if isinstance(code, int) and code in _TRANSIENT_STATUS:
+        return True
+    msg = str(exc).lower()
+    return any(t in msg for t in ("timed out", "timeout", "rate limit", "temporar", "unavailable", "try again"))
+
+
+async def _call_with_deadline_and_retries(
+    func: Callable[..., Awaitable[Any]],
+    transient_pred: Callable[[Exception], bool],
+    timeout_s: int,
+    attempts: int = 3,
+    *args,
+    **kwargs,
+) -> Any:
     """
-    Map routed_result into an artifact for critics. Best-effort / resilient.
+    Run func with a hard per-call deadline and limited retries for transient failures.
     """
-    # routed_result may already be normalized
-    if isinstance(routed_result, dict) and "response" in routed_result:
-        rr = routed_result["response"]
-    else:
-        rr = routed_result
-
-    if not isinstance(rr, dict):
-        return {"result": str(rr)}
-
-    # Known shapes by route
-    if route == "codex" and "action" in rr:
-        return rr["action"]
-    if route == "docs" and "analysis" in rr:
-        return rr["analysis"]
-    if "plan" in rr and isinstance(rr["plan"], dict):
-        return rr["plan"]
-
-    return rr
-
-def _merge_meta(
-    base: Dict[str, Any],
-    *,
-    request_id: str,
-    route: str,
-    plan_id: Optional[str],
-    timings_ms: Dict[str, int],
-    upstream_meta: Optional[Dict[str, Any]] = None,
-    planner_diag: Optional[Dict[str, Any]] = None,
-    reply_head: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Merge standard and upstream metadata into the outgoing envelope.
-    Exposes reply_head (planner final_answer) for UI/controller fallbacks.
-    """
-    meta: Dict[str, Any] = {
-        "request_id": request_id,
-        "origin": route,             # explicitly set origin to route used
-        "route": route,
-        "plan_id": plan_id,
-        "timings_ms": timings_ms,
-    }
-
-    details: Dict[str, Any] = {}
-    if reply_head:
-        details["reply_head"] = reply_head
-    if details:
-        meta["details"] = details
-
-    if planner_diag:
-        meta["planner_diag"] = planner_diag
-
-    if upstream_meta and isinstance(upstream_meta, dict):
-        # Preserve useful upstream keys without clobbering ours
-        for k, v in upstream_meta.items():
-            if v is None:
-                continue
-            if k in ("origin", "route"):  # our origin/route reflect *current* dispatch
-                continue
-            if k == "details":
-                # merge details objects
-                up_d = v if isinstance(v, dict) else {"upstream_details": v}
-                cur_d = meta.setdefault("details", {})
-                for dk, dv in up_d.items():
-                    if dv is not None and dk not in cur_d:
-                        cur_d[dk] = dv
-            elif k not in meta:
-                meta[k] = v
-
-    base["meta"] = meta
-    return meta
-
-async def _call_handler(handler: Callable[..., Any], **kwargs) -> Any:
-    """
-    Call a handler that could be sync or async.
-    """
-    res = handler(**kwargs)
-    if asyncio.iscoroutine(res):
-        return await res
-    return res
+    last_exc: Optional[Exception] = None
+    for i in range(1, attempts + 1):
+        try:
+            async with asyncio.timeout(timeout_s):
+                return await func(*args, **kwargs)
+        except asyncio.TimeoutError:
+            # Immediate fail if phase deadline exceeded
+            raise
+        except Exception as e:
+            last_exc = e
+            if i >= attempts or not transient_pred(e):
+                raise
+            await asyncio.sleep(_jitter_backoff_sec(i))
+    if last_exc:
+        raise last_exc
 
 
-# ── Public API ──────────────────────────────────────────────────────────────
+# ------------------------------ Agent adapters ----------------------------------
 
-async def run_mcp(
+async def _planner_plan(
     query: str,
-    role: str = "planner",
-    files: Optional[List[str]] = None,
-    topics: Optional[List[str]] = None,
-    user_id: str = "anonymous",
-    debug: bool = False,
+    files: list[str],
+    topics: list[str],
+    *,
+    debug: bool,
+    timeout_s: int,
+    max_context_tokens: Optional[int],
+    request_id: Optional[str],
 ) -> Dict[str, Any]:
     """
-    Main entry for the /ask pipeline. Returns a stable envelope:
-
-    {
-      "plan": <dict|None>,
-      "routed_result": {"response": <raw>, "answer": <string|None>} | <legacy raw on early failures>,
-      "critics": <dict|None>,
-      "context": <str>,
-      "files_used": <list>,
-      "meta": {request_id, origin, route, plan_id, timings_ms, details.reply_head?},
-      "error": <str|None>
-    }
+    Adapter for planner_agent. Adds telemetry and tolerates legacy signatures.
     """
-    request_id = str(uuid.uuid4())
-    files = files or []
-    topics = topics or []
-    timings: Dict[str, int] = {}
+    async def _call_pref(**kw):
+        return await planner_agent.plan(**kw)  # type: ignore[attr-defined]
 
-    log_event(
-        "mcp_start",
-        {"request_id": request_id, "role": role, "files": len(files), "topics": len(topics), "debug": debug},
+    tr = _otel_tracer()
+    t0 = _now_ms()
+    if tr:
+        with tr.start_as_current_span("mcp.planner") as span:  # connectivity span
+            span.set_attribute("dep", "planner")
+            span.set_attribute("request.id", request_id or "")
+            span.set_attribute("files.count", len(files))
+            span.set_attribute("topics.count", len(topics))
+            try:
+                res = await _call_with_deadline_and_retries(
+                    _call_pref, _looks_transient, timeout_s,
+                    query=query, files=files, topics=topics, debug=debug,
+                    timeout_s=timeout_s, max_context_tokens=max_context_tokens, request_id=request_id
+                )
+                record_dep_call("planner", "planner", _now_ms() - t0, True, {"status": "ok"})
+                span.set_status(Status(StatusCode.OK))
+                return res or {}
+            except TypeError:
+                # legacy signature
+                try:
+                    res = await _call_with_deadline_and_retries(
+                        lambda **kw: planner_agent.plan(**kw), _looks_transient, timeout_s,
+                        query=query, files=files, topics=topics, debug=debug
+                    )
+                    record_dep_call("planner", "planner", _now_ms() - t0, True, {"status": "ok_legacy"})
+                    span.set_status(Status(StatusCode.OK))
+                    return res or {}
+                except Exception as e:
+                    record_dep_call("planner", "planner", _now_ms() - t0, False, {"error": type(e).__name__})
+                    span.record_exception(e); span.set_status(Status(StatusCode.ERROR))
+                    raise
+            except Exception as e:
+                record_dep_call("planner", "planner", _now_ms() - t0, False, {"error": type(e).__name__})
+                span.record_exception(e); span.set_status(Status(StatusCode.ERROR))
+                raise
+
+    # Fallback without tracer
+    try:
+        return await _call_with_deadline_and_retries(
+            _call_pref, _looks_transient, timeout_s,
+            query=query, files=files, topics=topics, debug=debug,
+            timeout_s=timeout_s, max_context_tokens=max_context_tokens, request_id=request_id
+        ) or {}
+    except TypeError:
+        return await _call_with_deadline_and_retries(
+            lambda **kw: planner_agent.plan(**kw), _looks_transient, timeout_s,
+            query=query, files=files, topics=topics, debug=debug
+        ) or {}
+
+
+async def _echo_answer(
+    query: str, context: Dict[str, Any], *, debug: bool, timeout_s: int, request_id: Optional[str]
+) -> Any:
+    async def _call(**kw):
+        if hasattr(echo_agent, "answer"):
+            return await echo_agent.answer(**kw)  # type: ignore[attr-defined]
+        return await echo_agent.respond(**kw)     # type: ignore[attr-defined]
+
+    tr = _otel_tracer(); t0 = _now_ms()
+    if tr:
+        with tr.start_as_current_span("mcp.echo") as span:
+            span.set_attribute("dep", "echo")
+            span.set_attribute("request.id", request_id or "")
+            try:
+                res = await _call_with_deadline_and_retries(
+                    _call, _looks_transient, timeout_s,
+                    query=query, context=context, debug=debug, request_id=request_id
+                )
+                record_dep_call("echo", "echo", _now_ms() - t0, True, {"status": "ok"})
+                span.set_status(Status(StatusCode.OK))
+                return res
+            except Exception as e:
+                record_dep_call("echo", "echo", _now_ms() - t0, False, {"error": type(e).__name__})
+                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
+
+    return await _call_with_deadline_and_retries(
+        _call, _looks_transient, timeout_s, query=query, context=context, debug=debug, request_id=request_id
     )
 
-    # 1) Build context (never fatal)
-    t0 = monotonic()
-    try:
-        ctx_res = await build_context(query=query, files=files, topics=topics, debug=debug)
-        if isinstance(ctx_res, dict):
-            context = ctx_res.get("context", "") or ""
-            files_used = ctx_res.get("files_used", []) or []
-            upstream_meta = ctx_res.get("meta") if isinstance(ctx_res.get("meta"), dict) else None
-        else:
-            context = str(ctx_res)
-            files_used = []
-            upstream_meta = None
-    except Exception as e:
-        timings["context_ms"] = _ms(monotonic() - t0)
-        log_event("mcp_context_error", {"request_id": request_id, "error": str(e), "trace": traceback.format_exc()})
-        # graceful fallback to echo
-        if _handler_exists(echo_agent_run):
-            routed_raw = await echo_agent_run(query=query, context="", user_id=user_id)
-            routed_result = _normalize_routed_result(routed_raw)
-        else:
-            routed_result = {"response": {"error": "Context failed and echo unavailable."}, "answer": None}
 
-        envelope = {
-            "plan": None,
-            "routed_result": routed_result,
-            "critics": None,
-            "context": "",
-            "files_used": [],
-            "error": "Failed to build context.",
-        }
-        _merge_meta(
-            envelope,
-            request_id=request_id,
-            route="echo",
-            plan_id=None,
-            timings_ms=timings,
-            upstream_meta=routed_result.get("meta") if isinstance(routed_result, dict) else None,
-        )
-        return envelope
+async def _docs_summarize(
+    query: str, files: list[str], *, debug: bool, timeout_s: int, request_id: Optional[str]
+) -> Any:
+    async def _call(**kw):
+        for name in ("summarize", "analyze", "run", "answer"):
+            if hasattr(docs_agent, name):
+                return await getattr(docs_agent, name)(**kw)  # type: ignore[misc]
+        raise RuntimeError("docs agent has no callable entrypoint")
 
-    timings["context_ms"] = _ms(monotonic() - t0)
-
-    # 2) Planner + (optional) meta-route selector
-    t_plan = monotonic()
-    try:
-        if role == "planner":
-            # 2a) Plan (JSON mode)
-            if planner_agent is None:
-                log_event("mcp_missing_planner", {"request_id": request_id})
-                plan: Dict[str, Any] = {"route": "echo", "objective": "[no planner available]"}
-            else:
-                plan = await planner_agent.ask(query=query, context=context)  # type: ignore
-
-            timings["planner_ms"] = _ms(monotonic() - t_plan)
-            plan_id = (plan or {}).get("plan_id")
-            route = (plan or {}).get("route", "echo")
-            reply_head = plan.get("final_answer") if isinstance(plan, dict) else None
-
-            # 2b) Meta-planner suggestion (non-fatal)
-            if suggest_route:
-                try:
-                    suggested = await suggest_route(query=query, plan=plan, user_id=user_id)  # type: ignore
-                    if suggested and suggested != route:
-                        log_event("mcp_meta_override", {"request_id": request_id, "from": route, "to": suggested, "plan_id": plan_id})
-                        route = suggested
-                        plan["meta_override"] = route
-                except Exception as meta_exc:
-                    log_event("mcp_metaplanner_error", {"request_id": request_id, "error": str(meta_exc), "plan_id": plan_id})
-
-            # 2c) Dispatch to chosen route
-            t_dispatch = monotonic()
+    tr = _otel_tracer(); t0 = _now_ms()
+    if tr:
+        with tr.start_as_current_span("mcp.docs") as span:
+            span.set_attribute("dep", "docs")
+            span.set_attribute("request.id", request_id or "")
             try:
-                if route in ROUTING_TABLE and _handler_exists(ROUTING_TABLE[route]):
-                    handler = ROUTING_TABLE[route]
-                    # Build kwargs and include `plan` ONLY if this route accepts it
-                    kwargs = {"query": query, "context": context, "user_id": user_id}
-                    if _route_accepts_plan(route):
-                        kwargs["plan"] = plan
-                    routed_raw = await _call_handler(handler, **kwargs)  # type: ignore
-                else:
-                    # Unknown/unsupported route → Echo with plan so it can use final_answer
-                    if _handler_exists(echo_agent_run):
-                        routed_raw = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
-                        route = "echo"
-                    else:
-                        routed_raw = {"error": f"Unknown or unsupported route '{route}', echo unavailable."}
-            except Exception as agent_exc:
-                # Handler error → fall back to Echo (best-effort)
-                log_event(
-                    "mcp_agent_handler_error",
-                    {"request_id": request_id, "route": route, "error": str(agent_exc), "trace": traceback.format_exc(), "plan_id": plan_id},
+                res = await _call_with_deadline_and_retries(
+                    _call, _looks_transient, timeout_s,
+                    query=query, files=files, debug=debug, request_id=request_id
                 )
-                if _handler_exists(echo_agent_run):
-                    routed_raw = await echo_agent_run(query=query, context=context, user_id=user_id, plan=plan)
-                    route = "echo"
-                else:
-                    routed_raw = {"error": f"Route '{route}' failed and echo unavailable."}
+                record_dep_call("docs", "docs", _now_ms() - t0, True, {"status": "ok"})
+                span.set_status(Status(StatusCode.OK)); return res
+            except Exception as e:
+                record_dep_call("docs", "docs", _now_ms() - t0, False, {"error": type(e).__name__})
+                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
 
-            timings["dispatch_ms"] = _ms(monotonic() - t_dispatch)
+    return await _call_with_deadline_and_retries(
+        _call, _looks_transient, timeout_s, query=query, files=files, debug=debug, request_id=request_id
+    )
 
-            # Normalize routed result early
-            routed_result = _normalize_routed_result(routed_raw)
 
-            # 2d) Critics (best-effort, non-fatal; sync/async-safe)
-            critics = None
-            t_crit = monotonic()
-            if run_critics:
-                try:
-                    artifact = _extract_artifact_for_critics(route, routed_result)
-                    res = run_critics(plan=artifact, query=query)  # may be sync or async
-                    critics = await res if asyncio.iscoroutine(res) else res  # type: ignore
-                except Exception as crit_exc:
-                    log_event("mcp_critics_error", {"request_id": request_id, "route": route, "error": str(crit_exc)})
-            timings["critics_ms"] = _ms(monotonic() - t_crit)
+async def _codex_run(
+    query: str, files: list[str], topics: list[str], *, debug: bool, timeout_s: int, request_id: Optional[str]
+) -> Any:
+    async def _call(**kw):
+        for name in ("run", "answer", "execute"):
+            if hasattr(codex_agent, name):
+                return await getattr(codex_agent, name)(**kw)  # type: ignore[misc]
+        raise RuntimeError("codex agent has no callable entrypoint")
 
-            # 2e) Optional queue action (non-fatal)
-            if queue_action and isinstance(routed_result.get("response"), dict) and "action" in routed_result["response"]:
-                try:
-                    queue_action(routed_result["response"]["action"])  # type: ignore
-                    log_event("mcp_action_queued", {
-                        "request_id": request_id,
-                        "route": route,
-                        "action_keys": list(routed_result["response"]["action"].keys())})
-                except Exception as qerr:
-                    log_event("mcp_action_queue_error", {"request_id": request_id, "route": route, "error": str(qerr)})
+    tr = _otel_tracer(); t0 = _now_ms()
+    if tr:
+        with tr.start_as_current_span("mcp.codex") as span:
+            span.set_attribute("dep", "codex")
+            span.set_attribute("request.id", request_id or "")
+            try:
+                res = await _call_with_deadline_and_retries(
+                    _call, _looks_transient, timeout_s,
+                    query=query, files=files, topics=topics, debug=debug, request_id=request_id
+                )
+                record_dep_call("codex", "codex", _now_ms() - t0, True, {"status": "ok"})
+                span.set_status(Status(StatusCode.OK)); return res
+            except Exception as e:
+                record_dep_call("codex", "codex", _now_ms() - t0, False, {"error": type(e).__name__})
+                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
 
-            # Envelope + meta
-            envelope: Dict[str, Any] = {
-                "plan": plan,
-                "routed_result": routed_result,
-                "critics": critics,
-                "context": context,
-                "files_used": files_used,
-            }
-            upstream_meta = routed_result["response"].get("meta") if isinstance(routed_result.get("response"), dict) else upstream_meta
-            planner_diag = plan.get("_diag") if isinstance(plan, dict) else None
+    return await _call_with_deadline_and_retries(
+        _call, _looks_transient, timeout_s, query=query, files=files, topics=topics, debug=debug, request_id=request_id
+    )
 
-            _merge_meta(
-                envelope,
-                request_id=request_id,
-                route=route,
-                plan_id=plan_id,
-                timings_ms=timings,
-                upstream_meta=upstream_meta,
-                planner_diag=planner_diag if isinstance(planner_diag, dict) else None,
-                reply_head=reply_head if isinstance(reply_head, str) and reply_head.strip() else None,
+
+async def _control_run(
+    query: str, topics: list[str], *, debug: bool, timeout_s: int, request_id: Optional[str]
+) -> Any:
+    async def _call(**kw):
+        for name in ("run", "answer", "execute"):
+            if hasattr(control_agent, name):
+                return await getattr(control_agent, name)(**kw)  # type: ignore[misc]
+        raise RuntimeError("control agent has no callable entrypoint")
+
+    tr = _otel_tracer(); t0 = _now_ms()
+    if tr:
+        with tr.start_as_current_span("mcp.control") as span:
+            span.set_attribute("dep", "control")
+            span.set_attribute("request.id", request_id or "")
+            try:
+                res = await _call_with_deadline_and_retries(
+                    _call, _looks_transient, timeout_s,
+                    query=query, topics=topics, debug=debug, request_id=request_id
+                )
+                record_dep_call("control", "control", _now_ms() - t0, True, {"status": "ok"})
+                span.set_status(Status(StatusCode.OK)); return res
+            except Exception as e:
+                record_dep_call("control", "control", _now_ms() - t0, False, {"error": type(e).__name__})
+                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
+
+    return await _call_with_deadline_and_retries(
+        _call, _looks_transient, timeout_s, query=query, topics=topics, debug=debug, request_id=request_id
+    )
+
+
+# ------------------------------ Public entrypoint -------------------------------
+
+async def run_mcp(
+    *,
+    query: str,
+    files: Optional[list[str]] = None,
+    topics: Optional[list[str]] = None,
+    role: Optional[str] = "planner",
+    user_id: Optional[str] = None,   # reserved
+    debug: bool = False,
+    timeout_s: int = 45,
+    max_context_tokens: Optional[int] = 120_000,
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Orchestrate planner → routed agent, normalize outputs, attach meta & connectivity telemetry.
+    Routes should still call finalize_envelope(...) to guarantee final_text.
+    """
+    t0 = _now_ms()
+    files = files or []
+    topics = topics or []
+
+    # --- Phase 1: Planner (unless role override provided)
+    do_planner = role in (None, "planner")
+    plan: Dict[str, Any] = {}
+    route: str = role or "planner"
+    plan_id: Optional[str] = None
+    reply_head: Optional[str] = None
+
+    # Budget split: ~45% planner, remainder routed (ensures both phases have time)
+    planner_budget = max(1, int(timeout_s * 0.45))
+    routed_budget = max(1, timeout_s - planner_budget)
+
+    if do_planner:
+        pt0 = _now_ms()
+        try:
+            plan = await _planner_plan(
+                query, files, topics,
+                debug=debug,
+                timeout_s=planner_budget,
+                max_context_tokens=max_context_tokens,
+                request_id=request_id
             )
-            return envelope
+        except asyncio.TimeoutError:
+            plan = {"route": "echo", "final_answer": None, "error": "planner_timeout"}
+        except Exception as e:
+            plan = {"route": "echo", "final_answer": None, "error": f"planner_error:{type(e).__name__}"}
+        pt1 = _now_ms()
+        route = plan.get("route") or "echo"
+        plan_id = plan.get("plan_id")
+        reply_head = (plan.get("final_answer") or "") or None
+    else:
+        pt0 = pt1 = _now_ms()
 
-        # 3) role != "planner": direct dispatch (no plan computed)
-        t_role = monotonic()
-        if role in ROUTING_TABLE and _handler_exists(ROUTING_TABLE[role]):
-            try:
-                handler = ROUTING_TABLE[role]
-                routed_raw = await _call_handler(  # type: ignore
-                    handler, query=query, context=context, user_id=user_id
-                )
-                route_used = role
-            except Exception as agent_exc:
-                log_event(
-                    "mcp_agent_handler_error",
-                    {"request_id": request_id, "role": role, "route": role, "error": str(agent_exc), "trace": traceback.format_exc()},
-                )
-                if _handler_exists(echo_agent_run):
-                    routed_raw = await echo_agent_run(query=query, context=context, user_id=user_id)
-                    route_used = "echo"
-                else:
-                    routed_raw = {"error": f"Role '{role}' failed and echo unavailable."}
-                    route_used = role
+    # Explicit role override (docs/codex/control/echo)
+    if role and role not in ("planner",):
+        route = role
+
+    # --- Phase 2: Routed agent
+    rt0 = _now_ms()
+    routed_raw: Any = None
+    try:
+        phase_budget = max(1, routed_budget)
+        if route == "echo":
+            ctx = {"plan": plan, "files": files, "topics": topics}
+            routed_raw = await _echo_answer(query, ctx, debug=debug, timeout_s=phase_budget, request_id=request_id)
+        elif route == "docs":
+            routed_raw = await _docs_summarize(query, files, debug=debug, timeout_s=phase_budget, request_id=request_id)
+        elif route == "codex":
+            routed_raw = await _codex_run(query, files, topics, debug=debug, timeout_s=phase_budget, request_id=request_id)
+        elif route == "control":
+            routed_raw = await _control_run(query, topics, debug=debug, timeout_s=phase_budget, request_id=request_id)
         else:
-            if _handler_exists(echo_agent_run):
-                routed_raw = await echo_agent_run(query=query, context=context, user_id=user_id)
-                route_used = "echo"
-            else:
-                routed_raw = {"error": f"Unknown role '{role}', echo unavailable."}
-                route_used = role
-        timings["dispatch_ms"] = _ms(monotonic() - t_role)
-
-        routed_result = _normalize_routed_result(routed_raw)
-
-        envelope = {
-            "plan": None,
-            "routed_result": routed_result,
-            "critics": None,
-            "context": context,
-            "files_used": files_used,
-            "error": f"Unknown role: {role}" if route_used != role and role not in ROUTING_TABLE else None,
-        }
-        upstream_meta = routed_result["response"].get("meta") if isinstance(routed_result.get("response"), dict) else None
-        _merge_meta(
-            envelope,
-            request_id=request_id,
-            route=route_used,
-            plan_id=None,
-            timings_ms=timings,
-            upstream_meta=upstream_meta,
-        )
-        return envelope
-
-    # 4) Final safety net (never throw)
+            # Unknown route → echo fallback with context note
+            ctx = {"plan": plan, "files": files, "topics": topics, "note": f"unknown route '{route}'"}
+            routed_raw = await _echo_answer(query, ctx, debug=debug, timeout_s=phase_budget, request_id=request_id)
+            route = "echo"
+    except asyncio.TimeoutError:
+        routed_raw = {"error": f"{route}_timeout", "text": f"{route} timed out while processing."}
     except Exception as e:
-        log_event("mcp_exception", {"request_id": request_id, "role": role, "error": str(e), "trace": traceback.format_exc()})
-        if _handler_exists(echo_agent_run):
-            routed_raw = await echo_agent_run(query=query, context=context, user_id=user_id)
-            route_used = "echo"
-        else:
-            routed_raw = {"error": "MCP failed and echo unavailable."}
-            route_used = role
+        routed_raw = {"error": f"{route}_error:{type(e).__name__}", "text": f"{route} failed: {str(e)}"}
+    rt1 = _now_ms()
 
-        routed_result = _normalize_routed_result(routed_raw)
+    # --- Normalization & meta
+    routed_result = _normalize_routed_result(routed_raw)
+    meta = {
+        "origin": "mcp",
+        "route": route,
+        "plan_id": plan_id,
+        "request_id": request_id,
+        "timings_ms": {
+            "total": _now_ms() - t0,
+            "planner": max(0, pt1 - pt0),
+            "routed": max(0, rt1 - rt0),
+        },
+        "details": {"reply_head": reply_head},
+    }
 
-        envelope = {
-            "plan": None,
-            "routed_result": routed_result,
-            "critics": None,
-            "context": context if "context" in locals() else "",
-            "files_used": files_used if "files_used" in locals() else [],
-            "error": f"Failed to execute role '{role}'.",
-        }
-        upstream_meta = routed_result["response"].get("meta") if isinstance(routed_result.get("response"), dict) else None
-        _merge_meta(
-            envelope,
-            request_id=request_id,
-            route=route_used,
-            plan_id=None,
-            timings_ms=timings,
-            upstream_meta=upstream_meta,
-        )
-        return envelope
+    log_event("mcp_orchestrated", {
+        "route": route,
+        "plan_id": plan_id,
+        "planner_has_final": bool(reply_head),
+        "routed_has_answer": bool((routed_result.get("answer") or routed_result.get("text") or "").strip()),
+        "timings_ms": meta["timings_ms"],
+        "request_id": request_id,
+    })
+
+    return {"plan": plan, "routed_result": routed_result, "meta": meta}
