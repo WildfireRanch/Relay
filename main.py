@@ -1,9 +1,19 @@
 # File: main.py
 # Purpose: FastAPI entrypoint for Relay Command Center (ask, control, status, docs, webhooks, integrations)
+# Notes:
+#   - /health: pure liveness (always 200) — good for Railway healthcheck
+#   - /ready: strict readiness (503 until required env/dirs exist)
+#   - OpenTelemetry: OTLP/HTTP exporter enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set
+#   - OTel instrumentation is idempotent and happens AFTER app creation
+#   - No import-time instrumentation to avoid "already instrumented" warnings
 
 from __future__ import annotations
 
-import os, sys, logging, time, subprocess
+import os
+import sys
+import logging
+import time
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,18 +21,16 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 
-# ── Local dev: load .env ─────────────────────────────────────────────────────
+# ── Local dev: load .env (no-op in prod) ─────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:
-        from dotenv import load_dotenv
+        from dotenv import load_dotenv  # type: ignore
         load_dotenv()
         logging.info("✅ Loaded .env for local development")
     except Exception:
@@ -40,41 +48,45 @@ logging.basicConfig(
 )
 log = logging.getLogger("relay.main")
 
-# ── Ensure working dirs exist ────────────────────────────────────────────────
+# ── Ensure working dirs exist (before readiness checks) ──────────────────────
 for sub in ("docs/imported", "docs/generated", "logs/sessions", "data/index"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ── OpenTelemetry (OTLP) – traces + metrics; env-driven; best-effort ─────────
+# ── OpenTelemetry (OTLP/HTTP) best-effort init (no instrumentation yet) ─────
+#     Enable by setting:
+#       OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-collector.example:4318
+#     Optional:
+#       OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"
+#       OTEL_RESOURCE_ATTRIBUTES="service.version=1.0.0,deployment.environment=prod"
 OTEL_ENABLED = False
 try:
-    from opentelemetry import trace, metrics
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    from opentelemetry import trace, metrics  # type: ignore
+    from opentelemetry.sdk.resources import Resource  # type: ignore
+    from opentelemetry.sdk.trace import TracerProvider  # type: ignore
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore
+        OTLPSpanExporter,
+    )
 
-    # optional metrics (enable if you want)
-    # from opentelemetry.sdk.metrics import MeterProvider
-    # from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    # from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-    from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
+    # Optional metrics wiring (disabled by default)
+    # from opentelemetry.sdk.metrics import MeterProvider  # type: ignore
+    # from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader  # type: ignore
+    # from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # type: ignore
 
     SERVICE = os.getenv("OTEL_SERVICE_NAME", "relay-backend")
-    OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")  # e.g. https://otel-collector.yourdomain:4318
-    # Optional headers: OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"
+    OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
 
-    # Only enable if we have an endpoint or the platform injects one via env
     if OTLP_ENDPOINT:
         resource = Resource.create({"service.name": SERVICE})
         tp = TracerProvider(resource=resource)
         tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
         trace.set_tracer_provider(tp)
 
-        # Optional metrics
-        # mp = MeterProvider(resource=resource, metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())])
+        # Metrics example (uncomment to enable)
+        # mp = MeterProvider(
+        #     resource=resource,
+        #     metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())],
+        # )
         # metrics.set_meter_provider(mp)
 
         OTEL_ENABLED = True
@@ -86,39 +98,19 @@ except Exception as ex:
     log.warning("OTel init failed (%s: %s)", ex.__class__.__name__, ex)
     OTEL_ENABLED = False
 
-
-    # ---- Traces (OTLP/HTTP; reads OTEL_* env for endpoint/headers/etc.) ----
-    tp = TracerProvider(resource=resource)
-    #tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
-    trace.set_tracer_provider(tp)
-
-    # ---- Metrics (OTLP/HTTP) ----
-    #mr = PeriodicExportingMetricReader(OTLPMetricExporter())
-    #mp = MeterProvider(resource=resource, metric_readers=[mr])
-    #metrics.set_meter_provider(mp)
-
-    # ---- Auto-instrument (optional but recommended) ----
-    #if FastAPIInstrumentor:
-    #    try:
-    #        FastAPIInstrumentor.instrument_app(app)  # server request spans
-    #   except Exception:
-    #        pass
-    if HTTPXClientInstrumentor:
-        try:
-            HTTPXClientInstrumentor().instrument()
-        except Exception:
-            pass
-    if AioHttpClientInstrumentor:
-        try:
-            AioHttpClientInstrumentor().instrument()
-        except Exception:
-            pass
-
-    OTEL_ENABLED = True
-    log.info("🟣 OpenTelemetry on → OTLP (env-configured)")
-except Exception as ex:
-    log.warning("OTel disabled (%s: %s)", ex.__class__.__name__, ex)
-
+# We import instrumentation classes lazily later to avoid NameError if not installed
+try:
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore
+except Exception:
+    FastAPIInstrumentor = None  # type: ignore
+try:
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # type: ignore
+except Exception:
+    HTTPXClientInstrumentor = None  # type: ignore
+try:
+    from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor  # type: ignore
+except Exception:
+    AioHttpClientInstrumentor = None  # type: ignore
 
 # ── Request ID + timing middleware ───────────────────────────────────────────
 REQUEST_ID_HEADER = "X-Request-Id"
@@ -133,15 +125,18 @@ class RequestIDAndTimingMiddleware(BaseHTTPMiddleware):
         try:
             response: Response = await call_next(request)
         except Exception as e:
-            # Let global handler format; still emit timing log
             duration_ms = int((time.perf_counter() - start) * 1000)
-            log.info("req: method=%s path=%s rid=%s status=500 dur_ms=%d err=%s",
-                     request.method, request.url.path, rid, duration_ms, e.__class__.__name__)
+            log.info(
+                "req: method=%s path=%s rid=%s status=500 dur_ms=%d err=%s",
+                request.method, request.url.path, rid, duration_ms, e.__class__.__name__,
+            )
             raise
         duration_ms = int((time.perf_counter() - start) * 1000)
         response.headers[REQUEST_ID_HEADER] = rid
-        log.info("req: method=%s path=%s rid=%s status=%d dur_ms=%d",
-                 request.method, request.url.path, rid, response.status_code, duration_ms)
+        log.info(
+            "req: method=%s path=%s rid=%s status=%d dur_ms=%d",
+            request.method, request.url.path, rid, response.status_code, duration_ms,
+        )
         return response
 
 # ── Security headers middleware (lightweight) ────────────────────────────────
@@ -151,8 +146,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
         resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
         # HSTS only if behind TLS and not in local
-        if ENV_NAME != "local" and os.getenv("ENABLE_HSTS", "0") in ("1", "true", "yes"):
+        if ENV_NAME != "local" and os.getenv("ENABLE_HSTS", "0").lower() in ("1", "true", "yes"):
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return resp
 
@@ -161,6 +157,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI):
     from core.logging import log_event
     from services import kb
+
     # Warmers (best-effort; don’t block too long)
     try:
         from services.semantic_retriever import get_retriever  # if available
@@ -191,30 +188,24 @@ app = FastAPI(
 )
 
 # Middlewares
-# ── App ──────────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="Relay Command Center",
-    version="1.0.0",
-    description="Backend API for Relay agent – ask, control, status, docs, admin",
-    lifespan=lifespan,
-)
-
-# Middlewares
 app.add_middleware(RequestIDAndTimingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-# ---- OTel auto-instrumentation (idempotent) ----
+# ---- OTel auto-instrumentation (idempotent; after app exists) --------------
 if OTEL_ENABLED:
     try:
         if not getattr(app, "_otel_instrumented", False):
-            FastAPIInstrumentor().instrument_app(app)
-            HTTPXClientInstrumentor().instrument()
-            AioHttpClientInstrumentor().instrument()
-            app._otel_instrumented = True
+            if FastAPIInstrumentor:
+                FastAPIInstrumentor().instrument_app(app)
+            if HTTPXClientInstrumentor:
+                HTTPXClientInstrumentor().instrument()
+            if AioHttpClientInstrumentor:
+                AioHttpClientInstrumentor().instrument()
+            app._otel_instrumented = True  # type: ignore[attr-defined]
+            log.info("🟣 OTel instrumentation applied")
     except Exception as ex:
         log.warning("OTel instrumentation skipped: %s", ex)
-
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 def _parse_origins(raw: Optional[str]) -> List[str]:
@@ -295,7 +286,10 @@ from core.logging import log_event
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     rid = request.headers.get(REQUEST_ID_HEADER)
     log_event("http_exception", {"rid": rid, "code": exc.status_code, "detail": exc.detail, "path": request.url.path})
-    return JSONResponse({"status": "error", "code": exc.status_code, "detail": exc.detail, "request_id": rid}, status_code=exc.status_code)
+    return JSONResponse(
+        {"status": "error", "code": exc.status_code, "detail": exc.detail, "request_id": rid},
+        status_code=exc.status_code,
+    )
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
@@ -317,21 +311,26 @@ def root():
 
 @app.get("/live")
 def live():
+    # Liveness: always 200. Use this path for Railway healthcheck.
     return JSONResponse({"status": "ok", "env": ENV_NAME})
 
 @app.get("/ready")
 def ready():
+    # Readiness: 503 until required env + dirs exist.
     ok = True
     details: Dict[str, Any] = {}
 
-    # In prod, don’t disclose which keys exist; just return status
+    # Make OpenAI optional by env if desired.
+    require_openai = os.getenv("REQUIRE_OPENAI", "1").lower() in ("1", "true", "yes")
+    required_env = ["API_KEY"] + (["OPENAI_API_KEY"] if require_openai else [])
+
     if ENV_NAME == "local":
-        for key in ("API_KEY", "OPENAI_API_KEY"):
+        for key in required_env:
             present = bool(os.getenv(key))
             details[key] = present
             ok &= present
     else:
-        for key in ("API_KEY", "OPENAI_API_KEY"):
+        for key in required_env:
             ok &= bool(os.getenv(key))
 
     for sub in ("docs/imported", "docs/generated", "data/index"):
@@ -339,11 +338,14 @@ def ready():
         details[sub] = exists if ENV_NAME == "local" else "ok"
         ok &= exists
 
-    return JSONResponse({"status": "ok" if ok else "error", "details": details if ENV_NAME == "local" else {}}, status_code=200 if ok else 503)
+    return JSONResponse(
+        {"status": "ok" if ok else "error", "details": details if ENV_NAME == "local" else {}},
+        status_code=200 if ok else 503,
+    )
 
 @app.get("/health")
 def health():
-    # pure liveness, always 200
+    # Pure liveness (distinct from readiness)
     return JSONResponse({"status": "ok"})
 
 @app.options("/test-cors")
@@ -352,12 +354,13 @@ def test_cors():
 
 @app.get("/version")
 def version():
-    commit = "unknown"
-    try:
-        # Short timeout to avoid blocking containers lacking git
-        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], timeout=0.5).decode().strip()
-    except Exception:
-        pass
+    commit = os.getenv("GIT_SHA", "unknown")
+    if commit == "unknown":
+        try:
+            # Short timeout to avoid blocking containers lacking git
+            commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], timeout=0.5).decode().strip()
+        except Exception:
+            pass
     return {"git_commit": commit, "env": ENV_NAME}
 
 @app.get("/debug/routes")
@@ -372,6 +375,6 @@ if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", 8080)),
+        port=int(os.getenv("PORT", 8000)),  # Railway sets $PORT
         reload=(ENV_NAME == "local"),
     )
