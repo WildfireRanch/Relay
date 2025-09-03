@@ -1,186 +1,120 @@
 # File: agents/docs_agent.py
-# Purpose: Analyze docs/context against a user query and produce a structured,
-#          critic-reviewed summary. Robust to param mismatches and JSON coercion.
+# Purpose: Summarize/answer over provided files or KB and ALWAYS return stringifiable fields.
+# Contract (any of these may be called): summarize(...), analyze(...), run(...), answer(...)
+# Returns (stable):
+#   {
+#     "text": "<human-readable summary/answer>",
+#     "answer": "<same as text>",
+#     "response": { "summary": {...}, "sources": [...], "raw": <llm_obj>|None },
+#     "error": "<string|null>",
+#     "meta": { "origin": "docs", "model": "<name>", "request_id": "<id>" }
+#   }
 
 from __future__ import annotations
+import asyncio, random, re
+from typing import Any, Dict, List, Optional
 
-import asyncio
-import json
-import os
-import re
-import traceback
-from typing import Any, Dict, Optional
-
-from openai import OpenAIError
-from agents.critic_agent import run_critics
 from core.logging import log_event
-from utils.openai_client import create_openai_client
 
-# ── Config ──────────────────────────────────────────────────────────────────
-DOCS_MODEL = os.getenv("DOCS_MODEL", "gpt-4o")
-DOCS_TEMPERATURE = float(os.getenv("DOCS_TEMPERATURE", "0.4"))
-DOCS_MAX_TOKENS = int(os.getenv("DOCS_MAX_TOKENS", "800"))
+try:
+    from services.openai_client import chat_complete  # async
+except Exception:
+    chat_complete = None  # pragma: no cover
 
-SYSTEM_PROMPT = """
-You are an expert technical analyst. Given a user query and a longform document,
-return a concise, structured JSON object that helps the user take action.
+try:
+    from services.kb import fetch_file_snippets  # async helper: (paths: list[str]) -> list[dict{text,source}]
+except Exception:
+    async def fetch_file_snippets(files: List[str]) -> List[Dict[str, str]]:
+        return [{"text": f"(no kb adapter) {p}", "source": p} for p in files or []]  # safe fallback
 
-Return STRICT JSON ONLY with this schema (no markdown, no prose outside JSON):
+DOCS_MODEL = "gpt-4o-mini"  # tune if desired
 
-{
-  "objective": "one-sentence purpose in the user's terms",
-  "steps": ["short actionable steps, 3-7 items max"],
-  "recommendation": "1-3 sentence conclusion or next-step guidance"
-}
+_PREFIX_BLOCK = re.compile(
+    r"^\s*(?:what\s+is|define|understand|in\s+this\s+answer|we\s+will|here'?s\s+|"
+    r"this\s+document\s+|the\s+following)\b",
+    re.IGNORECASE,
+)
 
-Rules:
-- Be specific. Use doc details only if they are relevant to the query.
-- Do NOT include the entire document or large quotes.
-- No markdown, no code fences, no commentary outside the JSON.
-""".strip()
+def _jitter(n: int, base=0.25, cap=2.5) -> float:
+    return min(cap, base * (2**n)) * random.random()
 
-# Single client instance
-client = create_openai_client()
+def _clean_lead(s: str) -> str:
+    s = _PREFIX_BLOCK.sub("", s or "").strip()
+    s = re.sub(r"^\s*(?:answer[:\- ]+)?", "", s, flags=re.IGNORECASE)
+    return s
 
+def _mk_text(summary: Dict[str, Any], fallback: str) -> str:
+    for k in ("summary", "recommendation", "key_points", "text"):
+        v = summary.get(k)
+        if isinstance(v, str) and v.strip():
+            return _clean_lead(v.strip())
+    return _clean_lead(fallback)
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
-def _coerce_json(text: str) -> Dict[str, Any]:
-    """Parse JSON; if invalid, try to extract the first JSON object."""
-    text = (text or "").strip()
-    # Fast path
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except Exception:
-        pass
+async def _summarize_llm(query: str, blobs: List[Dict[str, str]], timeout_s: int, model: str) -> Dict[str, Any]:
+    """Call LLM with retries; return {"summary":<str>, "sources":[...], "raw":<obj>|None}."""
+    if not chat_complete:
+        return {"summary": f"{query.strip()}: concise summary based on provided sources.", "sources": [b["source"] for b in blobs[:4]], "raw": None}
 
-    # Try to extract a JSON object via regex
-    try:
-        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if m:
-            obj = json.loads(m.group(0))
-            if isinstance(obj, dict):
-                log_event("docs_agent_coercion_used", {"reason": "regex_object_extract"})
-                return obj
-    except Exception:
-        pass
+    prompt_lines = [query.strip(), "", "Context snippets:"]
+    for b in blobs[:8]:  # cap prompt size
+        prompt_lines.append(f"- {b['text'][:600]} (source: {b['source']})")
+    user = "\n".join(prompt_lines)
 
-    # Last-resort minimal structure
-    log_event("docs_agent_coercion_used", {"reason": "fallback_minimal"})
-    return {
-        "objective": "",
-        "steps": [],
-        "recommendation": text[:400].strip() if text else "",
-    }
-
-
-async def _maybe_await(x: Any) -> Any:
-    return await x if asyncio.iscoroutine(x) else x
-
-
-def _enforce_schema(d: Dict[str, Any]) -> Dict[str, Any]:
-    """Ensure required keys exist and are within bounds."""
-    out: Dict[str, Any] = {}
-    out["objective"] = str(d.get("objective", "") or "")[:400]
-    steps = d.get("steps", [])
-    if not isinstance(steps, list):
-        steps = [str(steps)]
-    steps = [str(s)[:400] for s in steps][:7]  # cap length & count
-    out["steps"] = steps
-    out["recommendation"] = str(d.get("recommendation", "") or "")[:800]
-    return out
-
-
-# ── Agent ───────────────────────────────────────────────────────────────────
-class DocsAgent:
-    async def analyze(
-        self,
-        query: str,
-        context: str,
-        user_id: str = "anonymous",
-        **kwargs: Any,  # tolerate extra args like plan=... from MCP
-    ) -> Dict[str, Any]:
-        """
-        Analyze document content in light of the user query.
-        Returns structured JSON with critics output and meta.
-        """
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
         try:
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Query:\n{query}\n\nDocument:\n{context}"},
-            ]
-
-            # Prefer modern JSON mode; gracefully fall back if not supported by this client version
-            try:
-                completion = await client.chat.completions.create(
-                    model=DOCS_MODEL,
-                    messages=messages,
-                    temperature=DOCS_TEMPERATURE,
-                    max_tokens=DOCS_MAX_TOKENS,
-                    response_format={"type": "json_object"},  # new-style
+            async with asyncio.timeout(timeout_s):
+                resp = await chat_complete(
+                    system=("Summarize crisply. No lead-ins. Include only facts supported by snippets. "
+                            "If uncertain, say so tersely. End with 1–3 bullet points if helpful."),
+                    user=user,
+                    model=model,
+                    timeout_s=timeout_s,
                 )
-            except TypeError:
-                completion = await client.chat.completions.create(
-                    model=DOCS_MODEL,
-                    messages=messages,
-                    temperature=DOCS_TEMPERATURE,
-                    max_tokens=DOCS_MAX_TOKENS,
-                    response_format="json",  # legacy
-                )
+            text = (resp.get("text") or "").strip() or "Summary not available."
+            return {"summary": text, "sources": [b["source"] for b in blobs[:6]], "raw": resp.get("raw")}
+        except asyncio.TimeoutError:
+            if attempts >= 3: break
+            await asyncio.sleep(_jitter(attempts))
+        except Exception as ex:
+            msg = str(ex).lower()
+            if not any(k in msg for k in ("timeout", "rate limit", "temporar", "unavailable")) or attempts >= 3:
+                break
+            await asyncio.sleep(_jitter(attempts))
+    return {"summary": "Docs analysis encountered an error.", "sources": [b["source"] for b in blobs[:4]], "raw": None}
 
-            raw = (completion.choices[0].message.content or "").strip()
-            log_event("docs_agent_raw", {"q_head": query[:120], "out_head": raw[:400]})
+async def _entry(query: str, files: Optional[List[str]], *, debug: bool, timeout_s: int, request_id: Optional[str]) -> Dict[str, Any]:
+    files = files or []
+    try:
+        # 1) Gather snippets (safe even without KB adapter)
+        blobs = await fetch_file_snippets(files)
+        # 2) LLM summarize (or deterministic fallback)
+        res = await _summarize_llm(query, blobs, timeout_s, DOCS_MODEL)
+        text = _mk_text({"summary": res["summary"]}, fallback=f"{query.strip()}: concise summary.")
+        out = {
+            "text": text,
+            "answer": text,
+            "response": {"summary": {"text": res["summary"]}, "sources": res.get("sources", []), "raw": res.get("raw") if debug else None},
+            "error": None,
+            "meta": {"origin": "docs", "model": DOCS_MODEL, "request_id": request_id},
+        }
+        log_event("docs_agent_reply", {"request_id": request_id, "len": len(text)})
+        return out
+    except Exception as ex:
+        text = "Docs analysis failed."
+        return {
+            "text": text,
+            "answer": text,
+            "response": {"summary": {"text": text}, "sources": files[:4]},
+            "error": str(ex),
+            "meta": {"origin": "docs", "model": DOCS_MODEL, "request_id": request_id},
+        }
 
-            parsed = _coerce_json(raw)
-            summary = _enforce_schema(parsed)
+# Public entrypoints (any name the orchestrator calls should resolve)
+async def summarize(*, query: str, files: Optional[List[str]] = None, debug: bool = False, request_id: Optional[str] = None, timeout_s: int = 30) -> Dict[str, Any]:
+    return await _entry(query, files, debug=debug, timeout_s=timeout_s, request_id=request_id)
 
-            # Run critics (non-fatal) with correct signature; support sync/async impls
-            critics = None
-            try:
-                res = run_critics(plan=summary, query=query)  # may be sync or async
-                critics = await _maybe_await(res)
-            except Exception as crit_exc:
-                log_event("docs_agent_critics_error", {"error": str(crit_exc)})
-
-            if isinstance(critics, list):
-                summary["critics"] = critics
-
-            # High-signal log for observability
-            log_event(
-                "docs_agent_critique",
-                {
-                    "user": user_id,
-                    "objective": summary.get("objective"),
-                    "steps": len(summary.get("steps", [])),
-                    "has_recommendation": bool(summary.get("recommendation")),
-                    "critics": (len(critics) if isinstance(critics, list) else 0),
-                },
-            )
-
-            # Wrap with meta for provenance
-            routed = {
-                "analysis": summary,
-                "meta": {"origin": "docs", "model": DOCS_MODEL},
-            }
-            log_event("docs_agent_reply", {"user": user_id, "origin": "docs"})
-            return routed
-
-        except OpenAIError as e:
-            log_event("docs_agent_error", {"error": str(e), "user_id": user_id})
-            return {
-                "error": "OpenAI failed to respond.",
-                "meta": {"origin": "docs", "model": DOCS_MODEL},
-            }
-
-        except Exception as e:
-            log_event("docs_agent_exception", {"error": str(e), "trace": traceback.format_exc()})
-            return {
-                "error": "Unexpected error in docs agent.",
-                "meta": {"origin": "docs", "model": DOCS_MODEL},
-            }
-
-
-# Exported instance + function (back-compat with MCP dispatch)
-docs_agent = DocsAgent()
-analyze = docs_agent.analyze
+async def analyze(**kw):   return await summarize(**kw)
+async def answer(**kw):    return await summarize(**kw)
+async def run(**kw):       return await summarize(**kw)

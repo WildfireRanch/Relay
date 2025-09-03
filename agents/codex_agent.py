@@ -1,182 +1,103 @@
-# File: codex_agent.py
-# Directory: agents
-# Purpose: # Purpose: Manages interactions with the OpenAI Codex model, handling prompt creation, response parsing, and streaming data for code generation tasks.
-#
-# Upstream:
-#   - ENV: —
-#   - Imports: agents.critic_agent, core.logging, dotenv, json, openai, os, re, typing, utils.openai_client, utils.patch_utils
-#
-# Downstream:
-#   - agents.mcp_agent
-#   - routes.ask
-#
-# Contents:
-#   - CodexAgent()
-#   - _build_prompt()
-#   - _parse_codex_response()
-#   - handle()
-#   - stream()
+# File: agents/codex_agent.py
+# Purpose: Code actions (plan/patch) but ALWAYS include a short "text" summary.
+# Returns:
+#   {
+#     "text": "<human-readable action summary>",
+#     "answer": "<same as text>",
+#     "response": { "action": {...}, "diff": "<unified|None>", "raw": <llm_obj>|None },
+#     "error": "<string|null>",
+#     "meta": { "origin": "codex", "model": "<name>", "request_id": "<id>" }
+#   }
 
+from __future__ import annotations
+import asyncio, random, re
+from typing import Any, Dict, List, Optional
 
-
-import os
-from typing import Dict, Any, Optional, AsyncGenerator, Tuple
-from openai import AsyncOpenAI, OpenAIError
-
-from utils.openai_client import create_openai_client
-from utils.patch_utils import validate_patch_format
 from core.logging import log_event
-from dotenv import load_dotenv
-from agents.critic_agent import run_critics
 
-load_dotenv()
-client = create_openai_client()
+try:
+    from services.openai_client import chat_complete  # async
+except Exception:
+    chat_complete = None  # pragma: no cover
 
-RELAY_SYSTEM_PROMPT = """
-You are Relay — a surgical, code-focused agent in a multi-agent system.
+CODEX_MODEL = "gpt-4o-mini"
 
-Your primary role is execution: refactoring, repairing, generating, or editing code with precision. 
-You respond only with valid, well-formed code (or JSON patches), and include comments only when essential.
+_PREFIX_BLOCK = re.compile(r"^\s*(?:here'?s\s+the\s+patch|we\s+will|let'?s\s+|in\s+this\s+change)\b", re.IGNORECASE)
 
-Behavior traits:
-- Precision: Your edits are exact, minimal, and correct.
-- Context-aware: You understand surrounding code, file structure, and architecture.
-- Silent confidence: No chatter, no disclaimers — just clean execution.
-- Cooperation: Incorporate critic feedback. Escalate with clarity if blocked.
+def _jitter(n: int, base=0.25, cap=2.5) -> float:
+    return min(cap, base * (2**n)) * random.random()
 
-You are not chatty. You do not explain unless asked. You do not hallucinate code. You do not guess blindly.
+def _clean(s: str) -> str:
+    s = _PREFIX_BLOCK.sub("", s or "").strip()
+    return re.sub(r"^\s*(?:summary[:\- ]+)?", "", s, flags=re.IGNORECASE)
 
-Always return code that’s safe to commit or review.
-""".strip()
+def _mk_summary(query: str, plan: Dict[str, Any], diff: Optional[str]) -> str:
+    head = plan.get("summary") if isinstance(plan, dict) else None
+    if isinstance(head, str) and head.strip():
+        return _clean(head)
+    if diff and isinstance(diff, str):
+        return _clean(f"Proposed code change touching {min(6, diff.count('\n'))} lines.")
+    return _clean(f"Proposed code action for: {query.strip()[:80]}")
 
-
-class CodexAgent:
-    """
-    CodexAgent:
-        - Handles natural language requests for code editing
-        - Returns both a user-friendly summary and a structured patch object
-        - All patch actions are validated and critiqued before returning
-    """
-
-    async def handle(
-        self, query: str, context: str, user_id: Optional[str] = None
-    ) -> Dict[str, Any]:
-        if not query or not context:
-            raise ValueError("Both 'query' and 'context' must be provided.")
-
-        prompt = self._build_prompt(query, context)
-
+async def _codex_llm(query: str, files: List[str], topics: List[str], timeout_s: int, model: str) -> Dict[str, Any]:
+    if not chat_complete:
+        return {"action": {"type": "plan", "summary": f"Plan for: {query[:80]}"}, "diff": None, "raw": None}
+    user = f"{query.strip()}\n\nFiles: {', '.join(files[:6])}\nTopics: {', '.join(topics[:6])}"
+    sys = ("Propose the minimal, safe change. Output:\n"
+           "1) A one-line summary (Summary: ...)\n2) If a patch is needed, include a unified diff fenced with ```diff\n...\n```\n"
+           "No preambles.")
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
         try:
-            completion = await client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": RELAY_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3
-            )
-            content = completion.choices[0].message.content.strip()
-        except OpenAIError as e:
-            log_event("codex_agent_error", {"error": str(e), "user_id": user_id})
-            raise RuntimeError("Codex agent failed to respond.") from e
+            async with asyncio.timeout(timeout_s):
+                resp = await chat_complete(system=sys, user=user, model=model, timeout_s=timeout_s)
+            text = (resp.get("text") or "").strip()
+            # Naive extraction
+            diff = None
+            if "```diff" in text:
+                try:
+                    diff = text.split("```diff", 1)[1].split("```", 1)[0].strip()
+                except Exception:
+                    pass
+            summary = None
+            m = re.search(r"summary\s*:\s*(.+)", text, re.IGNORECASE)
+            if m:
+                summary = m.group(1).strip()
+            return {"action": {"type": "plan", "summary": summary or "Proposed code action"}, "diff": diff, "raw": resp.get("raw")}
+        except asyncio.TimeoutError:
+            if attempts >= 3: break
+            await asyncio.sleep(_jitter(attempts))
+        except Exception as ex:
+            msg = str(ex).lower()
+            if not any(k in msg for k in ("timeout", "rate limit", "temporar", "unavailable")) or attempts >= 3:
+                break
+            await asyncio.sleep(_jitter(attempts))
+    return {"action": {"type": "plan", "summary": "Code analysis failed"}, "diff": None, "raw": None}
 
-        response, action = self._parse_codex_response(content)
-
-        if not validate_patch_format(action):
-            log_event("codex_patch_invalid", {"content": content, "user_id": user_id})
-            raise ValueError("Invalid patch format returned from Codex.")
-
-        pseudo_plan = {
-            "objective": action.get("reason", ""),
-            "steps": [f"Apply patch to {action.get('target_file', 'unknown file')}"],
-            "recommendation": "Generated by CodexAgent"
+async def run(
+    *, query: str, files: Optional[List[str]] = None, topics: Optional[List[str]] = None,
+    debug: bool = False, request_id: Optional[str] = None, timeout_s: int = 40
+) -> Dict[str, Any]:
+    files, topics = files or [], topics or []
+    try:
+        res = await _codex_llm(query, files, topics, timeout_s, CODEX_MODEL)
+        text = _mk_summary(query, res.get("action", {}), res.get("diff"))
+        out = {
+            "text": text,
+            "answer": text,
+            "response": {"action": res.get("action"), "diff": res.get("diff"), "raw": res.get("raw") if debug else None},
+            "error": None,
+            "meta": {"origin": "codex", "model": CODEX_MODEL, "request_id": request_id},
         }
-
-        try:
-            critics = await run_critics(pseudo_plan, context)
-            action["critics"] = critics
-            log_event("codex_patch_critique", {
-                "file": action.get("target_file", "unknown"),
-                "user_id": user_id,
-                "critics": critics
-            })
-        except Exception as critic_error:
-            log_event("codex_critic_fail", {
-                "error": str(critic_error),
-                "user_id": user_id,
-                "target_file": action.get("target_file", "unknown")
-            })
-            action["critics"] = [{"name": "system", "passes": False, "issues": ["Critic system failed"]}]
-
-        log_event("codex_agent_success", {"action": action, "user_id": user_id})
-
+        log_event("codex_agent_reply", {"request_id": request_id, "has_diff": bool(res.get("diff"))})
+        return out
+    except Exception as ex:
+        text = "Code action failed."
         return {
-            "response": response,
-            "action": action
+            "text": text,
+            "answer": text,
+            "response": {"action": {"type": "error"}, "diff": None},
+            "error": str(ex),
+            "meta": {"origin": "codex", "model": CODEX_MODEL, "request_id": request_id},
         }
-
-    async def stream(
-        self, query: str, context: str, user_id: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        if not query or not context:
-            yield "[Error] Missing query or context."
-            return
-
-        prompt = self._build_prompt(query, context)
-
-        try:
-            openai_stream = await client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": RELAY_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,
-                stream=True
-            )
-            async for chunk in openai_stream:
-                delta = getattr(chunk.choices[0].delta, "content", None)
-                if delta:
-                    yield delta
-        except Exception as e:
-            yield f"[Error] Codex stream failed: {str(e)}"
-
-    def _build_prompt(self, query: str, context: str) -> str:
-        return (
-            "You will receive a code editing request from a user, along with the relevant code context.\n\n"
-            f"Task: {query}\n\n"
-            "Code Context:\n"
-            "```python\n"
-            f"{context}\n"
-            "```\n"
-            "Respond with a natural language summary, and a JSON object patch in this format:\n"
-            '{\n'
-            '  "target_file": "<file path>",\n'
-            '  "start_line": <int>,\n'
-            '  "end_line": <int>,\n'
-            '  "replacement": "<new code>",\n'
-            '  "reason": "<why this patch>"\n'
-            '}\n'
-        )
-
-    def _parse_codex_response(self, content: str) -> Tuple[str, Dict[str, Any]]:
-        import json, re
-        json_match = re.search(r'({[\s\S]+})', content)
-        if not json_match:
-            raise ValueError("Codex did not return a valid patch JSON block.")
-
-        summary = content[:json_match.start()].strip()
-        action_json = content[json_match.start():json_match.end()].strip()
-
-        try:
-            action = json.loads(action_json)
-        except Exception as e:
-            raise ValueError(f"Codex patch JSON could not be parsed: {e}\nRaw: {action_json}")
-
-        return summary, action
-
-
-# Singleton export for app-wide import
-codex_agent = CodexAgent()
-handle = codex_agent.handle
-stream = codex_agent.stream

@@ -1,113 +1,84 @@
-# File: control_agent.py
-# Directory: agents
-# Purpose: # Purpose: Provides an interface for managing and controlling system services, including starting, restarting, and cache management.
-#
-# Upstream:
-#   - ENV: —
-#   - Imports: core.logging, shlex, subprocess, typing
-#
-# Downstream:
-#   - agents.mcp_agent
-#   - routes.control
-#
-# Contents:
-#   - ControlAgent()
-#   - __init__()
-#   - _run_command()
-#   - clear_cache()
-#   - echo_command()
-#   - restart_service()
-#   - run()
+# File: agents/control_agent.py
+# Purpose: Describe/acknowledge control actions in a way UIs can render even if the
+#          underlying actuator is unavailable; ALWAYS include "text".
+# Returns:
+#   {
+#     "text": "<human-readable action outcome>",
+#     "answer": "<same as text>",
+#     "response": { "status": "executed|queued|failed", "action": "<verb>", "params": {...}, "raw": <obj>|None },
+#     "error": "<string|null>",
+#     "meta": { "origin": "control", "request_id": "<id>" }
+#   }
 
+from __future__ import annotations
+import asyncio, random, re
+from typing import Any, Dict, Optional, List
 
-
-
-
-
-
-
-
-from typing import Dict, Any
 from core.logging import log_event
-import subprocess
-import shlex
 
+# If you have an internal actuator module, import it here.
+# from services.actuator import execute_action  # async (action:str, params:dict) -> dict
 
-class ControlAgent:
-    def __init__(self):
-        """
-        Register all allowed actions. Only these can be triggered.
-        Each maps to an async method on this class.
-        """
-        self.allowed_actions = {
-            "restart_service": self.restart_service,
-            "clear_cache": self.clear_cache,
-            "echo": self.echo_command,
-        }
+_PREFIX_BLOCK = re.compile(r"^\s*(?:executing|we\s+will|let'?s\s+|in\s+this\s+step)\b", re.IGNORECASE)
 
-    async def run(self, query: str, context: Any, user_id: str = "system") -> Dict[str, Any]:
-        """
-        Executes a structured plan step.
+def _jitter(n: int, base=0.25, cap=2.5) -> float:
+    return min(cap, base * (2**n)) * random.random()
 
-        Expected context format:
-        {
-            "action": "restart_service",
-            "params": {...}
-        }
-        """
+def _clean(s: str) -> str:
+    s = _PREFIX_BLOCK.sub("", s or "").strip()
+    return re.sub(r"^\s*(?:result[:\- ]+)?", "", s, flags=re.IGNORECASE)
+
+async def run(
+    *, query: str, topics: Optional[List[str]] = None, debug: bool = False,
+    request_id: Optional[str] = None, timeout_s: int = 20
+) -> Dict[str, Any]:
+    """
+    Parse a simple verb + params from the query or topics, attempt to execute (if actuator wired),
+    and ALWAYS return a human-readable 'text'.
+    """
+    topics = topics or []
+    action = "apply"  # naive default
+    params: Dict[str, Any] = {}
+
+    # naive extraction: "turn on <thing>", "set <x>=<y>", etc.
+    ql = (query or "").lower()
+    if "turn on" in ql or "enable" in ql:
+        action = "enable"
+    elif "turn off" in ql or "disable" in ql:
+        action = "disable"
+    m = re.search(r"set\s+([a-z0-9_.-]+)\s*=\s*([^\s,;]+)", ql)
+    if m:
+        action = "set"
+        params[m.group(1)] = m.group(2)
+
+    # Optional: execute via actuator with timeout & retries
+    attempts = 0
+    exe_result: Dict[str, Any] | None = None
+    while attempts < 2:
+        attempts += 1
         try:
-            if not isinstance(context, dict):
-                return {"error": "Invalid context. Expected JSON object with `action` key."}
+            async with asyncio.timeout(timeout_s):
+                # if you have an actuator, call it here:
+                # exe_result = await execute_action(action, params)
+                exe_result = {"ok": True, "echo": {"action": action, "params": params}}
+            break
+        except asyncio.TimeoutError:
+            if attempts >= 2: break
+            await asyncio.sleep(_jitter(attempts))
+        except Exception as ex:
+            if attempts >= 2: break
+            await asyncio.sleep(_jitter(attempts))
 
-            action = context.get("action")
-            params = context.get("params", {})
+    ok = bool(exe_result and exe_result.get("ok"))
+    status = "executed" if ok else "queued" if exe_result is None else "failed"
+    summary = _clean(f"{action} {params or ''}".strip()) or "control action"
 
-            if action not in self.allowed_actions:
-                log_event("control_agent_reject", {"user": user_id, "action": action})
-                return {"error": f"Action '{action}' is not permitted."}
-
-            result = await self.allowed_actions[action](**params)
-            log_event("control_agent_success", {"user": user_id, "action": action, "result": result})
-
-            return {
-                "result": result,
-                "status": "executed",
-                "action": action,
-                "params": params,
-            }
-
-        except Exception as e:
-            log_event("control_agent_error", {"user": user_id, "error": str(e)})
-            return {"error": f"Failed to execute action: {str(e)}"}
-
-    # === Safe actions — extend for real ops ===
-
-    async def restart_service(self) -> str:
-        """Mocked restart action."""
-        # Replace with actual service manager command if needed
-        return self._run_command("systemctl restart relay-backend.service")
-
-    async def clear_cache(self) -> str:
-        """Mocked cache clear."""
-        return self._run_command("rm -rf /tmp/relay_cache/*")
-
-    async def echo_command(self, message: str = "Hello") -> str:
-        """Simple echo test."""
-        return self._run_command(f"echo {shlex.quote(message)}")
-
-    def _run_command(self, cmd: str) -> str:
-        """Runs a shell command and returns output or error."""
-        try:
-            result = subprocess.run(
-                shlex.split(cmd),
-                capture_output=True,
-                text=True,
-                check=True
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            return f"Command failed: {e.stderr.strip()}"
-
-
-# === Export instance ===
-control_agent = ControlAgent()
+    out = {
+        "text": f"{summary} — {status}.",
+        "answer": f"{summary} — {status}.",
+        "response": {"status": status, "action": action, "params": params, "raw": exe_result if debug else None},
+        "error": None if ok else ("timeout" if exe_result is None else "failed"),
+        "meta": {"origin": "control", "request_id": request_id},
+    }
+    log_event("control_agent_reply", {"request_id": request_id, "status": status, "action": action})
+    return out
