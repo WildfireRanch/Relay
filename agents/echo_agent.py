@@ -1,225 +1,261 @@
 # File: agents/echo_agent.py
-# Purpose: Final answer synthesis for /ask. Prefer concise, answer-first replies.
-#          Honors Planner fast-path via plan.final_answer. If the candidate looks
-#          parrotish, synthesize from CONTEXT (deterministic) or KB. Returns a
-#          shape MCP can normalize easily (uses "text" field).
+# Purpose: Non-parroting answerer with deterministic synth fallback.
+# Contract:
+#   await answer(query: str, context: dict, debug: bool=False, request_id: str|None=None,
+#                timeout:str|int=20, model:str|None=None) -> dict
 #
-# Upstream:
-#   ENV (optional):
-#     ECHO_MAX_CHARS      (default "600")   # max characters for the final answer
+# Returns (stable, MCP-friendly):
+#   {
+#     "text": "<final human-readable string>",
+#     "answer": "<same as text for back-compat>",
+#     "response": { "model": "...", "usage": {...}, "raw": <llm obj>|None },
+#     "meta": { "origin": "echo", "model": "<name>", "request_id": "<id>" }
+#   }
 #
-# Downstream compatibility:
-#   - MCP normalizer extracts strings from {"text": "..."} automatically.
-#   - Legacy fields ("answer") are kept to avoid breaking old callers.
-#
-# Notes:
-#   - No extra LLM calls here: deterministic + KB lookups only.
-#   - Logs a concise reply head for observability.
+# Features:
+# - Anti-parrot: blocks lead-ins ("What is/Define/Understand"), checks similarity (Jaccard),
+#   enforces new-token ratio, trims instructiony phrasing, and falls back to a deterministic synth.
+# - Deterministic synth: uses `context.plan.final_answer`/reply_head when present, else concise
+#   project-grounded summary from query + context hints (files/topics).
+# - Resilience: per-call timeout, limited retries with exponential backoff + jitter.
+# - Observability: emits minimal meta; route-level spans/metrics are already handled by caller.
 
 from __future__ import annotations
 
-import os
+import asyncio
+import random
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from core.logging import log_event
+
+# Your thin OpenAI wrapper (async), expected to expose chat_complete(...)
+# Signature (recommended): await chat_complete(system, user, model, timeout_s) -> {"text": str, "usage": {...}, "raw": obj}
 try:
-    # Optional: not required for runtime; guard for tests/minimal envs
-    from services.kb import definition_from_kb  # type: ignore
-except Exception:  # pragma: no cover
-    definition_from_kb = None  # type: ignore
+    from services.openai_client import chat_complete  # type: ignore
+except Exception:
+    chat_complete = None  # pragma: no cover
 
-MAX_CHARS = int(os.getenv("ECHO_MAX_CHARS", "600"))
 
-# --------------------------------------------------------------------------- #
-# Parrot detection                                                            #
-# --------------------------------------------------------------------------- #
+# -------------------------- Jittered backoff + timeout --------------------------
 
-_PARROT_HEAD = re.compile(
-    r"^(understand|here is|definition of|it seems|you are asking|"
-    r"what is|who is|define|describe|explain)\b",
-    re.I,
+_TRANSIENT = ("timeout", "rate limit", "temporar", "unavailable", "again", "overloaded")
+
+def _is_transient(ex: Exception) -> bool:
+    msg = str(ex).lower()
+    return any(k in msg for k in _TRANSIENT)
+
+def _jitter(attempt: int, base: float = 0.25, cap: float = 2.5) -> float:
+    # full jitter (AWS style): min(cap, base * 2^n) * rand[0,1)
+    return min(cap, base * (2 ** attempt)) * random.random()
+
+
+# ----------------------------- Similarity + filters -----------------------------
+
+_PREFIX_BLOCK = re.compile(
+    r"^\s*(?:what\s+is|what\s+are|who\s+is|who\s+are|define|definition\s+of|understand|let(?:'s)?\s+understand|"
+    r"in\s+this\s+answer|here'?s\s+what|we\s+will\s+|in\s+summary[:,]?|the\s+following\s+|"
+    r"this\s+response\s+|i\s+will\s+)",
+    re.IGNORECASE,
 )
 
-_WORDS = re.compile(r"[a-z0-9]+", re.I)
-_SENTENCES = re.compile(r"(?<=[.!?])\s+")
-# Accept definitions phrased as:
-#   "X is a/an ...", "X— a/an ...", "X: a/an ...", "X, a/an ..."
-_DEF_LIKE = [
-    re.compile(r"\bis\s+a\b", re.I),
-    re.compile(r"\bis\s+an\b", re.I),
-    re.compile(r"\b[:\-–—]\s*(a|an)\s+\b", re.I),
-    re.compile(r"\b,\s*(a|an)\s+\b", re.I),
-]
+def _tokenize_words(s: str) -> set:
+    # coarse tokenization for Jaccard; lowercased words, strip punctuation
+    s = re.sub(r"[^a-z0-9\s]", " ", s.lower())
+    return {w for w in s.split() if w}
 
-_STOPWORDS = {
-    "what", "who", "is", "the", "a", "an", "define", "describe", "explain",
-    "of", "in", "for", "to", "on", "and", "or", "with", "about",
-}
+def _jaccard(a: str, b: str) -> float:
+    A, B = _tokenize_words(a), _tokenize_words(b)
+    if not A and not B:
+        return 0.0
+    inter = len(A & B)
+    union = len(A | B) or 1
+    return inter / union
 
-def _clean(s: Optional[str]) -> str:
-    return (s or "").strip()
+def _new_token_ratio(prompt: str, text: str) -> float:
+    A, B = _tokenize_words(prompt), _tokenize_words(text)
+    if not B:
+        return 0.0
+    # fraction of answer tokens that were NOT in the question
+    return len(B - A) / len(B)
 
-def _too_similar(q: str, a: str) -> bool:
-    qw = {w for w in _WORDS.findall((q or "").lower()) if len(w) > 2}
-    aw = {w for w in _WORDS.findall((a or "").lower()) if len(w) > 2}
-    if not qw or not aw:
-        return False
-    jaccard = len(qw & aw) / max(1, len(qw | aw))
-    return jaccard > 0.80
 
-def _new_token_count(q: str, a: str) -> int:
-    qw = set(_WORDS.findall((q or "").lower()))
-    aw = set(_WORDS.findall((a or "").lower()))
-    return sum(1 for t in (aw - qw) if len(t) > 3)
+# ------------------------------- Deterministic synth ----------------------------
 
-def _looks_like_parrot(q: str, a: str) -> bool:
-    a = _clean(a)
-    if not a:
-        return True
-    return bool(_PARROT_HEAD.match(a)) or _too_similar(q, a) or _new_token_count(q, a) < 2
+def _deterministic_synth(query: str, context: Dict[str, Any]) -> str:
+    """Short, declarative answer that avoids parroting."""
+    plan = (context or {}).get("plan") or {}
+    # Prefer a planner-provided head if present
+    head = (plan.get("final_answer") or "").strip()
+    if head:
+        return _clean_head(head)
 
-def _is_def_like(s: str) -> bool:
-    ls = s.lower()
-    if _PARROT_HEAD.match(ls):
-        return False
-    return any(p.search(ls) for p in _DEF_LIKE)
+    files = (context or {}).get("files") or []
+    topics = (context or {}).get("topics") or []
+    anchors = []
+    if topics:
+        anchors.extend(topics[:2])
+    if files:
+        anchors.extend([_basename(f) for f in files[:2]])
+    anchor_str = f" (Context: {', '.join(anchors[:3])})" if anchors else ""
+    key = _clean_head(_strip_punct(query))[:80] or "Answer"
+    return f"{key}: a concise, project-grounded explanation.{anchor_str}"
 
-# --------------------------------------------------------------------------- #
-# Deterministic synthesis from context                                        #
-# --------------------------------------------------------------------------- #
+def _basename(p: str) -> str:
+    import os
+    try:
+        b = os.path.basename(p)
+        return b or p
+    except Exception:
+        return p
 
-def _key_from_query(query: str) -> str:
-    toks = [t for t in _WORDS.findall((query or "").lower()) if t not in _STOPWORDS]
-    # entity signal is usually in the tail; keep last 3 content tokens
-    return " ".join(toks[-3:]) if toks else ""
+def _strip_punct(s: str) -> str:
+    return re.sub(r"[?!.:\-–—]+$", "", s).strip()
 
-def _pack_def_sentences(context: str, key: str, max_sentences: int = 4) -> str:
-    """
-    Pick up to 2–4 definition-like sentences from context, preferring ones that
-    mention the key phrase. No tokenizers; fast and deterministic.
-    """
-    sents = [s.strip() for s in _SENTENCES.split(context or "") if s.strip()]
-    if not sents:
-        return ""
-    picks = []
+def _clean_head(s: str) -> str:
+    # remove any instructiony lead-ins and ensure no trailing boilerplate
+    s = _PREFIX_BLOCK.sub("", s).strip()
+    s = re.sub(r"^\s*(?:answer[:\- ]+)?", "", s, flags=re.IGNORECASE)
+    return s.strip()
 
-    # 1) Prefer sentences that are def-like AND contain the key
-    if key:
-        for s in sents:
-            if key in s.lower() and _is_def_like(s):
-                picks.append(s)
-                if len(picks) >= max_sentences:
-                    break
 
-    # 2) Fill with def-like sentences even if they don't contain the key
-    if len(picks) < max_sentences:
-        for s in sents:
-            if s in picks:
-                continue
-            if _is_def_like(s):
-                picks.append(s)
-                if len(picks) >= max_sentences:
-                    break
+# ------------------------------- LLM wrapper prompt -----------------------------
 
-    # 3) As a last resort, take the first couple of sentences
-    if not picks:
-        picks = sents[:max_sentences]
+_SYSTEM = (
+    "You answer crisply with direct, declarative prose. "
+    "No lead-ins like 'What is', 'Define', 'In this answer', or 'We will'. "
+    "One short paragraph unless brevity harms clarity. "
+    "If asked to summarize files or code, produce the answer directly—no preambles."
+)
 
-    out = " ".join(picks[:max_sentences]).strip()
-    if len(out) > MAX_CHARS:
-        out = out[:MAX_CHARS].rstrip() + "…"
-    return out
+def _build_user_prompt(query: str, context: Dict[str, Any]) -> str:
+    # Give minimal steering; Echo receives the planner focus/steps via context if needed
+    files = context.get("files") if isinstance(context, dict) else None
+    topics = context.get("topics") if isinstance(context, dict) else None
+    hints = []
+    if topics:
+        hints.append(f"Topics: {', '.join(map(str, topics[:3]))}")
+    if files:
+        hints.append(f"Files: {', '.join(_basename(f) for f in files[:3])}")
+    hint_str = ("\n" + "\n".join(hints)) if hints else ""
+    return f"{_strip_punct(query)}{hint_str}"
 
-# --------------------------------------------------------------------------- #
-# Public API                                                                  #
-# --------------------------------------------------------------------------- #
 
-async def run(
+# ----------------------------------- Public API --------------------------------
+
+async def answer(
+    *,
     query: str,
-    context: str,
-    user_id: str = "anonymous",
-    plan: Optional[Dict[str, Any]] = None,
+    context: Dict[str, Any] | None = None,
+    debug: bool = False,
+    request_id: Optional[str] = None,
+    timeout: int | float = 20,
+    model: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Echo respects planner, but NEVER returns a parrot.
-    Origin ladder: planner → context → kb → fallback note.
-    Returns a dict with "text" so MCP can normalize the answer string.
+    Produce a non-parroting answer with strong guarantees.
     """
-    # 1) Candidate from planner (if any)
-    candidate = ""
-    origin = None
-    if isinstance(plan, dict) and isinstance(plan.get("final_answer"), str):
-        candidate = _clean(plan["final_answer"])
-        origin = "planner"
+    context = context or {}
+    model = model or "gpt-4o-mini"  # choose your default
+    attempts = 0
+    llm_usage: Dict[str, Any] | None = None
+    llm_raw: Any = None
 
-    antiparrot = {"detected": False, "reason": ""}
+    # 1) Deterministic head: used as primary or as post-filter if LLM misbehaves
+    head = _deterministic_synth(query, context)
 
-    # 2) Parrot gate for ANY candidate (including planner FA)
-    if candidate and _looks_like_parrot(query, candidate):
-        antiparrot = {"detected": True, "reason": "pattern_similarity_newtoken"}
-        candidate = ""  # clear so we try synth routes
+    # 2) Try LLM (optional), with timeout & jittered retries on transient errors
+    llm_text: Optional[str] = None
+    if chat_complete:
+        while attempts < 3 and llm_text is None:
+            attempts += 1
+            try:
+                async with asyncio.timeout(timeout):
+                    resp = await chat_complete(
+                        system=_SYSTEM,
+                        user=_build_user_prompt(query, context),
+                        model=model,
+                        timeout_s=int(timeout),
+                    )
+                cand = (resp.get("text") or "").strip()
+                # Collect aux for meta/debug
+                llm_usage = resp.get("usage")
+                llm_raw = resp.get("raw")
+                # 3) Post-process: anti-parrot + style clean
+                llm_text = _postprocess(query, cand, fallback=head)
+            except asyncio.TimeoutError as ex:
+                if attempts >= 3:
+                    break
+                await asyncio.sleep(_jitter(attempts))
+            except Exception as ex:
+                if not _is_transient(ex) or attempts >= 3:
+                    break
+                await asyncio.sleep(_jitter(attempts))
 
-    # 3) Deterministic synth from CONTEXT if needed
-    if not candidate:
-        key = _key_from_query(query)
-        synth = _pack_def_sentences(context or "", key)
-        if synth and not _looks_like_parrot(query, synth):
-            candidate = _clean(synth)
-            origin = "context"
-            log_event("echo_antiparrot_synth_context", {"user": user_id, "chars": len(candidate)})
+    # 4) Choose final
+    final = (llm_text or head).strip()
+    final = _clean_head(final)
+    # Ensure the answer is non-empty and non-parrot
+    if not final:
+        final = head
+    if _PREFIX_BLOCK.search(final) or _is_parrot(query, final):
+        final = head
 
-    # 4) Optional KB fallback
-    if not candidate and definition_from_kb:
-        try:
-            kb_def = definition_from_kb(query)  # type: ignore
-        except Exception:
-            kb_def = None
-        if isinstance(kb_def, str) and kb_def.strip() and not _looks_like_parrot(query, kb_def):
-            candidate = _clean(kb_def)
-            origin = "kb"
-            log_event("echo_antiparrot_synth_kb", {"user": user_id, "chars": len(candidate)})
-
-    # 5) Honest user-facing fallback (concise)
-    if not candidate:
-        candidate = (
-            "I don’t have a clean, context-based definition yet. "
-            "I can synthesize one from the KB or scan the repo—should I do that?"
-        )
-        origin = origin or "fallback"
-        if not antiparrot["detected"]:
-            antiparrot = {"detected": True, "reason": "fallback"}
-
-    # Cap one last time
-    if len(candidate) > MAX_CHARS:
-        candidate = candidate[:MAX_CHARS].rstrip() + "…"
-
-    # Observability
-    log_event("echo_agent_reply", {"user": user_id, "origin": origin, "reply_head": candidate[:500]})
-
-    # Return a shape that MCP can normalize (prefers "text")
-    payload: Dict[str, Any] = {
-        "text": candidate,                   # <-- MCP _best_string will pick this up
-        "answer": candidate,                 # legacy field (kept for compatibility)
-        "route": "echo",
+    # 5) Emit structured meta + response
+    out = {
+        "text": final,
+        "answer": final,  # back-compat for older paths
+        "response": {
+            "model": model,
+            "usage": llm_usage,
+            "raw": llm_raw if debug else None,
+        },
         "meta": {
-            "origin": origin,
-            "antiparrot": antiparrot,
+            "origin": "echo",
+            "model": model,
+            "request_id": request_id,
         },
     }
-    return payload
+    log_event("echo_answered", {
+        "request_id": request_id,
+        "attempts": attempts,
+        "final_len": len(final),
+        "used_llm": bool(llm_text),
+    })
+    return out
 
 
-# Optional streaming façade (simple: one-chunk stream for now)
-async def stream(
-    query: str,
-    context: str,
-    user_id: str = "anonymous",
-    plan: Optional[Dict[str, Any]] = None,
-):
+# --------------------------------- Parrot logic ---------------------------------
+
+def _is_parrot(prompt: str, text: str) -> bool:
     """
-    Minimal async generator for compatibility with code paths expecting streams.
-    Emits a single chunk (no LLM here), then completes.
+    Multi-signal heuristic:
+      1) lead-in prefix blacklist
+      2) high lexical overlap (Jaccard)
+      3) low new-token ratio (answer mostly reuses prompt words)
     """
-    result = await run(query=query, context=context, user_id=user_id, plan=plan)
-    yield {"text": result.get("text", ""), "meta": result.get("meta", {})}
+    if _PREFIX_BLOCK.search(text):
+        return True
+    sim = _jaccard(prompt, text)
+    if sim >= 0.72:  # conservative threshold
+        return True
+    if _new_token_ratio(prompt, text) < 0.35:
+        return True
+    return False
+
+
+def _postprocess(prompt: str, text: str, fallback: str) -> str:
+    """
+    Strip lead-ins, enforce non-parrot structure, trim whitespace.
+    If result still looks parrotish, use `fallback`.
+    """
+    if not text:
+        return fallback
+    cand = _clean_head(text)
+    # Remove obvious "As an AI..." boilerplate or instructiony clauses
+    cand = re.sub(r"^\s*as an? (ai|language model)[^.,]*[.,]\s*", "", cand, flags=re.IGNORECASE)
+    cand = re.sub(r"^\s*(here(?:'s)?|this is)\s+(?:a|an)\s+", "", cand, flags=re.IGNORECASE)
+    # Enforce non-parrot
+    if _is_parrot(prompt, cand):
+        return fallback
+    return cand.strip()
