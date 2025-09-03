@@ -19,9 +19,6 @@ from starlette.types import ASGIApp
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 
-HTTPXClientInstrumentor().instrument()
-AioHttpClientInstrumentor().instrument()
-
 # ── Local dev: load .env ─────────────────────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:
@@ -47,31 +44,48 @@ log = logging.getLogger("relay.main")
 for sub in ("docs/imported", "docs/generated", "logs/sessions", "data/index"):
     (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
 
-# ── OpenTelemetry (OTLP) – traces + metrics; env-driven; best-effort ───────────
+# ── OpenTelemetry (OTLP) – traces + metrics; env-driven; best-effort ─────────
 OTEL_ENABLED = False
 try:
-    import os
     from opentelemetry import trace, metrics
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
-    from opentelemetry.sdk.metrics import MeterProvider
-    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    #from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-    #from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-    # Optional: framework/client auto-instrumentation (safe if not installed)
-    try:
-       #from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # server spans
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # httpx client spans
-        from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor  # aiohttp client spans
-    except Exception:
-        FastAPIInstrumentor = HTTPXClientInstrumentor = AioHttpClientInstrumentor = None  # noqa
+    # optional metrics (enable if you want)
+    # from opentelemetry.sdk.metrics import MeterProvider
+    # from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+    # from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor
 
     SERVICE = os.getenv("OTEL_SERVICE_NAME", "relay-backend")
+    OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT")  # e.g. https://otel-collector.yourdomain:4318
+    # Optional headers: OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"
 
-    # Resource (service.name picked up by backends)
-    resource = Resource.create({"service.name": SERVICE})
+    # Only enable if we have an endpoint or the platform injects one via env
+    if OTLP_ENDPOINT:
+        resource = Resource.create({"service.name": SERVICE})
+        tp = TracerProvider(resource=resource)
+        tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        trace.set_tracer_provider(tp)
+
+        # Optional metrics
+        # mp = MeterProvider(resource=resource, metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())])
+        # metrics.set_meter_provider(mp)
+
+        OTEL_ENABLED = True
+        log.info("🟣 OpenTelemetry enabled → %s", OTLP_ENDPOINT)
+    else:
+        log.info("OTel not enabled (no OTEL_EXPORTER_OTLP_ENDPOINT)")
+
+except Exception as ex:
+    log.warning("OTel init failed (%s: %s)", ex.__class__.__name__, ex)
+    OTEL_ENABLED = False
+
 
     # ---- Traces (OTLP/HTTP; reads OTEL_* env for endpoint/headers/etc.) ----
     tp = TracerProvider(resource=resource)
@@ -177,15 +191,30 @@ app = FastAPI(
 )
 
 # Middlewares
+# ── App ──────────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="Relay Command Center",
+    version="1.0.0",
+    description="Backend API for Relay agent – ask, control, status, docs, admin",
+    lifespan=lifespan,
+)
+
+# Middlewares
 app.add_middleware(RequestIDAndTimingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+# ---- OTel auto-instrumentation (idempotent) ----
 if OTEL_ENABLED:
     try:
-        FastAPIInstrumentor().instrument_app(app)
+        if not getattr(app, "_otel_instrumented", False):
+            FastAPIInstrumentor().instrument_app(app)
+            HTTPXClientInstrumentor().instrument()
+            AioHttpClientInstrumentor().instrument()
+            app._otel_instrumented = True
     except Exception as ex:
-        log.warning("OTel FastAPI instrumentation failed: %s", ex)
+        log.warning("OTel instrumentation skipped: %s", ex)
+
 
 # ── CORS ─────────────────────────────────────────────────────────────────────
 def _parse_origins(raw: Optional[str]) -> List[str]:
@@ -314,7 +343,8 @@ def ready():
 
 @app.get("/health")
 def health():
-    return ready()
+    # pure liveness, always 200
+    return JSONResponse({"status": "ok"})
 
 @app.options("/test-cors")
 def test_cors():
