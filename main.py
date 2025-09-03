@@ -57,12 +57,12 @@ try:
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-    from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
+    #from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+    #from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 
     # Optional: framework/client auto-instrumentation (safe if not installed)
     try:
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # server spans
+       #from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # server spans
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor  # httpx client spans
         from opentelemetry.instrumentation.aiohttp_client import AioHttpClientInstrumentor  # aiohttp client spans
     except Exception:
@@ -75,20 +75,20 @@ try:
 
     # ---- Traces (OTLP/HTTP; reads OTEL_* env for endpoint/headers/etc.) ----
     tp = TracerProvider(resource=resource)
-    tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    #tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     trace.set_tracer_provider(tp)
 
     # ---- Metrics (OTLP/HTTP) ----
-    mr = PeriodicExportingMetricReader(OTLPMetricExporter())
-    mp = MeterProvider(resource=resource, metric_readers=[mr])
-    metrics.set_meter_provider(mp)
+    #mr = PeriodicExportingMetricReader(OTLPMetricExporter())
+    #mp = MeterProvider(resource=resource, metric_readers=[mr])
+    #metrics.set_meter_provider(mp)
 
     # ---- Auto-instrument (optional but recommended) ----
-    if FastAPIInstrumentor:
-        try:
-            FastAPIInstrumentor.instrument_app(app)  # server request spans
-        except Exception:
-            pass
+    #if FastAPIInstrumentor:
+    #    try:
+    #        FastAPIInstrumentor.instrument_app(app)  # server request spans
+    #   except Exception:
+    #        pass
     if HTTPXClientInstrumentor:
         try:
             HTTPXClientInstrumentor().instrument()
