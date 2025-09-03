@@ -1,29 +1,62 @@
 receivers:
   otlp:
     protocols:
-      http:
-      grpc:
+      http: {}   # listens on 0.0.0.0:4318 by default
+      grpc: {}   # listens on 0.0.0.0:4317 by default
 
 processors:
-  batch: {}
   memory_limiter:
     check_interval: 2s
     limit_mib: 400
     spike_limit_mib: 200
+  batch: {}
+  # Tag spans/metrics with useful resource attrs (env, version, etc.)
+  resource:
+    attributes:
+      - key: service.namespace
+        value: relay
+        action: upsert
+      - key: deployment.environment
+        value: ${DEPLOY_ENVIRONMENT}
+        action: upsert
 
 exporters:
-  # Example: forward traces+metrics to Tempo
-  otlphttp:
+  # Traces → Tempo via OTLP/HTTP
+  otlphttp/tempo:
     endpoint: http://tempo:4318
-  debug: {}
+    compression: gzip
+    # headers:
+    #   Authorization: Bearer ${TEMPO_TOKEN}
+
+  # Metrics → (choose ONE that actually supports metrics)
+  # Example 1: Prometheus remote_write
+  # prometheusremotewrite:
+  #   endpoint: https://mimir.example/api/v1/push
+  #   compression: gzip
+  #
+  # Example 2: OTLP to another collector that forwards to Mimir
+  # otlphttp/metrics:
+  #   endpoint: https://collector.example:4318
+  #   compression: gzip
+
+  # Debug exporters (dev only)
+  debug:
+    verbosity: normal
+
+extensions:
+  health_check: {}
+  pprof: {}
+  zpages: {}
 
 service:
+  extensions: [health_check, pprof, zpages]
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlphttp, debug]
-    metrics:
-      receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlphttp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/tempo, debug]
+    # Enable ONE real metrics exporter and remove 'debug' in prod
+    # metrics:
+    #   receivers: [otlp]
+    #   processors: [memory_limiter, resource, batch]
+    #   exporters: [prometheusremotewrite]
