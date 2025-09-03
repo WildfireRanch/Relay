@@ -7,7 +7,7 @@
   },
   "deploy": {
     "startCommand": "uvicorn main:app --host 0.0.0.0 --port ${PORT}",
-    "healthcheckPath": "/health",
+    "healthcheckPath": "/Live",
     "restartPolicyType": "ALWAYS"
   },
   "environments": {
