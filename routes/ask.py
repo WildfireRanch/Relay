@@ -11,10 +11,11 @@ from __future__ import annotations
 import os
 import re
 import traceback
+from collections import Counter
 from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request, Body
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -46,6 +47,9 @@ KB_MIN_HITS: int = int(os.getenv("KB_MIN_HITS", "1"))
 # Anti-parrot: if we detect any contiguous overlap >= this many characters
 # between final_text and provided context, we treat it as a paste.
 ANTI_PARROT_MAX_CONTIGUOUS_MATCH: int = int(os.getenv("ANTI_PARROT_MAX_CONTIGUOUS_MATCH", "180"))
+
+# Anti-parrot: n-gram Jaccard similarity threshold (0..1) across 5-grams.
+ANTI_PARROT_JACCARD: float = float(os.getenv("ANTI_PARROT_JACCARD", "0.35"))
 
 # Optional hard maximum final_text length to avoid pathological outputs
 FINAL_TEXT_MAX_LEN: int = int(os.getenv("FINAL_TEXT_MAX_LEN", "20000"))
@@ -221,9 +225,56 @@ def _make_no_answer_meta(reason: str, base_meta: Dict[str, Any], corr_id: str) -
             "kb_threshold": KB_SCORE_THRESHOLD,
             "kb_min_hits": KB_MIN_HITS,
             "anti_parrot_threshold": ANTI_PARROT_MAX_CONTIGUOUS_MATCH,
+            "anti_parrot_jaccard": ANTI_PARROT_JACCARD,
         }
     )
     return meta
+
+
+# Parse sources out of the pretty "Top Matches" block in context, e.g.:
+# • **/path/to/file.md** — _(tier: ..., score: 0.552)
+GROUNDING_LINE_RE = re.compile(
+    r"[\u2022\-\*]\s+\*\*(?P<path>[^*]+)\*\*.*?\(score:\s*(?P<score>0\.\d+|1\.0+)\)",
+    re.IGNORECASE,
+)
+
+
+def _extract_grounding_from_context(context: str):
+    """
+    Parse 'Semantic Retrieval (Top Matches)' lines in the context block.
+    Returns (hits, max_score, sources[]) where sources = [{path, score}]
+    """
+    hits = 0
+    max_score = None
+    sources: List[Dict[str, Any]] = []
+    if not context:
+        return 0, None, []
+    for m in GROUNDING_LINE_RE.finditer(context):
+        path = (m.group("path") or "").strip()
+        try:
+            score = float(m.group("score"))
+        except Exception:
+            score = None
+        sources.append({"path": path, "score": score})
+        hits += 1
+        if score is not None:
+            max_score = score if max_score is None else max(max_score, score)
+    return hits, max_score, sources
+
+
+def _jaccard_ngrams(a: str, b: str, n: int = 5) -> float:
+    """
+    Simple n-gram Jaccard similarity to catch paraphrased pastes.
+    """
+    def ngrams(s: str):
+        toks = [t for t in re.findall(r"\w+", s.lower()) if t]
+        return Counter(tuple(toks[i:i+n]) for i in range(0, max(0, len(toks)-n+1)))
+    sa, sb = ngrams(a), ngrams(b)
+    if not sa or not sb:
+        return 0.0
+    inter = sum((sa & sb).values())
+    union = sum((sa | sb).values())
+    return inter / union if union else 0.0
 
 
 # ── Routes ──────────────────────────────────────────────────────────────────
@@ -234,7 +285,7 @@ async def ask(payload: AskRequest, request: Request):
     Run the MCP pipeline for a validated query and return a normalized response.
     Enforces:
       - Retrieval Gate (insufficient grounding => 'no answer')
-      - Anti-Parrot (large verbatim overlap => 'no answer')
+      - Anti-Parrot (large verbatim or high Jaccard overlap => 'no answer')
     Keeps response shape stable for the frontend (final_text or "").
     Details surface via `meta`.
     """
@@ -310,10 +361,22 @@ async def ask(payload: AskRequest, request: Request):
             detail={"error": "normalize_failed", "message": "Failed to normalize MCP result.", "corr_id": corr_id},
         )
 
-    # Retrieval gate check (accept only if there is adequate grounding)
+    # ---- Grounding detection (prefer structured; fallback to context parsing) ----
     grounding = _detect_grounding(upstream_meta if isinstance(upstream_meta, dict) else {}, routed_result)
+
+    if grounding["hits"] == 0 and not grounding["has_attribution"]:
+        hits, max_score_ctx, sources = _extract_grounding_from_context(context)
+        if hits > 0:
+            grounding["hits"] = hits
+            grounding["max_score"] = max_score_ctx if max_score_ctx is not None else grounding["max_score"]
+            grounding["has_attribution"] = True
+            # Surface parsed sources back to client for transparency
+            if isinstance(routed_result, dict) and not routed_result.get("grounding"):
+                routed_result.setdefault("grounding", sources)
+
+    # Tightened criteria: require non-None score meeting threshold AND attributions
     has_hits = grounding["hits"] >= KB_MIN_HITS
-    score_ok = grounding["max_score"] is None or grounding["max_score"] >= KB_SCORE_THRESHOLD
+    score_ok = (grounding["max_score"] is not None) and (grounding["max_score"] >= KB_SCORE_THRESHOLD)
     has_attr = grounding["has_attribution"]
 
     gated_no_answer_reason = None
@@ -331,30 +394,39 @@ async def ask(payload: AskRequest, request: Request):
             },
         )
 
-    # Anti-parrot guard (only if not already gated)
+    # ---- Anti-parrot guard (only if not already gated) ----
     anti_parrot = False
     if gated_no_answer_reason is None:
-        # Truncate before comparison just in case
         final_text_candidate = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
-        anti_parrot = _anti_parrot_triggered(final_text_candidate, context)
-        if anti_parrot:
+        contiguous_hit = _anti_parrot_triggered(final_text_candidate, context)
+        jaccard = _jaccard_ngrams(final_text_candidate, context, n=5)
+        if contiguous_hit or jaccard >= ANTI_PARROT_JACCARD:
+            anti_parrot = True
             gated_no_answer_reason = "Anti-parrot guard: output mirrors source context"
             log_event(
                 "ask_anti_parrot_blocked",
                 {
                     "corr_id": corr_id,
                     "user": user_id,
-                    "match_threshold_chars": ANTI_PARROT_MAX_CONTIGUOUS_MATCH,
+                    "contiguous_hit": contiguous_hit,
+                    "jaccard": jaccard,
                     "final_len": len(final_text_candidate),
                     "context_len": len(context),
                 },
             )
 
-    # Shape meta and final_text according to gate results
+    # ---- Shape meta and final_text according to gate results ----
     meta: Dict[str, Any] = {"role": role, "debug": debug, "corr_id": corr_id}
     if isinstance(upstream_meta, dict):
         # upstream meta may include origin, timings_ms, kb.*, request_id, etc.
         meta.update(_json_safe(upstream_meta))
+
+    # Always reflect grounding stats in meta for observability
+    meta.update({
+        "kb_hits": grounding["hits"],
+        "kb_max_score": grounding["max_score"],
+        "kb_has_attribution": has_attr,
+    })
 
     if gated_no_answer_reason:
         # No-answer outcome: clear final_text, record reason & flags
@@ -362,13 +434,9 @@ async def ask(payload: AskRequest, request: Request):
         final_text_out = ""
     else:
         final_text_out = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
-        # Helpful signal to UI/telemetry even on pass
         meta.update(
             {
                 "no_answer": False,
-                "kb_hits": grounding["hits"],
-                "kb_max_score": grounding["max_score"],
-                "kb_has_attribution": has_attr,
                 "anti_parrot_triggered": False,
             }
         )
