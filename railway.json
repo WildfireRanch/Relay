@@ -2,18 +2,20 @@
   "$schema": "https://railway.com/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "pip install -r requirements.txt"
-  
+    "buildCommand": "pip install -r requirements.txt",
+    "watchPatterns": ["*.py", "collector_config.yaml"]
   },
   "deploy": {
-    "startCommand": "uvicorn main:app --host 0.0.0.0 --port ${PORT}",
-    "healthcheckPath": "/Live",
+    "startCommand": "uvicorn main:app --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/health",
     "restartPolicyType": "ALWAYS"
   },
   "environments": {
     "production": {
       "deploy": {
-        "startCommand": "uvicorn main:app --host 0.0.0.0 --port ${PORT}"
+        "startCommand": "uvicorn main:app --host 0.0.0.0 --port $PORT",
+        "healthcheckPath": "/health",
+        "restartPolicyType": "ALWAYS"
       }
     }
   }
