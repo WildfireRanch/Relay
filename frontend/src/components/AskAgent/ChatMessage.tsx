@@ -1,43 +1,47 @@
 // File: components/AskAgent/ChatMessage.tsx
 // Purpose: Render a single chat message bubble with normalized output.
-//          Prefers final_text (already set by the hook) and supports error,
-//          context (collapsible), meta/timings badges, and action status.
+//          Prefers pickFinalText -> toMDString pipeline (no JSON spam if we have a string),
+//          supports error, collapsible context, MetaBadges, and action status chips.
 // Updated: 2025-09-02
 
 "use client";
 
-import React, { useMemo, useState } from "react";
-import SafeMarkdown from "@/components/SafeMarkdown";
+import React, { useId, useMemo, useState } from "react";
 import { toMDString } from "@/lib/toMDString";
+import { pickFinalText } from "@/lib/pickFinalText";
+import SafeMarkdown from "@/components/SafeMarkdown";
 import MetaBadges, { type MetaBadge } from "@/components/common/MetaBadges";
 
+type Role = "user" | "assistant";
+type Status = "pending" | "approved" | "denied";
+
 type Props = {
-  role: "user" | "assistant";
-  content: unknown; // will be coerced to string safely
+  role: Role;
+  content: unknown; // will be coerced safely
   error?: string | null;
-  context?: string;
-  /** meta may include { origin, timings_ms, request_id } */
+  context?: unknown; // allow object/array; we stringify via toMDString
+  /** meta may include { origin, timings_ms, latency_ms, request_id } */
   meta?: Record<string, unknown> | null;
-  status?: "pending" | "approved" | "denied";
+  status?: Status;
   isContextOpen?: boolean;
   onToggleContext?: () => void;
   showExtras?: boolean;
   className?: string;
 };
 
-function StatusChip({ status }: { status?: Props["status"] }) {
+function StatusChip({ status }: { status?: Status }) {
   if (!status) return null;
-  const map: Record<string, string> = {
+  const classes: Record<Status, string> = {
     pending: "bg-yellow-200 text-yellow-900 border-yellow-300",
     approved: "bg-emerald-200 text-emerald-900 border-emerald-300",
     denied: "bg-rose-200 text-rose-900 border-rose-300",
   };
-  const cls = map[status] ?? "bg-gray-200 text-gray-900 border-gray-300";
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cls}`}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${classes[status]}`}
       aria-label={`status: ${status}`}
       title={`status: ${status}`}
+      data-testid="status-chip"
     >
       {status}
     </span>
@@ -56,90 +60,87 @@ export default function ChatMessage({
   showExtras = true,
   className = "",
 }: Props) {
-  // Visual alignment / tone
+  // Layout & tone
   const isUser = role === "user";
   const align = isUser ? "items-end text-right" : "items-start text-left";
   const bubbleTone = isUser ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200";
   const textTone = isUser ? "text-blue-800" : "text-green-800";
 
-  // Internal toggle if a controlled prop isn't provided
+  // Context toggle (controlled or uncontrolled)
   const [localOpen, setLocalOpen] = useState(false);
   const open = typeof isContextOpen === "boolean" ? isContextOpen : localOpen;
-  const toggle = () => {
-    if (onToggleContext) onToggleContext();
-    else setLocalOpen((v) => !v);
-  };
+  const onToggle = () => (onToggleContext ? onToggleContext() : setLocalOpen((v) => !v));
 
-  // Coerce content to markdown-safe string
-  const md = toMDString(content);
+  // a11y ids for the collapsible region
+  const ctxId = useId();
 
-  // Adapt the loose meta object into MetaBadge[]
+  // 1) Prefer canonical extractor → 2) Fallback to your existing fence/JSON logic
+  const chosen = useMemo(() => {
+    try {
+      const picked = pickFinalText(content as any);
+      if (picked && typeof picked === "string") return picked;
+      // If pickFinalText didn’t yield a string, we keep original content to stringify below.
+      return content as any;
+    } catch {
+      return content as any;
+    }
+  }, [content]);
+
+  const md = useMemo(() => {
+    // If chosen is a string, render it; else stringify the original shape.
+    if (typeof chosen === "string") return toMDString(chosen);
+    return toMDString(content);
+  }, [chosen, content]);
+
+  // Normalize meta → MetaBadge[]
   const metaItems: MetaBadge[] = useMemo(() => {
+    if (!meta) return [];
     const items: MetaBadge[] = [];
-    if (!meta) return items;
 
-    const origin = typeof meta.origin === "string" ? meta.origin : undefined;
+    const origin =
+      typeof meta.origin === "string"
+        ? meta.origin
+        : typeof (meta as any).route === "string"
+        ? String((meta as any).route)
+        : undefined;
+
+    // timings could be a number OR an object with total/planner/routed
+    let latency: string | undefined;
+    const t = (meta as any).timings_ms;
+    if (typeof t === "number") latency = `${t} ms`;
+    else if (t && typeof t === "object" && typeof t.total === "number") latency = `${t.total} ms`;
+    else if (typeof (meta as any).latency_ms === "number") latency = `${(meta as any).latency_ms} ms`;
+
     const requestId =
-      typeof meta.request_id === "string"
-        ? meta.request_id
-        : typeof meta.requestId === "string"
-        ? meta.requestId
+      typeof (meta as any).request_id === "string"
+        ? String((meta as any).request_id)
+        : typeof (meta as any).requestId === "string"
+        ? String((meta as any).requestId)
         : undefined;
 
-    const timings =
-      typeof meta.timings_ms === "number"
-        ? `${meta.timings_ms} ms`
-        : typeof meta.latency_ms === "number"
-        ? `${meta.latency_ms} ms`
-        : undefined;
+    if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
+    if (latency) items.push({ label: "Latency", value: latency, tone: "info", title: "end-to-end latency" });
+    if (requestId) items.push({ label: "ReqID", value: requestId, tone: "neutral", title: "request id", hideIfEmpty: true });
 
-    if (origin) {
-      items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
+    // Fold in any other primitive meta (skip noisy complex objects)
+    for (const [k, v] of Object.entries(meta)) {
+      if (["origin", "route", "request_id", "requestId", "timings_ms", "latency_ms"].includes(k)) continue;
+      const isPrimitive = ["string", "number", "boolean"].includes(typeof v) || v == null;
+      if (isPrimitive) items.push({ label: k, value: v == null ? "" : String(v), tone: "neutral", hideIfEmpty: true });
     }
-    if (timings) {
-      items.push({ label: "Latency", value: timings, tone: "info", title: "end-to-end latency" });
-    }
-    if (requestId) {
-      items.push({
-        label: "ReqID",
-        value: requestId,
-        tone: "neutral",
-        title: "request identifier",
-        hideIfEmpty: true,
-      });
-    }
-
-    // Include any extra meta keys (briefly), skip objects/arrays/functions
-    Object.entries(meta).forEach(([k, v]) => {
-      if (k === "origin" || k === "request_id" || k === "requestId" || k === "timings_ms" || k === "latency_ms") {
-        return;
-      }
-      const isSimple =
-        typeof v === "string" ||
-        typeof v === "number" ||
-        typeof v === "boolean" ||
-        v === null ||
-        v === undefined;
-      if (isSimple) {
-        items.push({
-          label: k,
-          value: v === undefined ? "" : String(v),
-          tone: "neutral",
-          hideIfEmpty: true,
-        });
-      }
-    });
 
     return items;
   }, [meta]);
 
-  // Error bubble (takes precedence over content)
+  // Error bubble takes precedence
   if (error) {
     return (
       <div className={`flex ${align} ${className}`}>
         <div className="w-fit max-w-[80ch] rounded-xl border border-red-200 bg-red-50 p-3 text-left shadow-sm">
-          <div className="text-sm font-medium text-red-800">Request error</div>
-          <div className="mt-1 break-words font-mono text-sm text-red-900">{error}</div>
+          <div className="text-sm font-semibold text-red-800">Request error</div>
+          <div className="mt-1 break-words font-mono text-sm text-red-900" data-testid="error-text">
+            {error}
+          </div>
           {metaItems.length > 0 && (
             <div className="mt-2">
               <MetaBadges items={metaItems} />
@@ -159,25 +160,33 @@ export default function ChatMessage({
         </div>
 
         {/* Status + meta badges */}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <StatusChip status={status} />
-          {metaItems.length > 0 && <MetaBadges items={metaItems} />}
-        </div>
+        {(status || metaItems.length > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <StatusChip status={status} />
+            {metaItems.length > 0 && <MetaBadges items={metaItems} />}
+          </div>
+        )}
 
-        {/* Context (debug) */}
-        {showExtras && !!context && (
+        {/* Collapsible debug/context */}
+        {showExtras && context != null && String(context).length > 0 && (
           <div className="mt-2">
             <button
               type="button"
-              onClick={toggle}
+              onClick={onToggle}
               className="text-xs underline underline-offset-2 hover:opacity-80"
               aria-expanded={open}
-              aria-controls="ctx"
+              aria-controls={ctxId}
+              data-testid="ctx-toggle"
             >
               {open ? "Hide context" : "Show context"}
             </button>
             {open && (
-              <div id="ctx" className="mt-1 rounded border bg-background/60 p-2">
+              <div
+                id={ctxId}
+                className="mt-1 rounded border bg-background/60 p-2"
+                role="region"
+                aria-label="message context"
+              >
                 <div className="prose prose-sm prose-neutral dark:prose-invert max-w-none">
                   <SafeMarkdown>{toMDString(context)}</SafeMarkdown>
                 </div>
