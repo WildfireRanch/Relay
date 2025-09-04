@@ -1,14 +1,13 @@
 // File: components/AskAgent/ChatMessage.tsx
 // Purpose: Render a single chat message bubble with normalized output.
-//          Prefers pickFinalText -> toMDString pipeline (no JSON spam if we have a string),
-//          supports error, collapsible context, MetaBadges, and action status chips.
-// Updated: 2025-09-04 (typed, no-any, robust guards)
+//          Extracts best string content safely (no `any`), supports error,
+//          collapsible context, MetaBadges, and action status chips.
+// Updated: 2025-09-04 (typed, any-free)
 
 "use client";
 
 import React, { useId, useMemo, useState } from "react";
 import { toMDString } from "@/lib/toMDString";
-import { pickFinalText as pickFinalTextPair } from "@/lib/pickFinalText"; // expects (plan, routedResult)
 import SafeMarkdown from "@/components/SafeMarkdown";
 import MetaBadges, { type MetaBadge } from "@/components/common/MetaBadges";
 
@@ -17,9 +16,9 @@ type Status = "pending" | "approved" | "denied";
 
 type Props = {
   role: Role;
-  content: unknown;               // heterogeneous backend shape
+  content: unknown;
   error?: string | null;
-  context?: unknown;              // may be object/array; stringified via toMDString
+  context?: unknown;
   /** meta may include { origin, timings_ms, latency_ms, request_id, route, corr_id } */
   meta?: Record<string, unknown> | null;
   status?: Status;
@@ -29,9 +28,7 @@ type Props = {
   className?: string;
 };
 
-/* ────────────────────────────────────────────────────────────────────────────
- * Narrowing helpers (no-any)
- * --------------------------------------------------------------------------- */
+// -------- Type guards / helpers (any-free) ---------------------------------
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
@@ -45,49 +42,48 @@ function getNumber(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
 }
 
-function hasKey<T extends string>(
-  obj: Record<string, unknown>,
-  key: T
-): obj is Record<T, unknown> & Record<string, unknown> {
-  return Object.prototype.hasOwnProperty.call(obj, key);
-}
-
-/** Backend often returns `{ plan, routed_result }` or a plain string. */
-function isPlanRoutedShape(v: unknown): v is { plan?: unknown; routed_result?: unknown } {
-  return isRecord(v) && ("plan" in v || "routed_result" in v);
-}
-
-/** Safe adapter over the pair-based pickFinalText(plan, routedResult). */
-function safePickFinalText(content: unknown): string {
-  // Direct string
+/**
+ * Safely extract the best user-facing string from heterogeneous content:
+ * - string
+ * - { routed_result: { response|answer } }
+ * - { plan: { final_answer } }
+ * - { response|answer } directly
+ */
+function extractFinalText(content: unknown): string {
+  // Plain string
   if (typeof content === "string" && content.trim()) return content;
 
-  // { plan?, routed_result? }
-  if (isPlanRoutedShape(content)) {
-    const plan = isRecord(content) && hasKey(content, "plan") ? content.plan : undefined;
-    const rr = isRecord(content) && hasKey(content, "routed_result") ? content.routed_result : undefined;
-    const fromPair = pickFinalTextPair(
-      (isRecord(plan) ? (plan as Record<string, unknown>) : (plan as unknown)) as any,             // TS note below
-      (isRecord(rr) || typeof rr === "string" || rr == null ? rr : undefined) as any               // TS note below
-    );
-    // ^ We call pair helper which already validates unknown; keeping as any only in adapter
-    //   to satisfy its signature; the rest of this file stays any-free.
-    if (fromPair && typeof fromPair === "string" && fromPair.trim()) return fromPair;
-  }
-
-  // Routed-result-alone object?
+  // Object forms
   if (isRecord(content)) {
+    // Prefer routed_result.response / answer
+    const rr = content["routed_result"];
+    if (isRecord(rr)) {
+      const rrResp = getString(rr["response"]);
+      if (rrResp && rrResp.trim()) return rrResp;
+      const rrAns = getString(rr["answer"]);
+      if (rrAns && rrAns.trim()) return rrAns;
+    } else if (typeof rr === "string" && rr.trim()) {
+      return rr;
+    }
+
+    // Next: direct response / answer on root
     const resp = getString(content["response"]);
     if (resp && resp.trim()) return resp;
     const ans = getString(content["answer"]);
     if (ans && ans.trim()) return ans;
+
+    // Finally: plan.final_answer
+    const plan = content["plan"];
+    if (isRecord(plan)) {
+      const fa = getString(plan["final_answer"]);
+      if (fa && fa.trim()) return fa;
+    }
   }
 
-  // Nothing conclusive
   return "";
 }
 
-/** Normalize meta into MetaBadges (no noisy objects). */
+/** Normalize meta into MetaBadges (no noisy object values). */
 function metaToBadges(meta: Record<string, unknown> | null | undefined): MetaBadge[] {
   if (!meta) return [];
   const items: MetaBadge[] = [];
@@ -96,7 +92,10 @@ function metaToBadges(meta: Record<string, unknown> | null | undefined): MetaBad
   const timings = isRecord(meta.timings_ms) ? getNumber(meta.timings_ms.total) : getNumber(meta.timings_ms);
   const latency = timings ?? getNumber(meta.latency_ms);
   const requestId =
-    getString(meta.request_id) ?? getString(meta.requestId) ?? getString(meta["X-Request-Id"]) ?? getString(meta.corr_id);
+    getString(meta.request_id) ??
+    getString(meta.requestId) ??
+    getString(meta["X-Request-Id"]) ??
+    getString(meta.corr_id);
 
   if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
   if (typeof latency === "number") items.push({ label: "Latency", value: `${latency} ms`, tone: "info", title: "end-to-end latency" });
@@ -111,9 +110,7 @@ function metaToBadges(meta: Record<string, unknown> | null | undefined): MetaBad
   return items;
 }
 
-/* ────────────────────────────────────────────────────────────────────────────
- * UI components
- * --------------------------------------------------------------------------- */
+// -------- UI ---------------------------------------------------------------
 
 function StatusChip({ status }: { status?: Status }) {
   if (!status) return null;
@@ -146,35 +143,27 @@ export default function ChatMessage({
   showExtras = true,
   className = "",
 }: Props) {
-  // Layout & tone
   const isUser = role === "user";
   const align = isUser ? "items-end text-right" : "items-start text-left";
   const bubbleTone = isUser ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200";
   const textTone = isUser ? "text-blue-800" : "text-green-800";
 
-  // Context toggle (controlled or uncontrolled)
   const [localOpen, setLocalOpen] = useState(false);
   const open = typeof isContextOpen === "boolean" ? isContextOpen : localOpen;
   const onToggle = () => (onToggleContext ? onToggleContext() : setLocalOpen((v) => !v));
 
-  // a11y id for the collapsible region
   const ctxId = useId();
 
-  // 1) Try canonical extractor (via adapter) → 2) Fallback to stringify
   const chosen: string | null = useMemo(() => {
     try {
-      const picked = safePickFinalText(content);
+      const picked = extractFinalText(content);
       return picked && picked.trim() ? picked : null;
     } catch {
       return null;
     }
   }, [content]);
 
-  const md = useMemo(() => {
-    // If we have a string, render it; else stringify original content
-    return toMDString(chosen ?? content);
-  }, [chosen, content]);
-
+  const md = useMemo(() => toMDString(chosen ?? content), [chosen, content]);
   const metaItems = useMemo(() => metaToBadges(meta), [meta]);
 
   // Error bubble takes precedence
@@ -243,4 +232,3 @@ export default function ChatMessage({
     </div>
   );
 }
- 
