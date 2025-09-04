@@ -19,27 +19,35 @@ import SafeMarkdown from "@/components/SafeMarkdown";
 type KBItem = {
   title?: string;
   snippet?: string;
-  score?: number;  // 0..1
-  path?: string;   // repo/doc path
+  score?: number; // 0..1
+  path?: string;
 };
 
 type KBResponse =
-  | { results: KBItem[] }
-  | KBItem[];
+  | { results?: unknown }
+  | unknown;
 
-const API_BASE =
-  (process.env.NEXT_PUBLIC_RELAY_API || "").trim() || "/api"; // e.g., "https://relay.wildfireranch.us"
+// Utils
 
-const DEFAULT_K = 8;
-const DEBOUNCE_MS = 300;
+function isKBItem(o: unknown): o is KBItem {
+  if (typeof o !== "object" || o === null) return false;
+  const v = o as Record<string, unknown>;
+  const okTitle = !("title" in v) || typeof v.title === "string";
+  const okSnippet = !("snippet" in v) || typeof v.snippet === "string";
+  const okScore = !("score" in v) || typeof v.score === "number";
+  const okPath = !("path" in v) || typeof v.path === "string";
+  return okTitle && okSnippet && okScore && okPath;
+}
 
 function normalizeResponse(json: KBResponse): KBItem[] {
-  const items = Array.isArray(json) ? json : Array.isArray((json as any).results) ? (json as any).results : [];
-  return (items || []).map((it: any) => ({
-    title: typeof it?.title === "string" ? it.title : it?.path || "Untitled",
-    snippet: typeof it?.snippet === "string" ? it.snippet : "",
-    score: typeof it?.score === "number" ? it.score : undefined,
-    path: typeof it?.path === "string" ? it.path : undefined,
+  // Accept: { results: KBItem[] } OR KBItem[]
+  const fromResults = ((): unknown => (typeof json === "object" && json && "results" in json ? (json as { results?: unknown }).results : undefined))();
+  const arr = Array.isArray(fromResults) ? fromResults : Array.isArray(json) ? json : [];
+  return arr.filter(isKBItem).map((it) => ({
+    title: typeof it.title === "string" ? it.title : it.path || "Untitled",
+    snippet: typeof it.snippet === "string" ? it.snippet : "",
+    score: typeof it.score === "number" ? it.score : undefined,
+    path: typeof it.path === "string" ? it.path : undefined,
   }));
 }
 
@@ -49,16 +57,21 @@ function toPct(score?: number) {
   return `${pct}%`;
 }
 
+const API_BASE = (process.env.NEXT_PUBLIC_RELAY_API || "").trim() || "/api";
+const DEFAULT_K = 8;
+const DEBOUNCE_MS = 300;
+
 function viewHref(path?: string) {
   if (!path) return undefined;
-  const u = new URL(`${API_BASE}/docs/view`, "http://local"); // base for relative safety
+  const u = new URL(`${API_BASE}/docs/view`, "http://local");
   u.searchParams.set("path", path);
-  return u.pathname + u.search; // keep relative for Next routing through /api
+  // keep relative for Next to proxy /api
+  return u.pathname + u.search;
 }
 
 export default function SearchPanel() {
   const [q, setQ] = useState("");
-  const [k, setK] = useState(DEFAULT_K);
+  const [k, setK] = useState<number>(DEFAULT_K);
   const [rows, setRows] = useState<KBItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -66,61 +79,53 @@ export default function SearchPanel() {
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<number | null>(null);
 
-  const runSearch = useCallback(
-    async (query: string, topK: number) => {
-      if (!query || query.trim().length < 2) {
-        setRows([]);
-        setErr(null);
-        setLoading(false);
-        return;
-      }
-
-      // Cancel any in-flight request
-      if (abortRef.current) abortRef.current.abort();
-      const ac = new AbortController();
-      abortRef.current = ac;
-
-      setLoading(true);
+  const runSearch = useCallback(async (query: string, topK: number) => {
+    if (!query || query.trim().length < 2) {
+      setRows([]);
       setErr(null);
+      setLoading(false);
+      return;
+    }
 
-      try {
-        const res = await fetch(`${API_BASE}/kb/search`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query, k: topK }),
-          signal: ac.signal,
-        });
+    if (abortRef.current) abortRef.current.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
 
-        if (!res.ok) {
-          const text = await res.text().catch(() => "");
-          throw new Error(`KB_SEARCH_${res.status}: ${text.slice(0, 200)}`);
-        }
+    setLoading(true);
+    setErr(null);
 
-        const json = (await res.json()) as KBResponse;
-        setRows(normalizeResponse(json));
-      } catch (e: any) {
-        if (e?.name === "AbortError") return; // ignore aborted calls
-        setErr(e?.message || "Search failed");
-        setRows([]);
-      } finally {
-        setLoading(false);
+    try {
+      const res = await fetch(`${API_BASE}/kb/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query, k: topK }),
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`KB_SEARCH_${res.status}: ${text.slice(0, 200)}`);
       }
-    },
-    []
-  );
+      const json: KBResponse = await res.json();
+      setRows(normalizeResponse(json));
+    } catch (e: unknown) {
+      if ((e as { name?: string })?.name === "AbortError") return;
+      setErr(e instanceof Error ? e.message : String(e));
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  // Debounce search
   useEffect(() => {
     if (timerRef.current) window.clearTimeout(timerRef.current);
     timerRef.current = window.setTimeout(() => {
-      runSearch(q, k);
+      void runSearch(q, k);
     }, DEBOUNCE_MS);
     return () => {
       if (timerRef.current) window.clearTimeout(timerRef.current);
     };
   }, [q, k, runSearch]);
 
-  // Cmd/Ctrl+K to focus
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const isMac = navigator.platform.toLowerCase().includes("mac");
@@ -136,8 +141,8 @@ export default function SearchPanel() {
   const hasQuery = q.trim().length > 0;
   const empty = !loading && !err && hasQuery && rows.length === 0;
 
-  const header = useMemo(
-    () => (
+  return (
+    <section className="w-full max-w-3xl rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium">Semantic Search</span>
@@ -156,13 +161,6 @@ export default function SearchPanel() {
           />
         </div>
       </div>
-    ),
-    [k]
-  );
-
-  return (
-    <section className="w-full max-w-3xl rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 shadow-sm">
-      {header}
 
       <div className="mt-3 flex items-center gap-2">
         <input
@@ -175,7 +173,7 @@ export default function SearchPanel() {
           autoComplete="off"
         />
         <button
-          onClick={() => runSearch(q, k)}
+          onClick={() => void runSearch(q, k)}
           className="rounded-md border border-neutral-700 bg-neutral-800 px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-700"
           aria-label="Run search"
         >
@@ -183,7 +181,6 @@ export default function SearchPanel() {
         </button>
       </div>
 
-      {/* Status row */}
       <div className="mt-3 min-h-6 text-sm">
         {loading && <span className="text-neutral-400">Searching…</span>}
         {err && <span className="text-red-400">Error: {err}</span>}
@@ -191,7 +188,6 @@ export default function SearchPanel() {
         {!hasQuery && <span className="text-neutral-500">Type 2+ characters to search.</span>}
       </div>
 
-      {/* Results */}
       <ol className="mt-2 space-y-3">
         {rows.map((r, i) => {
           const href = viewHref(r.path);
@@ -222,7 +218,7 @@ export default function SearchPanel() {
                 )}
                 {r.path && (
                   <button
-                    onClick={() => navigator.clipboard.writeText(r.path!)}
+                    onClick={() => void navigator.clipboard.writeText(r.path!)}
                     className="rounded-md border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-100 hover:bg-neutral-700"
                   >
                     Copy Path

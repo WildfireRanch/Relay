@@ -2,13 +2,13 @@
 // Purpose: Render a single chat message bubble with normalized output.
 //          Prefers pickFinalText -> toMDString pipeline (no JSON spam if we have a string),
 //          supports error, collapsible context, MetaBadges, and action status chips.
-// Updated: 2025-09-02
+// Updated: 2025-09-04 (typed, no-any, robust guards)
 
 "use client";
 
 import React, { useId, useMemo, useState } from "react";
 import { toMDString } from "@/lib/toMDString";
-import { pickFinalText } from "@/lib/pickFinalText";
+import { pickFinalText as pickFinalTextPair } from "@/lib/pickFinalText"; // expects (plan, routedResult)
 import SafeMarkdown from "@/components/SafeMarkdown";
 import MetaBadges, { type MetaBadge } from "@/components/common/MetaBadges";
 
@@ -17,10 +17,10 @@ type Status = "pending" | "approved" | "denied";
 
 type Props = {
   role: Role;
-  content: unknown; // will be coerced safely
+  content: unknown;               // heterogeneous backend shape
   error?: string | null;
-  context?: unknown; // allow object/array; we stringify via toMDString
-  /** meta may include { origin, timings_ms, latency_ms, request_id } */
+  context?: unknown;              // may be object/array; stringified via toMDString
+  /** meta may include { origin, timings_ms, latency_ms, request_id, route, corr_id } */
   meta?: Record<string, unknown> | null;
   status?: Status;
   isContextOpen?: boolean;
@@ -28,6 +28,92 @@ type Props = {
   showExtras?: boolean;
   className?: string;
 };
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Narrowing helpers (no-any)
+ * --------------------------------------------------------------------------- */
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function getString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+function getNumber(v: unknown): number | undefined {
+  return typeof v === "number" ? v : undefined;
+}
+
+function hasKey<T extends string>(
+  obj: Record<string, unknown>,
+  key: T
+): obj is Record<T, unknown> & Record<string, unknown> {
+  return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+/** Backend often returns `{ plan, routed_result }` or a plain string. */
+function isPlanRoutedShape(v: unknown): v is { plan?: unknown; routed_result?: unknown } {
+  return isRecord(v) && ("plan" in v || "routed_result" in v);
+}
+
+/** Safe adapter over the pair-based pickFinalText(plan, routedResult). */
+function safePickFinalText(content: unknown): string {
+  // Direct string
+  if (typeof content === "string" && content.trim()) return content;
+
+  // { plan?, routed_result? }
+  if (isPlanRoutedShape(content)) {
+    const plan = isRecord(content) && hasKey(content, "plan") ? content.plan : undefined;
+    const rr = isRecord(content) && hasKey(content, "routed_result") ? content.routed_result : undefined;
+    const fromPair = pickFinalTextPair(
+      (isRecord(plan) ? (plan as Record<string, unknown>) : (plan as unknown)) as any,             // TS note below
+      (isRecord(rr) || typeof rr === "string" || rr == null ? rr : undefined) as any               // TS note below
+    );
+    // ^ We call pair helper which already validates unknown; keeping as any only in adapter
+    //   to satisfy its signature; the rest of this file stays any-free.
+    if (fromPair && typeof fromPair === "string" && fromPair.trim()) return fromPair;
+  }
+
+  // Routed-result-alone object?
+  if (isRecord(content)) {
+    const resp = getString(content["response"]);
+    if (resp && resp.trim()) return resp;
+    const ans = getString(content["answer"]);
+    if (ans && ans.trim()) return ans;
+  }
+
+  // Nothing conclusive
+  return "";
+}
+
+/** Normalize meta into MetaBadges (no noisy objects). */
+function metaToBadges(meta: Record<string, unknown> | null | undefined): MetaBadge[] {
+  if (!meta) return [];
+  const items: MetaBadge[] = [];
+
+  const origin = getString(meta.origin) ?? getString(meta.route);
+  const timings = isRecord(meta.timings_ms) ? getNumber(meta.timings_ms.total) : getNumber(meta.timings_ms);
+  const latency = timings ?? getNumber(meta.latency_ms);
+  const requestId =
+    getString(meta.request_id) ?? getString(meta.requestId) ?? getString(meta["X-Request-Id"]) ?? getString(meta.corr_id);
+
+  if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
+  if (typeof latency === "number") items.push({ label: "Latency", value: `${latency} ms`, tone: "info", title: "end-to-end latency" });
+  if (requestId) items.push({ label: "ReqID", value: requestId, tone: "neutral", title: "request id", hideIfEmpty: true });
+
+  // Include other primitives (skip standard keys & complex objects)
+  for (const [k, v] of Object.entries(meta)) {
+    if (["origin", "route", "request_id", "requestId", "latency_ms", "timings_ms", "corr_id", "X-Request-Id"].includes(k)) continue;
+    const isPrimitive = v == null || ["string", "number", "boolean"].includes(typeof v);
+    if (isPrimitive) items.push({ label: k, value: v == null ? "" : String(v), tone: "neutral", hideIfEmpty: true });
+  }
+  return items;
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * UI components
+ * --------------------------------------------------------------------------- */
 
 function StatusChip({ status }: { status?: Status }) {
   if (!status) return null;
@@ -71,69 +157,28 @@ export default function ChatMessage({
   const open = typeof isContextOpen === "boolean" ? isContextOpen : localOpen;
   const onToggle = () => (onToggleContext ? onToggleContext() : setLocalOpen((v) => !v));
 
-  // a11y ids for the collapsible region
+  // a11y id for the collapsible region
   const ctxId = useId();
 
-  // 1) Prefer canonical extractor → 2) Fallback to your existing fence/JSON logic
-  const chosen = useMemo(() => {
+  // 1) Try canonical extractor (via adapter) → 2) Fallback to stringify
+  const chosen: string | null = useMemo(() => {
     try {
-      const picked = pickFinalText(content as any);
-      if (picked && typeof picked === "string") return picked;
-      // If pickFinalText didn’t yield a string, we keep original content to stringify below.
-      return content as any;
+      const picked = safePickFinalText(content);
+      return picked && picked.trim() ? picked : null;
     } catch {
-      return content as any;
+      return null;
     }
   }, [content]);
 
   const md = useMemo(() => {
-    // If chosen is a string, render it; else stringify the original shape.
-    if (typeof chosen === "string") return toMDString(chosen);
-    return toMDString(content);
+    // If we have a string, render it; else stringify original content
+    return toMDString(chosen ?? content);
   }, [chosen, content]);
 
-  // Normalize meta → MetaBadge[]
-  const metaItems: MetaBadge[] = useMemo(() => {
-    if (!meta) return [];
-    const items: MetaBadge[] = [];
-
-    const origin =
-      typeof meta.origin === "string"
-        ? meta.origin
-        : typeof (meta as any).route === "string"
-        ? String((meta as any).route)
-        : undefined;
-
-    // timings could be a number OR an object with total/planner/routed
-    let latency: string | undefined;
-    const t = (meta as any).timings_ms;
-    if (typeof t === "number") latency = `${t} ms`;
-    else if (t && typeof t === "object" && typeof t.total === "number") latency = `${t.total} ms`;
-    else if (typeof (meta as any).latency_ms === "number") latency = `${(meta as any).latency_ms} ms`;
-
-    const requestId =
-      typeof (meta as any).request_id === "string"
-        ? String((meta as any).request_id)
-        : typeof (meta as any).requestId === "string"
-        ? String((meta as any).requestId)
-        : undefined;
-
-    if (origin) items.push({ label: "Origin", value: origin, tone: "neutral", title: "response origin" });
-    if (latency) items.push({ label: "Latency", value: latency, tone: "info", title: "end-to-end latency" });
-    if (requestId) items.push({ label: "ReqID", value: requestId, tone: "neutral", title: "request id", hideIfEmpty: true });
-
-    // Fold in any other primitive meta (skip noisy complex objects)
-    for (const [k, v] of Object.entries(meta)) {
-      if (["origin", "route", "request_id", "requestId", "timings_ms", "latency_ms"].includes(k)) continue;
-      const isPrimitive = ["string", "number", "boolean"].includes(typeof v) || v == null;
-      if (isPrimitive) items.push({ label: k, value: v == null ? "" : String(v), tone: "neutral", hideIfEmpty: true });
-    }
-
-    return items;
-  }, [meta]);
+  const metaItems = useMemo(() => metaToBadges(meta), [meta]);
 
   // Error bubble takes precedence
-  if (error) {
+  if (typeof error === "string" && error.length > 0) {
     return (
       <div className={`flex ${align} ${className}`}>
         <div className="w-fit max-w-[80ch] rounded-xl border border-red-200 bg-red-50 p-3 text-left shadow-sm">
@@ -198,3 +243,4 @@ export default function ChatMessage({
     </div>
   );
 }
+ 

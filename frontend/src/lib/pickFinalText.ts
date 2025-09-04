@@ -1,22 +1,42 @@
-// Order: final_text → routed_result.response/text/answer → plan.final_answer → meta.details.reply_head
-export function pickFinalText(result: any): string {
-  if (!result) return "";
-  const ft = (result.final_text ?? "").toString().trim();
-  if (ft) return ft;
+// File: frontend/src/lib/pickFinalText.ts
+// Purpose: Safe helper to extract the best user-facing text from a routed result or plan
+// (mirrors server-side logic; no 'any')
 
-  const rr = result.routed_result ?? {};
-  const resp = rr.response;
-  const candidates = [
-    rr.text,
-    rr.answer,
-    (resp && typeof resp === "object" ? (resp.text || resp.content || resp.message || resp.summary) : undefined),
-    resp,
-  ].filter((x) => typeof x === "string" && x.trim());
-  if (candidates.length) return (candidates[0] as string).trim();
+export type RoutedResult =
+  | string
+  | {
+      response?: unknown;
+      answer?: unknown;
+      [k: string]: unknown;
+    }
+  | null
+  | undefined;
 
-  const fa = (result.plan?.final_answer ?? "").toString().trim();
-  if (fa) return fa;
+export type Plan = {
+  final_answer?: unknown;
+  [k: string]: unknown;
+} | null | undefined;
 
-  const head = (result.meta?.details?.reply_head ?? result.meta?.reply_head ?? "").toString().trim();
-  return head || "";
+function asString(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v : null;
+}
+
+export function pickFinalText(plan: Plan, routedResult: RoutedResult): string {
+  if (typeof routedResult === "string") {
+    const s = asString(routedResult);
+    if (s) return s;
+  } else if (routedResult && typeof routedResult === "object") {
+    const rr = routedResult as Record<string, unknown>;
+    const resp = asString(rr.response);
+    if (resp) return resp;
+    const ans = asString(rr.answer);
+    if (ans) return ans;
+  }
+
+  if (plan && typeof plan === "object") {
+    const fa = asString((plan as Record<string, unknown>).final_answer);
+    if (fa) return fa;
+  }
+
+  return "";
 }
