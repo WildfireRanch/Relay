@@ -97,28 +97,25 @@ function sanitizeImgSrc(src: string | undefined): string | null {
  */
 
 const markdownComponents: Components = {
-  a({ href = "", children, ...rest }) {
-    const safeHref = sanitizeHref(href);
+  a({ href, children, ...rest }) {
+    const safeHref = sanitizeHref(typeof href === "string" ? href : undefined);
     if (!safeHref) {
       // Render as plain text if unsafe or invalid
       return <span {...rest}>{children}</span>;
     }
-    const isExternal =
-      safeHref.startsWith("http://") ||
-      safeHref.startsWith("https://");
-
+    const isExternal = safeHref.startsWith("http://") || safeHref.startsWith("https://");
     const common = {
       href: safeHref,
       ...rest,
-      ...(isExternal
-        ? { target: "_blank", rel: "noopener noreferrer nofollow" }
-        : undefined),
+      ...(isExternal ? { target: "_blank", rel: "noopener noreferrer nofollow" } : undefined),
     };
     return <a {...common}>{children}</a>;
   },
 
-  img({ src = "", alt, title, ...rest }) {
-    const safeSrc = sanitizeImgSrc(src);
+  img({ src, alt, title, ...rest }) {
+    // `src` can be string | Blob | undefined in newer DOM type defs; coerce to string
+    const srcStr = typeof src === "string" ? src : undefined;
+    const safeSrc = sanitizeImgSrc(srcStr);
     if (!safeSrc) {
       // Drop unsafe images entirely
       return null;
@@ -150,12 +147,7 @@ const markdownComponents: Components = {
     if (!inline && match) {
       const language = match[1];
       return (
-        <SyntaxHighlighter
-          style={vscDarkPlus}
-          language={language}
-          PreTag="div"
-          {...rest}
-        >
+        <SyntaxHighlighter style={vscDarkPlus} language={language} PreTag="div" {...rest}>
           {content}
         </SyntaxHighlighter>
       );
@@ -197,10 +189,7 @@ function Inner({ children, className }: SafeMarkdownProps) {
     <ReactMarkdown
       // SECURITY: never allow raw HTML passthrough from markdown
       skipHtml={true}
-      disallowedElements={[
-        "html", "head", "body", "style", "script", "iframe",
-        "object", "embed", "link", "meta"
-      ]}
+      disallowedElements={["html", "head", "body", "style", "script", "iframe", "object", "embed", "link", "meta"]}
       // GitHub-flavored Markdown (tables, autolinks, strikethrough, task lists)
       remarkPlugins={[remarkGfm]}
       components={markdownComponents}
