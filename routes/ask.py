@@ -5,6 +5,7 @@
 #          adds Anti-Parrot guard (no raw pastes), normalizes output,
 #          provides GET compatibility and streaming shims, and guarantees
 #          JSON-safe responses with correlation IDs and structured logs.
+# Delete this line
 
 from __future__ import annotations
 
