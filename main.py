@@ -1,11 +1,12 @@
 # File: main.py
 # Purpose: FastAPI entrypoint for Relay Command Center (ask, control, status, docs, webhooks, integrations)
 # Notes:
-#   - /health: pure liveness (always 200) — good for Railway healthcheck
+#   - /health, /live: pure liveness (always 200) — use one of these for Railway healthcheck
 #   - /ready: strict readiness (503 until required env/dirs exist)
+#   - Creates LOG_ROOT/SESSIONS_DIR/AUDIT_DIR on boot; safe fallback to /tmp if needed
 #   - OpenTelemetry: OTLP/HTTP exporter enabled when OTEL_EXPORTER_OTLP_ENDPOINT is set
 #   - OTel instrumentation is idempotent and happens AFTER app creation
-#   - No import-time instrumentation to avoid "already instrumented" warnings
+#   - Router imports are guarded; missing optional routes won't crash startup
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -36,42 +38,51 @@ if os.getenv("ENV", "local") == "local":
     except Exception:
         logging.warning("⚠️ python-dotenv not installed or failed; skipping .env load")
 
-# ── Paths & ENV ──────────────────────────────────────────────────────────────
+# ── Paths, ENV, logging ──────────────────────────────────────────────────────
 ENV_NAME = os.getenv("ENV", "local")
 PROJECT_ROOT = Path(__file__).resolve().parent
-sys.path.append(str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
-# ── Basic logging ────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO"),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 log = logging.getLogger("relay.main")
 
-# ── Ensure working dirs exist (before readiness checks) ──────────────────────
-for sub in ("docs/imported", "docs/generated", "logs/sessions", "data/index"):
-    (PROJECT_ROOT / sub).mkdir(parents=True, exist_ok=True)
+# ── Safe directory provisioning (with /tmp fallback) ─────────────────────────
+def _ensure_dir(path_str: str) -> Path:
+    p = Path(path_str)
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+    except Exception:
+        # Last-resort fallback so we never crash on writes
+        fallback = Path("/tmp") / p.name
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
-# ── OpenTelemetry (OTLP/HTTP) best-effort init (no instrumentation yet) ─────
-#     Enable by setting:
-#       OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-collector.example:4318
-#     Optional:
-#       OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"
-#       OTEL_RESOURCE_ATTRIBUTES="service.version=1.0.0,deployment.environment=prod"
+LOG_ROOT = os.getenv("LOG_ROOT", str(PROJECT_ROOT / "logs"))
+SESSIONS_DIR = _ensure_dir(os.getenv("SESSIONS_DIR", f"{LOG_ROOT}/sessions"))
+AUDIT_DIR = _ensure_dir(os.getenv("AUDIT_DIR", f"{LOG_ROOT}/audit"))
+# Common project dirs used by routes/services
+_ = [_ensure_dir(str(PROJECT_ROOT / sub)) for sub in ("docs/imported", "docs/generated", "data/index")]
+
+# ── log_event: prefer core.logging; fallback to local shim ───────────────────
+try:
+    from core.logging import log_event  # type: ignore
+except Exception:
+    def log_event(event: str, data: Dict[str, Any] | None = None) -> None:  # type: ignore
+        log.info("event=%s data=%s", event, (data or {}))
+
+# ── OpenTelemetry (OTLP/HTTP) init (best-effort) ─────────────────────────────
 OTEL_ENABLED = False
 try:
-    from opentelemetry import trace, metrics  # type: ignore
+    from opentelemetry import trace  # type: ignore
     from opentelemetry.sdk.resources import Resource  # type: ignore
     from opentelemetry.sdk.trace import TracerProvider  # type: ignore
     from opentelemetry.sdk.trace.export import BatchSpanProcessor  # type: ignore
-    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (  # type: ignore
-        OTLPSpanExporter,
-    )
-
-    # Optional metrics wiring (disabled by default)
-    # from opentelemetry.sdk.metrics import MeterProvider  # type: ignore
-    # from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader  # type: ignore
-    # from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter  # type: ignore
+    from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter  # type: ignore
 
     SERVICE = os.getenv("OTEL_SERVICE_NAME", "relay-backend")
     OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "").strip()
@@ -81,24 +92,15 @@ try:
         tp = TracerProvider(resource=resource)
         tp.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
         trace.set_tracer_provider(tp)
-
-        # Metrics example (uncomment to enable)
-        # mp = MeterProvider(
-        #     resource=resource,
-        #     metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())],
-        # )
-        # metrics.set_meter_provider(mp)
-
         OTEL_ENABLED = True
         log.info("🟣 OpenTelemetry enabled → %s", OTLP_ENDPOINT)
     else:
         log.info("OTel not enabled (no OTEL_EXPORTER_OTLP_ENDPOINT)")
-
 except Exception as ex:
     log.warning("OTel init failed (%s: %s)", ex.__class__.__name__, ex)
     OTEL_ENABLED = False
 
-# We import instrumentation classes lazily later to avoid NameError if not installed
+# Lazy import instrumentors so missing deps don't crash
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor  # type: ignore
 except Exception:
@@ -120,23 +122,23 @@ class RequestIDAndTimingMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
     async def dispatch(self, request: Request, call_next):
-        rid = request.headers.get(REQUEST_ID_HEADER) or os.urandom(8).hex()
+        rid = request.headers.get(REQUEST_ID_HEADER) or uuid4().hex
         start = time.perf_counter()
         try:
             response: Response = await call_next(request)
+            status = response.status_code
         except Exception as e:
-            duration_ms = int((time.perf_counter() - start) * 1000)
-            log.info(
-                "req: method=%s path=%s rid=%s status=500 dur_ms=%d err=%s",
-                request.method, request.url.path, rid, duration_ms, e.__class__.__name__,
-            )
+            status = 500
             raise
-        duration_ms = int((time.perf_counter() - start) * 1000)
-        response.headers[REQUEST_ID_HEADER] = rid
-        log.info(
-            "req: method=%s path=%s rid=%s status=%d dur_ms=%d",
-            request.method, request.url.path, rid, response.status_code, duration_ms,
-        )
+        finally:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            log.info("req method=%s path=%s rid=%s status=%s dur_ms=%d",
+                     request.method, request.url.path, rid, status, duration_ms)
+        # echo back request id
+        try:
+            response.headers[REQUEST_ID_HEADER] = rid
+        except Exception:
+            pass
         return response
 
 # ── Security headers middleware (lightweight) ────────────────────────────────
@@ -147,7 +149,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         resp.headers.setdefault("Referrer-Policy", "no-referrer")
         resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
         resp.headers.setdefault("X-Frame-Options", "DENY")
-        # HSTS only if behind TLS and not in local
         if ENV_NAME != "local" and os.getenv("ENABLE_HSTS", "0").lower() in ("1", "true", "yes"):
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return resp
@@ -155,18 +156,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ── Lifespan: startup/shutdown (replaces on_event) ───────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from core.logging import log_event
-    from services import kb
-
-    # Warmers (best-effort; don’t block too long)
+    # Warmers (best effort; never crash startup)
     try:
-        from services.semantic_retriever import get_retriever  # if available
-        get_retriever()
-        log_event("startup_semantic_ready", {})
-    except Exception as ex:
-        log.warning("❌ Semantic index warmup failed: %s", ex)
-
-    try:
+        from services import kb  # type: ignore
         if hasattr(kb, "index_is_valid") and not kb.index_is_valid():
             log.warning("📚 KB index missing/invalid — triggering rebuild…")
             if hasattr(kb, "api_reindex"):
@@ -174,15 +166,14 @@ async def lifespan(app: FastAPI):
         else:
             log.info("✅ KB index validated on startup")
     except Exception as ex:
-        log.error("KB index check failed: %s", ex)
-
+        log.warning("KB warmup skipped: %s", ex)
     yield
-    # (optional) add graceful shutdown here
+    # graceful shutdown hooks could go here
 
 # ── App ──────────────────────────────────────────────────────────────────────
 app = FastAPI(
     title="Relay Command Center",
-    version="1.0.0",
+    version=os.getenv("RELay_VERSION", "1.0.0"),
     description="Backend API for Relay agent – ask, control, status, docs, admin",
     lifespan=lifespan,
 )
@@ -218,12 +209,11 @@ def _parse_origins(raw: Optional[str]) -> List[str]:
 origin_regex = os.getenv("FRONTEND_ORIGIN_REGEX")
 override_origin = os.getenv("FRONTEND_ORIGIN")
 cors_origins: List[str] = _parse_origins(override_origin)
+allow_creds = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() in ("1", "true", "yes")
 
 if cors_origins:
-    allow_creds = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() in ("1", "true", "yes")
     log.info("🔒 CORS allow_origins: %s (credentials=%s)", cors_origins, allow_creds)
 elif origin_regex:
-    allow_creds = os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() in ("1", "true", "yes")
     log.info("🔒 CORS allow_origin_regex: %s (credentials=%s)", origin_regex, allow_creds)
 else:
     cors_origins = ["*"]
@@ -240,48 +230,37 @@ app.add_middleware(
     expose_headers=["Content-Disposition", "X-Request-Id"],
 )
 
-# ── Routers (import after app init to avoid circulars) ───────────────────────
-from routes.ask import router as ask_router
-from routes.status import router as status_router
-from routes.control import router as control_router
-from routes.docs import router as docs_router
-from routes.oauth import router as oauth_router
-from routes.debug import router as debug_router
-from routes.kb import router as kb_router
-from routes.search import router as search_router
-from routes.admin import router as admin_router
-from routes.codex import router as codex_router
-from routes.mcp import router as mcp_router
-from routes.logs import router as logs_router
-from routes.webhooks_github import router as gh_webhooks
-from routes.github_proxy import router as gh_proxy_router
-from routes.integrations_github import router as gh_router
+# ── Routers (guarded import/registration) ────────────────────────────────────
+def _include(router_path: str, name: str) -> None:
+    try:
+        module = __import__(router_path, fromlist=["router"])
+        app.include_router(module.router)
+        log.info("🔌 Router enabled: %s", name)
+    except Exception as ex:
+        log.warning("⏭️  Router skipped (%s): %s", name, ex)
 
-# Register routers (proxy first; then app core; then webhooks/integrations)
-app.include_router(gh_proxy_router)
-app.include_router(ask_router)
-app.include_router(status_router)
-app.include_router(control_router)
-app.include_router(docs_router)
-app.include_router(oauth_router)
-app.include_router(debug_router)
-app.include_router(kb_router)
-app.include_router(search_router)
-app.include_router(codex_router)
-app.include_router(mcp_router)
-app.include_router(logs_router)
-app.include_router(gh_webhooks)
-app.include_router(gh_router)
+# Order: proxies first, core next, then webhooks/integrations
+_include("routes.github_proxy", "github_proxy")
+_include("routes.ask", "ask")
+_include("routes.status", "status")
+_include("routes.control", "control")
+_include("routes.docs", "docs")
+_include("routes.oauth", "oauth")
+_include("routes.debug", "debug")
+_include("routes.kb", "kb")
+_include("routes.search", "search")
+_include("routes.codex", "codex")
+_include("routes.mcp", "mcp")
+_include("routes.logs", "logs")
+_include("routes.webhooks_github", "github_webhooks")
+_include("routes.integrations_github", "integrations_github")
 
 if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
-    app.include_router(admin_router)
-    log.info("🛠️ Admin tools enabled")
+    _include("routes.admin", "admin")
 else:
     log.info("Admin tools disabled")
 
-# ── Global exception handlers ────────────────────────────────────────────────
-from core.logging import log_event
-
+# ── Exception handlers (structured, with request id) ─────────────────────────
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     rid = request.headers.get(REQUEST_ID_HEADER)
@@ -307,12 +286,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # ── Health & misc endpoints ──────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return JSONResponse({"message": "Relay Agent is Online"})
+    return {"message": "Relay Agent is Online", "env": ENV_NAME}
 
 @app.get("/live")
 def live():
-    # Liveness: always 200. Use this path for Railway healthcheck.
-    return JSONResponse({"status": "ok", "env": ENV_NAME})
+    # Liveness: always 200. Good for Docker/Railway healthchecks.
+    return {"status": "ok", "env": ENV_NAME}
+
+@app.get("/health")
+def health():
+    # Alias to /live for platforms expecting /health
+    return {"status": "ok"}
 
 @app.get("/ready")
 def ready():
@@ -320,22 +304,18 @@ def ready():
     ok = True
     details: Dict[str, Any] = {}
 
-    # Make OpenAI optional by env if desired.
+    # OpenAI optional via REQUIRE_OPENAI
     require_openai = os.getenv("REQUIRE_OPENAI", "1").lower() in ("1", "true", "yes")
     required_env = ["API_KEY"] + (["OPENAI_API_KEY"] if require_openai else [])
 
-    if ENV_NAME == "local":
-        for key in required_env:
-            present = bool(os.getenv(key))
-            details[key] = present
-            ok &= present
-    else:
-        for key in required_env:
-            ok &= bool(os.getenv(key))
+    for key in required_env:
+        present = bool(os.getenv(key))
+        details[key] = present if ENV_NAME == "local" else "set" if present else "missing"
+        ok &= present
 
-    for sub in ("docs/imported", "docs/generated", "data/index"):
-        exists = (PROJECT_ROOT / sub).exists()
-        details[sub] = exists if ENV_NAME == "local" else "ok"
+    for sub in ("docs/imported", "docs/generated", "data/index", SESSIONS_DIR.as_posix(), AUDIT_DIR.as_posix()):
+        exists = Path(sub).exists()
+        details[sub] = exists if ENV_NAME == "local" else "ok" if exists else "missing"
         ok &= exists
 
     return JSONResponse(
@@ -343,21 +323,15 @@ def ready():
         status_code=200 if ok else 503,
     )
 
-@app.get("/health")
-def health():
-    # Pure liveness (distinct from readiness)
-    return JSONResponse({"status": "ok"})
-
 @app.options("/test-cors")
 def test_cors():
-    return JSONResponse({"message": "CORS preflight success"})
+    return {"message": "CORS preflight success"}
 
 @app.get("/version")
 def version():
     commit = os.getenv("GIT_SHA", "unknown")
     if commit == "unknown":
         try:
-            # Short timeout to avoid blocking containers lacking git
             commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], timeout=0.5).decode().strip()
         except Exception:
             pass
@@ -370,11 +344,10 @@ def debug_routes():
 # ── Dev entrypoint ───────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    # Respect proxy headers if running behind one (optional)
-    os.environ.setdefault("FORWARDED_ALLOW_IPS", "*")
+    os.environ.setdefault("FORWARDED_ALLOW_IPS", "*")  # respect proxy headers if behind one
     uvicorn.run(
         app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", 8000)),  # Railway sets $PORT
+        port=int(os.getenv("PORT", "8000")),  # Railway sets $PORT
         reload=(ENV_NAME == "local"),
     )
