@@ -1,6 +1,12 @@
 # Use official slim Python 3.11 image for smaller size and speed
 FROM python:3.11-slim
 
+# System deps (optional: curl for HEALTHCHECK)
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd -m appuser
+
 # Set working directory
 WORKDIR /app
 
@@ -8,20 +14,27 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install pip dependencies first to leverage cache
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application code
 COPY . .
 
-# Expose default FastAPI port (optional, for local/dev use)
+# Expose default FastAPI port (informational)
 EXPOSE 8000
 
-# Set environment variables for Python (good for async apps)
+# Environment for Python
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000
 
-# Start with uvicorn (production best practice for FastAPI); adjust if you want python main.py instead
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
-# If you must run as a script instead, uncomment the line below and comment the above
-# CMD ["python", "main.py"]
+# Healthcheck (expects your root path to return 200)
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${PORT}/" || exit 1
+
+# Drop privileges
+USER appuser
+
+# Use shell form so ${PORT} expands at runtime
+# Gunicorn is more production-friendly, uses uvicorn workers under the hood
+CMD ["sh", "-c", "gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:${PORT} main:app"]
