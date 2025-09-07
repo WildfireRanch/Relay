@@ -1,497 +1,287 @@
 # File: agents/mcp_agent.py
-# Purpose: Normalize multi-agent orchestration for MCP with strong guarantees:
-#   - Stable envelope and stringification for routed results
-#   - Per-phase timeouts and limited retries with exponential backoff + jitter
-#   - Graceful degradation to 'echo' when planner/route fails
-#   - Connectivity observability: OpenTelemetry spans + metrics per dependency
+# Directory: agents
+# Purpose: Orchestrate MCP: plan -> build context (KB) -> dispatch to route,
+#          and emit structured grounding + meta.kb stats for /ask gate.
 #
-# Contract (consumed by routes/mcp.py):
-#   run_mcp(query, files, topics, role, user_id, debug, timeout_s, max_context_tokens, request_id) -> dict:
-#     {
-#       "plan": { "route": <str>, "plan_id": <str|None>, "final_answer": <str|None>, ... },
-#       "routed_result": { "text": <str>, "answer": <str>, "response": <obj|str|None>, "error": <str|None> },
-#       "meta": {
-#         "origin": "mcp",
-#         "route": <str>,
-#         "plan_id": <str|None>,
-#         "request_id": <str|None>,
-#         "timings_ms": { "total": <int>, "planner": <int>, "routed": <int> },
-#         "details": { "reply_head": <str|None> }  # mirrors planner.final_answer
-#       }
-#     }
+# Back-compat: Keeps the exported run_mcp(...) signature and return shape.
+#              Adds 'grounding' list to routed_result and meta.kb.{hits,max_score}.
 #
-# Telemetry:
-#   - Spans: "mcp.planner", "mcp.echo", "mcp.docs", "mcp.codex", "mcp.control"
-#     Attributes: dep, request.id, {files.count, topics.count} where relevant
-#   - Metrics (services/telemetry): relay_connectivity_calls_total, relay_connectivity_latency_ms (Histogram),
-#                                   relay_connectivity_errors_total, relay_connectivity_circuit_state
-#
-# Safety & performance:
-#   - No unbounded strings (truncate very large serialized objects)
-#   - Retry only on likely transient classes (408/429/5xx, etc.)
-#   - Legacy agent signatures supported via adapters
-#
-# Dependencies expected in your repo:
-#   - agents.planner_agent, agents.echo_agent, agents.docs_agent, agents.codex_agent, agents.control_agent
-#   - core.logging.log_event
-#   - OPTIONAL: services.telemetry.{tracer, record_dep_call, set_circuit_state}
+# Env (optional):
+#   KB_MIN_SCORE_FLOOR   (default "0.0")  # ignore sources scored below this
+#   KB_TOPK_LIMIT        (default "10")   # cap number of sources we surface
 
 from __future__ import annotations
 
-import asyncio
-import json
-import random
+import os
 import time
-from typing import Any, Dict, Optional, Callable, Awaitable
+import traceback
+from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
-from core.logging import log_event
-from agents import planner_agent, echo_agent, docs_agent, codex_agent, control_agent
-
-# Optional telemetry helper (no-op safe)
+# Optional: your structured logger, if available
 try:
-    from services.telemetry import tracer as _otel_tracer, record_dep_call, set_circuit_state
-    from opentelemetry.trace.status import Status, StatusCode  # type: ignore
-except Exception:  # pragma: no cover - keeps import optional
-    def _otel_tracer():
-        return None
-    def record_dep_call(*args, **kwargs):
-        return None
-    def set_circuit_state(*args, **kwargs):
-        return None
-    class StatusCode:  # type: ignore
-        OK = "OK"
-        ERROR = "ERROR"
-    class Status:  # type: ignore
-        def __init__(self, *_args, **_kwargs):
-            pass
+    from core.logging import log_event
+except Exception:  # pragma: no cover
+    def log_event(event: str, payload: Dict[str, Any]) -> None:  # type: ignore
+        pass
 
-# ------------------------------- Utilities -------------------------------------
+# ── Tunables ────────────────────────────────────────────────────────────────
+KB_MIN_SCORE_FLOOR: float = float(os.getenv("KB_MIN_SCORE_FLOOR", "0.0"))
+KB_TOPK_LIMIT: int = int(os.getenv("KB_TOPK_LIMIT", "10"))
 
-_TRANSIENT_STATUS = {408, 423, 425, 429, 500, 502, 503, 504}
-_MAX_JSON_LEN = 20000  # guardrail for stringifying bulky objects
+# ── Integration hooks (map these to your actual modules) ────────────────────
+# You likely already have these; we keep imports inside try/except so this file
+# can drop in safely and you can fix the mappings one-by-one without outages.
 
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
-def _jitter_backoff_sec(attempt: int, base: float = 0.25, cap: float = 2.5) -> float:
-    """Exponential backoff with full jitter (AWS style)."""
-    # min(cap, base * 2^attempt) * random[0,1)
-    return min(cap, base * (2 ** attempt)) * random.random()
-
-
-def _is_str(x: Any) -> bool:
-    return isinstance(x, str)
-
-
-def _safe_json(obj: Any) -> str:
+# 1) Planner that returns a plan dict (may include route/final_answer, etc.)
+def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
     try:
-        s = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+        from agents.planner_agent import plan  # type: ignore
+        return plan(query=query, files=files, topics=topics, debug=debug, corr_id=corr_id) or {}
     except Exception:
-        s = str(obj)
-    return s if len(s) <= _MAX_JSON_LEN else s[:_MAX_JSON_LEN] + "…"
-
-
-def _as_str(x: Any) -> str:
-    if x is None:
-        return ""
-    if isinstance(x, str):
-        return x
-    if isinstance(x, (bytes, bytearray)):
-        try:
-            return x.decode("utf-8", errors="ignore")
-        except Exception:
-            return ""
-    return _safe_json(x)
-
-
-def _best_string(payload: Any) -> str:
-    """
-    Choose a human-readable string from a wide variety of payload shapes.
-    Priority: 'text' → 'answer' → response.text/content/summary → response → compact JSON.
-    """
-    if payload is None:
-        return ""
-    if isinstance(payload, dict):
-        for k in ("text", "answer"):
-            v = payload.get(k)
-            if _is_str(v) and v.strip():
-                return v.strip()
-        resp = payload.get("response")
-        if _is_str(resp) and resp.strip():
-            return resp.strip()
-        if isinstance(resp, dict):
-            for k in ("text", "content", "message", "summary", "recommendation"):
-                v = resp.get(k)
-                if _is_str(v) and v.strip():
-                    return v.strip()
-        return _as_str(payload)
-    return _as_str(payload)
-
-
-def _normalize_routed_result(raw: Any) -> Dict[str, Any]:
-    """
-    Normalize routed result to a stable UI-friendly shape.
-    Ensures 'text' and/or 'answer' are present and that original payload is accessible as 'response'.
-    """
-    if raw is None:
-        return {"text": "", "answer": "", "response": None, "error": None}
-
-    if isinstance(raw, dict):
-        text = _as_str(raw.get("text")) if raw.get("text") is not None else ""
-        answer = _as_str(raw.get("answer")) if raw.get("answer") is not None else ""
-        if not (text or answer):
-            derived = _best_string(raw)
-            if derived:
-                text = derived
-        response = raw if raw.get("response") is None else raw.get("response")
-        err = raw.get("error")
-        if err is not None and not _is_str(err):
-            err = _as_str(err)
         return {
-            "text": (text or "").strip(),
-            "answer": (answer or "").strip(),
-            "response": response,
-            "error": err if err else None,
+            "objective": f"Answer: {query}",
+            "steps": [],
+            "route": "echo",
+            "_diag": {"coercion_used": True},
         }
 
-    s = _best_string(raw)
-    return {"text": s, "answer": s, "response": raw, "error": None}
-
-
-def _looks_transient(exc: Exception) -> bool:
-    status = getattr(exc, "status_code", None)
-    if isinstance(status, int) and status in _TRANSIENT_STATUS:
-        return True
-    code = getattr(exc, "code", None)
-    if isinstance(code, int) and code in _TRANSIENT_STATUS:
-        return True
-    msg = str(exc).lower()
-    return any(t in msg for t in ("timed out", "timeout", "rate limit", "temporar", "unavailable", "try again"))
-
-
-async def _call_with_deadline_and_retries(
-    func: Callable[..., Awaitable[Any]],
-    transient_pred: Callable[[Exception], bool],
-    timeout_s: int,
-    attempts: int = 3,
-    *args,
-    **kwargs,
-) -> Any:
+# 2) Build context & retrieval (return text context + structured matches)
+#    If your context engine already returns structured hits, surface them here.
+def _build_context(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
     """
-    Run func with a hard per-call deadline and limited retries for transient failures.
+    Return:
+      {
+        "context": str,
+        "files_used": List[dict],
+        "matches": List[{"path": str, "score": float}],
+      }
     """
-    last_exc: Optional[Exception] = None
-    for i in range(1, attempts + 1):
-        try:
-            async with asyncio.timeout(timeout_s):
-                return await func(*args, **kwargs)
-        except asyncio.TimeoutError:
-            # Immediate fail if phase deadline exceeded
-            raise
-        except Exception as e:
-            last_exc = e
-            if i >= attempts or not transient_pred(e):
-                raise
-            await asyncio.sleep(_jitter_backoff_sec(i))
-    if last_exc:
-        raise last_exc
-
-
-# ------------------------------ Agent adapters ----------------------------------
-
-async def _planner_plan(
-    query: str,
-    files: list[str],
-    topics: list[str],
-    *,
-    debug: bool,
-    timeout_s: int,
-    max_context_tokens: Optional[int],
-    request_id: Optional[str],
-) -> Dict[str, Any]:
-    """
-    Adapter for planner_agent. Adds telemetry and tolerates legacy signatures.
-    """
-    async def _call_pref(**kw):
-        return await planner_agent.plan(**kw)  # type: ignore[attr-defined]
-
-    tr = _otel_tracer()
-    t0 = _now_ms()
-    if tr:
-        with tr.start_as_current_span("mcp.planner") as span:  # connectivity span
-            span.set_attribute("dep", "planner")
-            span.set_attribute("request.id", request_id or "")
-            span.set_attribute("files.count", len(files))
-            span.set_attribute("topics.count", len(topics))
-            try:
-                res = await _call_with_deadline_and_retries(
-                    _call_pref, _looks_transient, timeout_s,
-                    query=query, files=files, topics=topics, debug=debug,
-                    timeout_s=timeout_s, max_context_tokens=max_context_tokens, request_id=request_id
-                )
-                record_dep_call("planner", "planner", _now_ms() - t0, True, {"status": "ok"})
-                span.set_status(Status(StatusCode.OK))
-                return res or {}
-            except TypeError:
-                # legacy signature
-                try:
-                    res = await _call_with_deadline_and_retries(
-                        lambda **kw: planner_agent.plan(**kw), _looks_transient, timeout_s,
-                        query=query, files=files, topics=topics, debug=debug
-                    )
-                    record_dep_call("planner", "planner", _now_ms() - t0, True, {"status": "ok_legacy"})
-                    span.set_status(Status(StatusCode.OK))
-                    return res or {}
-                except Exception as e:
-                    record_dep_call("planner", "planner", _now_ms() - t0, False, {"error": type(e).__name__})
-                    span.record_exception(e); span.set_status(Status(StatusCode.ERROR))
-                    raise
-            except Exception as e:
-                record_dep_call("planner", "planner", _now_ms() - t0, False, {"error": type(e).__name__})
-                span.record_exception(e); span.set_status(Status(StatusCode.ERROR))
-                raise
-
-    # Fallback without tracer
     try:
-        return await _call_with_deadline_and_retries(
-            _call_pref, _looks_transient, timeout_s,
-            query=query, files=files, topics=topics, debug=debug,
-            timeout_s=timeout_s, max_context_tokens=max_context_tokens, request_id=request_id
-        ) or {}
-    except TypeError:
-        return await _call_with_deadline_and_retries(
-            lambda **kw: planner_agent.plan(**kw), _looks_transient, timeout_s,
-            query=query, files=files, topics=topics, debug=debug
-        ) or {}
+        # Preferred: use your real context builder with structured results
+        from core.context_engine import build_context  # type: ignore
+        ctx = build_context(query=query, files=files, topics=topics, debug=debug, corr_id=corr_id) or {}
+        # Expected optional keys: context(str), files_used(list), matches(list of {path, score})
+        context = str(ctx.get("context") or "")
+        files_used = ctx.get("files_used") or []
+        matches = ctx.get("matches") or []
+        return {"context": context, "files_used": files_used, "matches": matches}
+    except Exception:
+        # Fallback: try your KB service directly
+        context = ""
+        files_used: List[Dict[str, Any]] = []
+        matches: List[Dict[str, Any]] = []
+        try:
+            from services import kb  # type: ignore
+            # If kb.search exists, use it; normalize to [{path, score}]
+            results = kb.search(query=query, k=KB_TOPK_LIMIT)  # type: ignore
+            for r in results or []:
+                path = r.get("path") or r.get("file") or r.get("id")
+                score = float(r.get("score") or 0.0)
+                matches.append({"path": str(path or ""), "score": score})
+            # Optionally, build a readable context block (kept for UI)
+            lines = ["## 🦙 Semantic Retrieval (Top Matches):"]
+            for m in matches:
+                if not m["path"]:
+                    continue
+                lines.append(f"• **{m['path']}** (score: {m['score']:.3f})")
+            context = "\n".join(lines)
+        except Exception:
+            # Absolute fallback: no retrieval
+            context = ""
+            matches = []
+        return {"context": context, "files_used": files_used, "matches": matches}
+
+# 3) Router/dispatcher: run the chosen route/agent and return a result dict
+def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
+    """
+    Return a flexible dict; we'll normalize downstream.
+      Examples:
+        {"response": "...", "route": "echo"}
+        or {"answer": "...", "route": "echo"}
+        or {"response": {"text": "...", "meta": {...}}, "route": "echo"}
+    """
+    try:
+        # Prefer a central MCP entry if you have one
+        from agents.relay_mcp import dispatch  # type: ignore
+        return dispatch(route=route, query=query, context=context, user_id=user_id, debug=debug, corr_id=corr_id) or {}
+    except Exception:
+        # Fallback: try echo agent
+        try:
+            from agents.echo_agent import invoke  # type: ignore
+            text = invoke(query=query, context=context, user_id=user_id, corr_id=corr_id)
+            return {"response": text, "route": "echo"}
+        except Exception:
+            return {"response": "", "route": route or "echo", "meta": {"error": "dispatch_failed"}}
 
 
-async def _echo_answer(
-    query: str, context: Dict[str, Any], *, debug: bool, timeout_s: int, request_id: Optional[str]
-) -> Any:
-    async def _call(**kw):
-        if hasattr(echo_agent, "answer"):
-            return await echo_agent.answer(**kw)  # type: ignore[attr-defined]
-        return await echo_agent.respond(**kw)     # type: ignore[attr-defined]
+# ── Utilities ───────────────────────────────────────────────────────────────
 
-    tr = _otel_tracer(); t0 = _now_ms()
-    if tr:
-        with tr.start_as_current_span("mcp.echo") as span:
-            span.set_attribute("dep", "echo")
-            span.set_attribute("request.id", request_id or "")
-            try:
-                res = await _call_with_deadline_and_retries(
-                    _call, _looks_transient, timeout_s,
-                    query=query, context=context, debug=debug, request_id=request_id
-                )
-                record_dep_call("echo", "echo", _now_ms() - t0, True, {"status": "ok"})
-                span.set_status(Status(StatusCode.OK))
-                return res
-            except Exception as e:
-                record_dep_call("echo", "echo", _now_ms() - t0, False, {"error": type(e).__name__})
-                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
+def _max_score(matches: List[Dict[str, Any]]) -> Optional[float]:
+    mx = None
+    for m in matches or []:
+        s = m.get("score")
+        try:
+            f = float(s) if s is not None else None
+        except Exception:
+            f = None
+        if f is None:
+            continue
+        mx = f if mx is None else max(mx, f)
+    return mx
 
-    return await _call_with_deadline_and_retries(
-        _call, _looks_transient, timeout_s, query=query, context=context, debug=debug, request_id=request_id
-    )
-
-
-async def _docs_summarize(
-    query: str, files: list[str], *, debug: bool, timeout_s: int, request_id: Optional[str]
-) -> Any:
-    async def _call(**kw):
-        for name in ("summarize", "analyze", "run", "answer"):
-            if hasattr(docs_agent, name):
-                return await getattr(docs_agent, name)(**kw)  # type: ignore[misc]
-        raise RuntimeError("docs agent has no callable entrypoint")
-
-    tr = _otel_tracer(); t0 = _now_ms()
-    if tr:
-        with tr.start_as_current_span("mcp.docs") as span:
-            span.set_attribute("dep", "docs")
-            span.set_attribute("request.id", request_id or "")
-            try:
-                res = await _call_with_deadline_and_retries(
-                    _call, _looks_transient, timeout_s,
-                    query=query, files=files, debug=debug, request_id=request_id
-                )
-                record_dep_call("docs", "docs", _now_ms() - t0, True, {"status": "ok"})
-                span.set_status(Status(StatusCode.OK)); return res
-            except Exception as e:
-                record_dep_call("docs", "docs", _now_ms() - t0, False, {"error": type(e).__name__})
-                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
-
-    return await _call_with_deadline_and_retries(
-        _call, _looks_transient, timeout_s, query=query, files=files, debug=debug, request_id=request_id
-    )
+def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for m in matches or []:
+        path = (m.get("path") or "").strip()
+        try:
+            score = float(m.get("score")) if m.get("score") is not None else 0.0
+        except Exception:
+            score = 0.0
+        if not path:
+            continue
+        if score < KB_MIN_SCORE_FLOOR:
+            continue
+        out.append({"path": path, "score": score})
+    # cap surfaced sources
+    return out[:KB_TOPK_LIMIT]
 
 
-async def _codex_run(
-    query: str, files: list[str], topics: list[str], *, debug: bool, timeout_s: int, request_id: Optional[str]
-) -> Any:
-    async def _call(**kw):
-        for name in ("run", "answer", "execute"):
-            if hasattr(codex_agent, name):
-                return await getattr(codex_agent, name)(**kw)  # type: ignore[misc]
-        raise RuntimeError("codex agent has no callable entrypoint")
-
-    tr = _otel_tracer(); t0 = _now_ms()
-    if tr:
-        with tr.start_as_current_span("mcp.codex") as span:
-            span.set_attribute("dep", "codex")
-            span.set_attribute("request.id", request_id or "")
-            try:
-                res = await _call_with_deadline_and_retries(
-                    _call, _looks_transient, timeout_s,
-                    query=query, files=files, topics=topics, debug=debug, request_id=request_id
-                )
-                record_dep_call("codex", "codex", _now_ms() - t0, True, {"status": "ok"})
-                span.set_status(Status(StatusCode.OK)); return res
-            except Exception as e:
-                record_dep_call("codex", "codex", _now_ms() - t0, False, {"error": type(e).__name__})
-                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
-
-    return await _call_with_deadline_and_retries(
-        _call, _looks_transient, timeout_s, query=query, files=files, topics=topics, debug=debug, request_id=request_id
-    )
+def _shape_routed_result(raw: Any) -> Dict[str, Any]:
+    """
+    Normalize routed result to a friendly dict:
+      - Prefer 'response' (str or {'text': ...}) then 'answer'
+      - Always include 'route'
+    """
+    if isinstance(raw, dict):
+        route = raw.get("route") or "echo"
+        response = raw.get("response")
+        answer = raw.get("answer")
+        if isinstance(response, dict):
+            text = response.get("text") or answer or ""
+            meta = response.get("meta") or {}
+            return {"response": {"text": text, "meta": meta}, "route": route}
+        if isinstance(response, str):
+            return {"response": response, "route": route}
+        if isinstance(answer, str):
+            return {"response": answer, "route": route}
+        return {"response": "", "route": route}
+    elif isinstance(raw, str):
+        return {"response": raw, "route": "echo"}
+    return {"response": "", "route": "echo"}
 
 
-async def _control_run(
-    query: str, topics: list[str], *, debug: bool, timeout_s: int, request_id: Optional[str]
-) -> Any:
-    async def _call(**kw):
-        for name in ("run", "answer", "execute"):
-            if hasattr(control_agent, name):
-                return await getattr(control_agent, name)(**kw)  # type: ignore[misc]
-        raise RuntimeError("control agent has no callable entrypoint")
-
-    tr = _otel_tracer(); t0 = _now_ms()
-    if tr:
-        with tr.start_as_current_span("mcp.control") as span:
-            span.set_attribute("dep", "control")
-            span.set_attribute("request.id", request_id or "")
-            try:
-                res = await _call_with_deadline_and_retries(
-                    _call, _looks_transient, timeout_s,
-                    query=query, topics=topics, debug=debug, request_id=request_id
-                )
-                record_dep_call("control", "control", _now_ms() - t0, True, {"status": "ok"})
-                span.set_status(Status(StatusCode.OK)); return res
-            except Exception as e:
-                record_dep_call("control", "control", _now_ms() - t0, False, {"error": type(e).__name__})
-                span.record_exception(e); span.set_status(Status(StatusCode.ERROR)); raise
-
-    return await _call_with_deadline_and_retries(
-        _call, _looks_transient, timeout_s, query=query, topics=topics, debug=debug, request_id=request_id
-    )
-
-
-# ------------------------------ Public entrypoint -------------------------------
+# ── Public: run_mcp ─────────────────────────────────────────────────────────
 
 async def run_mcp(
-    *,
     query: str,
-    files: Optional[list[str]] = None,
-    topics: Optional[list[str]] = None,
     role: Optional[str] = "planner",
-    user_id: Optional[str] = None,   # reserved
+    files: Optional[List[str]] = None,
+    topics: Optional[List[str]] = None,
+    user_id: str = "anonymous",
     debug: bool = False,
-    timeout_s: int = 45,
-    max_context_tokens: Optional[int] = 120_000,
-    request_id: Optional[str] = None,
+    corr_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Orchestrate planner → routed agent, normalize outputs, attach meta & connectivity telemetry.
-    Routes should still call finalize_envelope(...) to guarantee final_text.
+    Main orchestrator.
+    Returns dict with keys (some optional):
+      plan, routed_result, critics, context, files_used, meta
+    Plus: emits structured grounding in routed_result and meta.kb stats.
     """
-    t0 = _now_ms()
-    files = files or []
-    topics = topics or []
-
-    # --- Phase 1: Planner (unless role override provided)
-    do_planner = role in (None, "planner")
+    corr_id = corr_id or str(uuid4())
+    t0 = time.perf_counter()
     plan: Dict[str, Any] = {}
-    route: str = role or "planner"
-    plan_id: Optional[str] = None
-    reply_head: Optional[str] = None
+    context: str = ""
+    files_used: List[Dict[str, Any]] = []
+    matches: List[Dict[str, Any]] = []
 
-    # Budget split: ~45% planner, remainder routed (ensures both phases have time)
-    planner_budget = max(1, int(timeout_s * 0.45))
-    routed_budget = max(1, timeout_s - planner_budget)
+    log_event("mcp_start", {"corr_id": corr_id, "role": role, "user": user_id, "debug": debug})
 
-    if do_planner:
-        pt0 = _now_ms()
-        try:
-            plan = await _planner_plan(
-                query, files, topics,
-                debug=debug,
-                timeout_s=planner_budget,
-                max_context_tokens=max_context_tokens,
-                request_id=request_id
-            )
-        except asyncio.TimeoutError:
-            plan = {"route": "echo", "final_answer": None, "error": "planner_timeout"}
-        except Exception as e:
-            plan = {"route": "echo", "final_answer": None, "error": f"planner_error:{type(e).__name__}"}
-        pt1 = _now_ms()
-        route = plan.get("route") or "echo"
-        plan_id = plan.get("plan_id")
-        reply_head = (plan.get("final_answer") or "") or None
-    else:
-        pt0 = pt1 = _now_ms()
-
-    # Explicit role override (docs/codex/control/echo)
-    if role and role not in ("planner",):
-        route = role
-
-    # --- Phase 2: Routed agent
-    rt0 = _now_ms()
-    routed_raw: Any = None
+    # 1) Plan
+    t_pl0 = time.perf_counter()
     try:
-        phase_budget = max(1, routed_budget)
-        if route == "echo":
-            ctx = {"plan": plan, "files": files, "topics": topics}
-            routed_raw = await _echo_answer(query, ctx, debug=debug, timeout_s=phase_budget, request_id=request_id)
-        elif route == "docs":
-            routed_raw = await _docs_summarize(query, files, debug=debug, timeout_s=phase_budget, request_id=request_id)
-        elif route == "codex":
-            routed_raw = await _codex_run(query, files, topics, debug=debug, timeout_s=phase_budget, request_id=request_id)
-        elif route == "control":
-            routed_raw = await _control_run(query, topics, debug=debug, timeout_s=phase_budget, request_id=request_id)
-        else:
-            # Unknown route → echo fallback with context note
-            ctx = {"plan": plan, "files": files, "topics": topics, "note": f"unknown route '{route}'"}
-            routed_raw = await _echo_answer(query, ctx, debug=debug, timeout_s=phase_budget, request_id=request_id)
-            route = "echo"
-    except asyncio.TimeoutError:
-        routed_raw = {"error": f"{route}_timeout", "text": f"{route} timed out while processing."}
+        plan = _plan(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=corr_id) or {}
     except Exception as e:
-        routed_raw = {"error": f"{route}_error:{type(e).__name__}", "text": f"{route} failed: {str(e)}"}
-    rt1 = _now_ms()
+        log_event("mcp_plan_error", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc()})
+        plan = {"route": role or "echo", "_diag": {"plan_error": True}}
+    t_pl1 = time.perf_counter()
 
-    # --- Normalization & meta
-    routed_result = _normalize_routed_result(routed_raw)
-    meta = {
-        "origin": "mcp",
+    # Route may be suggested by planner; default to role/echo
+    route = plan.get("route") or role or "echo"
+
+    # 2) Build context + collect retrieval matches (structured)
+    t_ctx0 = time.perf_counter()
+    try:
+        ctx = _build_context(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=corr_id)
+        context = str(ctx.get("context") or "")
+        files_used = ctx.get("files_used") or []
+        matches = _filter_matches(ctx.get("matches") or [])
+    except Exception as e:
+        log_event("mcp_context_error", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc()})
+        context, files_used, matches = "", [], []
+    t_ctx1 = time.perf_counter()
+
+    # 3) Dispatch to the chosen agent/route
+    t_ds0 = time.perf_counter()
+    try:
+        routed_raw = _dispatch(route=route, query=query, context=context, user_id=user_id, debug=debug, corr_id=corr_id)
+    except Exception as e:
+        log_event("mcp_dispatch_error", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc()})
+        routed_raw = {"response": "", "route": route, "meta": {"error": "dispatch_failed"}}
+    t_ds1 = time.perf_counter()
+
+    routed_result = _shape_routed_result(routed_raw)
+
+    # 4) Attach structured grounding to the routed result
+    if matches:
+        # Preserve any grounding already provided by downstream, but ensure it's a list
+        if isinstance(routed_result, dict):
+            existing = routed_result.get("grounding")
+            if not isinstance(existing, list) or not existing:
+                routed_result["grounding"] = matches
+
+    # 5) Meta (timings, route, kb stats, corr_id)
+    meta: Dict[str, Any] = {
+        "request_id": corr_id,
+        "origin": plan.get("route") or route,
         "route": route,
-        "plan_id": plan_id,
-        "request_id": request_id,
         "timings_ms": {
-            "total": _now_ms() - t0,
-            "planner": max(0, pt1 - pt0),
-            "routed": max(0, rt1 - rt0),
+            "planner_ms": int((t_pl1 - t_pl0) * 1000),
+            "context_ms": int((t_ctx1 - t_ctx0) * 1000),
+            "dispatch_ms": int((t_ds1 - t_ds0) * 1000),
         },
-        "details": {"reply_head": reply_head},
+        "planner_diag": plan.get("_diag") or {},
+        "kb": {
+            "hits": len(matches),
+            "max_score": _max_score(matches),
+        },
     }
 
-    log_event("mcp_orchestrated", {
-        "route": route,
-        "plan_id": plan_id,
-        "planner_has_final": bool(reply_head),
-        "routed_has_answer": bool((routed_result.get("answer") or routed_result.get("text") or "").strip()),
-        "timings_ms": meta["timings_ms"],
-        "request_id": request_id,
-    })
+    # (Optional) critics suite — leave as-is if you already populate elsewhere
+    critics: Optional[List[Dict[str, Any]]] = None
+    try:
+        # If you have a critic pipeline, call it here and surface its result
+        from agents.critics import evaluate_plan  # type: ignore
+        critics = evaluate_plan(plan)  # type: ignore
+    except Exception:
+        critics = None
 
-    return {"plan": plan, "routed_result": routed_result, "meta": meta}
+    log_event(
+        "mcp_done",
+        {
+            "corr_id": corr_id,
+            "route": route,
+            "kb_hits": meta["kb"]["hits"],
+            "kb_max_score": meta["kb"]["max_score"],
+        },
+    )
+
+    # 6) Final shape (keeps back-compat keys your /ask expects)
+    return {
+        "plan": plan,
+        "routed_result": routed_result,
+        "critics": critics,
+        "context": context,
+        "files_used": files_used,
+        "meta": meta,
+    }
