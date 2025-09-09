@@ -269,6 +269,32 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition", "X-Request-Id", "X-Corr-Id"],
 )
+# --- BEGIN TEMP DIAGNOSTICS (remove after fixed) ----------------------------
+import os as _os, traceback as _tb
+from pathlib import Path as _Path
+
+def _probe_module(modpath: str, expect_attr: str = "router") -> None:
+    try:
+        m = importlib.import_module(modpath)
+        has_attr = hasattr(m, expect_attr)
+        log.info("🧪 probe import OK: %s (has %s=%s)", modpath, expect_attr, has_attr)
+        if not has_attr:
+            log.error("🧪 probe FAIL: %s loaded but missing attribute %r", modpath, expect_attr)
+    except Exception as e:
+        log.error("🧪 probe import FAIL: %s -> %s\n%s", modpath, e, _tb.format_exc(limit=6))
+
+# List what's actually inside /app/routes in the container
+try:
+    routes_dir = _Path(PROJECT_ROOT / "routes")
+    listing = sorted([p.name for p in routes_dir.iterdir()]) if routes_dir.exists() else []
+    log.info("🗂️  routes/ listing: %s", listing)
+except Exception as e:
+    log.warning("🗂️  routes/ listing unavailable: %s", e)
+
+# Probes
+_probe_module("routes.ask", "router")
+_probe_module("routes.mcp", "router")
+# --- END TEMP DIAGNOSTICS ----------------------------------------------------
 
 # ── Router include helper with explicit error logs ───────────────────────────
 _CRITICAL_ROUTERS_REQUIRED: Set[str] = {"ask", "mcp"}  # must be present for readiness

@@ -30,9 +30,7 @@ COPY . .
 EXPOSE 8000
 
 # Runtime env
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000
+ENV PYTHONPATH=/app
 
 # Healthcheck (adjust path if you have /health)
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=5 \

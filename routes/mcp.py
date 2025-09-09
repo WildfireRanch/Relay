@@ -12,6 +12,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
+router = APIRouter(prefix="/mcp", tags=["mcp"])
 
 # ── Logging shim (prefer core.logging) ───────────────────────────────────────
 try:

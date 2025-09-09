@@ -19,6 +19,8 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+router = APIRouter()
+
 from core.logging import log_event
 from agents.mcp_agent import run_mcp
 
@@ -34,7 +36,7 @@ except Exception:  # pragma: no cover
     codex_stream = None  # type: ignore
 
 
-router = APIRouter()
+
 
 # ── Tunables (env-overridable) ───────────────────────────────────────────────
 
