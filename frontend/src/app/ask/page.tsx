@@ -3,7 +3,7 @@
 // Notes:
 //  - Default lets backend planner choose route (no role sent).
 //  - Handles structured errors from the server and surfaces corr_id.
-//  - Reads the modern MCP envelope: final_text, routed_result, meta, etc.
+//  - Reads the MCP envelope: final_text, routed_result, meta, etc.
 //  - Renders grounding sources (if present) below each assistant turn.
 
 "use client";
@@ -16,59 +16,98 @@ import { API_ROOT } from "@/lib/api";
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
+type Role = "user" | "assistant";
+
+type GroundingItem = {
+  path?: string;
+  source?: string;
+  score?: number;
+};
+
+type ResponseObject = {
+  text?: string;
+  meta?: Record<string, unknown>;
+};
+
+type RoutedResultObject = {
+  response?: string | ResponseObject;
+  answer?: string;
+  grounding?: GroundingItem[];
+};
+
+type RoutedResult = RoutedResultObject | string;
+
+type KBMeta = {
+  hits?: number;
+  max_score?: number | null;
+};
+
+type Meta = {
+  request_id?: string;
+  corr_id?: string;
+  kb?: KBMeta;
+} & Record<string, unknown>;
+
+type Plan = {
+  final_answer?: string;
+} & Record<string, unknown>;
+
+type MCPDetail = {
+  error?: string;
+  corr_id?: string;
+} & Record<string, unknown>;
+
+// Envelope shape returned by /mcp/run
+type MCPEnvelope = {
+  plan?: Plan | null;
+  routed_result?: RoutedResult | null;
+  critics?: unknown;
+  context?: string;
+  files_used?: Array<Record<string, unknown>>;
+  meta?: Meta;
+  final_text?: string;
+  error?: string; // when server returns structured error JSON
+  corr_id?: string; // sometimes top-level on errors
+  message?: string; // optional human message on errors
+  detail?: MCPDetail | unknown; // legacy/global error wrapper
+};
+
 type Message = {
-  role: "user" | "assistant";
+  role: Role;
   content: string;
-  // Optional render extras (e.g., sources for assistant messages)
-  sources?: Array<{ path?: string; source?: string; score?: number }>;
+  sources?: GroundingItem[];
   corrId?: string;
 };
 
-type MCPGrounding = Array<{ path?: string; source?: string; score?: number }>;
-
-type MCPEnvelope = {
-  plan?: any;
-  routed_result?: { response?: string | { text?: string; meta?: any }; answer?: string; grounding?: MCPGrounding } | string;
-  critics?: any;
-  context?: string;
-  files_used?: any[];
-  meta?: { request_id?: string; corr_id?: string; kb?: { hits?: number; max_score?: number }; [k: string]: any };
-  final_text?: string;
-  error?: string; // on non-200 responses our route returns {error, corr_id, hint}
-  corr_id?: string; // sometimes top-level
-  message?: string; // optional human message on errors
-  detail?: any;     // legacy wrappers
-};
-
-const USER_ID = "bret-demo";
-const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
-const INPUT_KEY = `echo-chat-input-${USER_ID}`;
+type MCPGrounding = GroundingItem[];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
+const USER_ID = "bret-demo";
+const STORAGE_KEY = `echo-chat-history-${USER_ID}`;
+const INPUT_KEY = `echo-chat-input-${USER_ID}`;
+
 function isMessage(val: unknown): val is Message {
+  if (typeof val !== "object" || val === null) return false;
+  const rec = val as Record<string, unknown>;
   return (
-    typeof val === "object" &&
-    val !== null &&
-    (val as Message).role &&
-    typeof (val as Message).content === "string" &&
-    ((val as Message).role === "user" || (val as Message).role === "assistant")
+    (rec.role === "user" || rec.role === "assistant") &&
+    typeof rec.content === "string"
   );
 }
 
 function normalizeMessages(arr: unknown[]): Message[] {
-  return Array.isArray(arr)
-    ? arr
-        .filter(isMessage)
-        .map((msg) => ({
-          role: msg.role,
-          content: String(msg.content),
-          ...(Array.isArray(msg.sources) && { sources: msg.sources }),
-          ...(typeof msg.corrId === "string" && { corrId: msg.corrId }),
-        }))
-    : [];
+  if (!Array.isArray(arr)) return [];
+  return arr
+    .filter(isMessage)
+    .map((msg) => ({
+      role: msg.role,
+      content: String(msg.content),
+      sources: Array.isArray(msg.sources) ? msg.sources : undefined,
+      corrId: typeof msg.corrId === "string" ? msg.corrId : undefined,
+    }));
 }
 
 function toMDString(val: unknown): string {
@@ -82,14 +121,23 @@ function toMDString(val: unknown): string {
   }
 }
 
-// Prefer browser crypto for corr IDs, fallback to random
+// Feature-safe corr ID
 function newCorrId(): string {
-  try {
-    // @ts-ignore
-    return crypto?.randomUUID?.() || Math.random().toString(36).slice(2);
-  } catch {
-    return Math.random().toString(36).slice(2);
+  const globalCrypto = typeof window !== "undefined" ? window.crypto : undefined;
+  if (globalCrypto && "randomUUID" in globalCrypto) {
+    // `randomUUID` is present in modern browsers
+    return (globalCrypto as Crypto).randomUUID();
   }
+  return Math.random().toString(36).slice(2);
+}
+
+// Type guards to narrow routed_result shape
+function isRoutedResultObject(val: unknown): val is RoutedResultObject {
+  return typeof val === "object" && val !== null;
+}
+
+function isResponseObject(val: unknown): val is ResponseObject {
+  return typeof val === "object" && val !== null;
 }
 
 // Extract a friendly answer & sources from the MCP envelope
@@ -97,33 +145,37 @@ function extractAnswerAndSources(envelope: MCPEnvelope): {
   text: string;
   sources: MCPGrounding;
 } {
-  const rr = envelope?.routed_result as any;
+  const rr = envelope?.routed_result;
 
   // 1) final_text (preferred)
   let text =
-    (typeof envelope?.final_text === "string" && envelope.final_text) || "";
+    typeof envelope?.final_text === "string" ? envelope.final_text : "";
 
   // 2) routed_result.response (string or { text })
-  if (!text && rr && typeof rr === "object" && typeof rr.response === "string") {
-    text = rr.response;
-  }
-  if (!text && rr && typeof rr?.response === "object") {
-    const t = rr.response.text;
-    if (typeof t === "string" && t.trim()) text = t;
+  if (!text && rr && isRoutedResultObject(rr)) {
+    const resp = rr.response;
+    if (typeof resp === "string" && resp.trim()) {
+      text = resp;
+    } else if (isResponseObject(resp) && typeof resp.text === "string" && resp.text.trim()) {
+      text = resp.text;
+    }
   }
 
   // 3) routed_result.answer (string)
-  if (!text && rr && typeof rr?.answer === "string") {
-    text = rr.answer;
+  if (!text && rr && isRoutedResultObject(rr)) {
+    const ans = rr.answer;
+    if (typeof ans === "string" && ans.trim()) {
+      text = ans;
+    }
   }
 
   // 4) routed_result is itself a string
-  if (!text && typeof envelope?.routed_result === "string") {
-    text = envelope.routed_result;
+  if (!text && typeof rr === "string" && rr.trim()) {
+    text = rr;
   }
 
   // 5) planner final_answer (last resort)
-  if (!text && typeof envelope?.plan?.final_answer === "string") {
+  if (!text && envelope?.plan && typeof envelope.plan.final_answer === "string") {
     text = envelope.plan.final_answer;
   }
 
@@ -131,23 +183,21 @@ function extractAnswerAndSources(envelope: MCPEnvelope): {
 
   // Gather sources
   let sources: MCPGrounding = [];
-  if (rr && Array.isArray(rr.grounding)) {
+  if (rr && isRoutedResultObject(rr) && Array.isArray(rr.grounding)) {
     sources = rr.grounding;
   }
   return { text, sources };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Component
-// ─────────────────────────────────────────────────────────────────────────────
-
 export default function AskPage() {
   const [messages, setMessages] = useState<Message[]>(() => {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         try {
-          return normalizeMessages(JSON.parse(raw));
+          const parsed = JSON.parse(raw) as unknown;
+          return Array.isArray(parsed) ? normalizeMessages(parsed) : [];
         } catch {
           return [];
         }
@@ -157,7 +207,7 @@ export default function AskPage() {
   });
 
   const [input, setInput] = useState<string>("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load cached input on mount
@@ -204,11 +254,12 @@ export default function AskPage() {
           },
           body: JSON.stringify({
             query: userMessage,
-            // role: "planner", // ← let backend planner choose; uncomment only for explicit routing tests
+            // role: "planner", // ← let backend choose; uncomment only for explicit routing tests
             debug: true,
           }),
         });
 
+        // Try to parse JSON even when !ok (server returns structured error JSON)
         let data: MCPEnvelope | null = null;
         try {
           data = (await res.json()) as MCPEnvelope;
@@ -218,23 +269,29 @@ export default function AskPage() {
 
         if (!res.ok || !data) {
           const msg =
-            data?.message ||
-            data?.error ||
-            data?.detail?.error ||
+            (data?.message && String(data.message)) ||
+            (data?.error && String(data.error)) ||
+            (typeof data?.detail === "object" &&
+              data?.detail !== null &&
+              "error" in (data.detail as MCPDetail) &&
+              String((data.detail as MCPDetail).error)) ||
             "Server error";
+
           const cid =
-            data?.corr_id ||
-            data?.detail?.corr_id ||
-            (data?.meta as any)?.request_id ||
+            (typeof data?.corr_id === "string" && data.corr_id) ||
+            (typeof data?.detail === "object" &&
+              data?.detail !== null &&
+              "corr_id" in (data.detail as MCPDetail) &&
+              typeof (data.detail as MCPDetail).corr_id === "string" &&
+              (data.detail as MCPDetail).corr_id) ||
+            (data?.meta && typeof data.meta.request_id === "string" && data.meta.request_id) ||
             corrId;
 
           setMessages((msgs) => [
             ...msgs,
             {
               role: "assistant",
-              content: toMDString(
-                `**Error:** ${msg}\n\n_Corr ID:_ \`${cid}\``
-              ),
+              content: toMDString(`**Error:** ${msg}\n\n_Corr ID:_ \`${cid}\``),
               corrId: cid,
             },
           ]);
@@ -245,28 +302,28 @@ export default function AskPage() {
         // Extract final text and sources from the envelope
         const { text, sources } = extractAnswerAndSources(data);
 
+        const showSources = Array.isArray(sources) ? sources : undefined;
+        const displayCorrId =
+          (data.meta && (data.meta.corr_id || data.meta.request_id)) ||
+          data.corr_id ||
+          corrId;
+
         setMessages((msgs) => [
           ...msgs,
           {
             role: "assistant",
             content: toMDString(text),
-            sources: Array.isArray(sources) ? sources : undefined,
-            corrId:
-              data?.meta?.corr_id ||
-              data?.meta?.request_id ||
-              data?.corr_id ||
-              corrId,
+            sources: showSources,
+            corrId: typeof displayCorrId === "string" ? displayCorrId : undefined,
           },
         ]);
       } catch (err) {
-        console.error("⚠️ fetch error:", err);
+        // Network or parsing-level failure
         setMessages((msgs) => [
           ...msgs,
           {
             role: "assistant",
-            content: toMDString(
-              "**Network error** — unable to reach the server."
-            ),
+            content: toMDString("**Network error** — unable to reach the server."),
           },
         ]);
       } finally {
@@ -278,7 +335,7 @@ export default function AskPage() {
 
   // Render a single assistant bubble's source chips (if any)
   const SourcesChips: React.FC<{ sources?: MCPGrounding }> = ({ sources }) => {
-    if (!Array.isArray(sources) || !sources.length) return null;
+    if (!Array.isArray(sources) || sources.length === 0) return null;
     return (
       <div className="mt-2 flex flex-wrap gap-2">
         {sources.slice(0, 8).map((s, idx) => {
@@ -289,7 +346,7 @@ export default function AskPage() {
             <span
               key={`${label}-${idx}`}
               className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs bg-white/50 dark:bg-black/20"
-              title={label + score}
+              title={`${label}${score}`}
             >
               <span className="truncate max-w-[16rem]">{label}</span>
               <span className="opacity-60">{score}</span>
@@ -326,10 +383,7 @@ export default function AskPage() {
 
       <div className="flex-1 space-y-2 overflow-y-auto border rounded-xl p-4 bg-muted">
         {renderedMessages}
-
-        {loading && (
-          <div className="text-left text-green-600 italic">Thinking…</div>
-        )}
+        {loading && <div className="text-left text-green-600 italic">Thinking…</div>}
         <div ref={bottomRef} />
       </div>
 
@@ -346,7 +400,7 @@ export default function AskPage() {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
-              sendMessage();
+              void sendMessage();
             }
           }}
         />
