@@ -1,218 +1,245 @@
-# File: routes/mcp.py
-# Directory: routes
-# Purpose: Stable /mcp endpoints that orchestrate MCP (plan → context → dispatch via mcp_agent)
-#          and return a normalized, JSON-safe envelope. Includes diagnostics and
-#          bulletproof error handling so the UI never sees an opaque 500.
+# File: agents/mcp_agent.py
+# Purpose: Orchestrate MCP (plan → context → dispatch) with lazy imports to avoid
+#          circular imports; emit structured grounding and kb stats; robust logging.
+#
+# Contract (returned dict, all keys optional except meta.request_id):
+# {
+#   "plan": dict,
+#   "routed_result": dict|str,   # normalized to include "response" (str or {"text":...})
+#   "critics": list|None,
+#   "context": str,
+#   "files_used": list,
+#   "meta": {
+#     "request_id": str,         # corr_id propagated by routes
+#     "route": str,              # chosen route (echo/docs/codex/…)
+#     "origin": str,             # same as route or planner suggestion
+#     "timings_ms": { ... },     # planner/context/dispatch/total
+#     "planner_diag": dict,      # pass-through diagnostics from planner
+#     "kb": { "hits": int, "max_score": float|None }
+#   }
+# }
+#
+# NOTES
+# - NO top-level imports of other agents or core modules (prevents cycles).
+# - All heavy imports happen inside helper functions.
+# - This file MUST NOT import routes.* or main.
 
 from __future__ import annotations
 
-from typing import Optional, Literal, List, Dict, Any
+import os
+import time
+from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, HTTPException, Header
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, validator
-
-# ── Logging shim (prefer core.logging) ───────────────────────────────────────
+# ── Logging shim (prefer core.logging; fallback to simple logger) ────────────
 try:
-    from core.logging import log_event
+    from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
+    import logging
+    _LOG = logging.getLogger("relay.mcp_agent")
     def log_event(event: str, data: Dict[str, Any] | None = None) -> None:
-        import logging
-        logging.getLogger("relay.mcp").info("event=%s data=%s", event, (data or {}))
+        _LOG.info("event=%s data=%s", event, (data or {}))
 
-# ── Orchestrator (async) ─────────────────────────────────────────────────────
-# NOTE: mcp_agent internally decides which agent to use (e.g., echo_agent),
-#       so routes/mcp.py doesn't import echo_agent directly.
-from agents.mcp_agent import run_mcp  # must be async
-
-router = APIRouter(prefix="/mcp", tags=["mcp"])
-
-# ── Models ───────────────────────────────────────────────────────────────────
-AllowedRole = Literal["planner", "echo", "docs", "codex", "control"]
-
-class McpRunBody(BaseModel):
-    query: str = Field(..., min_length=1, max_length=8000, description="User prompt to execute via MCP")
-    role: Optional[AllowedRole] = Field(default="planner", description="Route hint; planner by default")
-    files: Optional[List[str]] = Field(default=None, description="Optional file IDs/paths")
-    topics: Optional[List[str]] = Field(default=None, description="Optional topics/tags")
-    debug: bool = Field(default=False, description="Enable extra debug where supported")
-    timeout_s: int = Field(default=45, ge=1, le=120, description="Soft timeout hint (agent may ignore)")
-
-    @validator("query")
-    def _strip_query(cls, v: str) -> str:
-        s = (v or "").strip()
-        if not s:
-            raise ValueError("query must be non-empty")
-        return s
+# ── Tunables (env) ───────────────────────────────────────────────────────────
+KB_MIN_SCORE_FLOOR: float = float(os.getenv("KB_MIN_SCORE_FLOOR", "0.0"))  # drop weak matches
+KB_TOPK_LIMIT: int = int(os.getenv("KB_TOPK_LIMIT", "10"))                 # cap sources
+MCP_DEFAULT_ROUTE: str = os.getenv("MCP_DEFAULT_ROUTE", "echo")            # fallback route
 
 
-class McpEnvelope(BaseModel):
-    # Mirrors /ask envelope for UI consistency; `final_text` included for convenience.
-    plan: Optional[Dict[str, Any]] = None
-    routed_result: Optional[Dict[str, Any]] = None
-    critics: Optional[List[Dict[str, Any]]] = None
-    context: str = ""
-    files_used: List[Dict[str, Any]] = []
-    meta: Dict[str, Any] = {}
-    final_text: str = ""
+# ── Small utilities (pure, no imports) ───────────────────────────────────────
+
+def _max_score(matches: List[Dict[str, Any]]) -> Optional[float]:
+    """Return max(score) across matches (None if empty or unparseable)."""
+    mx = None
+    for m in matches or []:
+        s = m.get("score")
+        try:
+            f = float(s) if s is not None else None
+        except Exception:
+            f = None
+        if f is None:
+            continue
+        mx = f if mx is None else max(mx, f)
+    return mx
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-def _json_safe(obj: Any) -> Any:
-    """Coerce arbitrary structures to JSON-safe values."""
-    try:
-        if isinstance(obj, (str, int, float, bool)) or obj is None:
-            return obj
-        if isinstance(obj, dict):
-            return {str(k): _json_safe(v) for k, v in obj.items()}
-        if isinstance(obj, (list, tuple, set)):
-            return [_json_safe(x) for x in obj]
-        return str(obj)
-    except Exception:
-        return "[unserializable]"
+def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Normalize grounding matches and apply floor + top-k."""
+    out: List[Dict[str, Any]] = []
+    for m in matches or []:
+        path = (m.get("path") or "").strip()
+        try:
+            score = float(m.get("score")) if m.get("score") is not None else 0.0
+        except Exception:
+            score = 0.0
+        if not path:
+            continue
+        if score < KB_MIN_SCORE_FLOOR:
+            continue
+        out.append({"path": path, "score": score})
+    return out[:KB_TOPK_LIMIT]
 
 
-def _final_text_from(plan: Any, routed_result: Any) -> str:
-    """Preferred extraction order: rr.response → rr.answer → plan.final_answer → ''."""
-    if isinstance(routed_result, dict):
-        txt = routed_result.get("response") or routed_result.get("answer") or ""
-        if isinstance(txt, str) and txt.strip():
-            return txt
-        resp = routed_result.get("response")
-        if isinstance(resp, dict):
-            txt = resp.get("text") or ""
-            if isinstance(txt, str) and txt.strip():
-                return txt
-    elif isinstance(routed_result, str) and routed_result.strip():
-        return routed_result
-
-    if isinstance(plan, dict):
-        fa = plan.get("final_answer")
-        if isinstance(fa, str) and fa.strip():
-            return fa
-
-    return ""
-
-
-def _make_error(status: int, err: str, corr_id: str, hint: Optional[str] = None) -> JSONResponse:
-    payload: Dict[str, Any] = {"error": err, "corr_id": corr_id}
-    if hint:
-        payload["hint"] = hint
-    return JSONResponse(status_code=status, content=payload)
-
-
-# ── Diagnostics ──────────────────────────────────────────────────────────────
-@router.get("/ping")
-async def mcp_ping() -> Dict[str, str]:
-    # Include an impl signature so you can confirm you're on the new router.
-    return {"status": "ok", "impl": "routes.mcp v2"}
-
-@router.get("/diag")
-async def mcp_diag() -> Dict[str, Any]:
-    """Lightweight import/wiring check (no side effects)."""
-    out = {"imports": {}, "checks": {}}
-    try:
-        import agents.mcp_agent as m  # existing orchestrator
-        out["imports"]["mcp_agent"] = True
-        out["checks"]["has_run_mcp"] = hasattr(m, "run_mcp")
-    except Exception as e:
-        out["imports"]["mcp_agent"] = f"ERR: {e}"
-
-    try:
-        import core.context_engine as ce
-        out["imports"]["context_engine"] = True
-        out["checks"]["ce_has_build_context"] = hasattr(ce, "build_context")
-    except Exception as e:
-        out["imports"]["context_engine"] = f"ERR: {e}"
-
-    # NOTE: no relay_mcp import here by design (module does not exist in this repo)
-    return out
-
-
-# ── Main endpoint ────────────────────────────────────────────────────────────
-@router.post("/run", response_model=McpEnvelope)
-async def mcp_run(
-    body: McpRunBody,
-    request: Request,
-    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
-    x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id"),
-):
+def _shape_routed_result(raw: Any) -> Dict[str, Any]:
     """
-    Execute the MCP pipeline (via mcp_agent) and return a normalized envelope.
-    Never leaks raw exceptions. Frontend always gets JSON with a corr_id.
+    Normalize a routed result to at least:
+      {"response": str|{"text": str}, "route": str, "grounding": optional[list]}
     """
-    # Correlation ID: prefer X-Corr-Id → X-Request-Id → request.state.corr_id → new UUID
-    corr_id = (
-        (x_corr_id or "").strip()
-        or (x_request_id or "").strip()
-        or getattr(request.state, "corr_id", None)
-        or uuid4().hex
-    )
+    if isinstance(raw, dict):
+        route = raw.get("route") or MCP_DEFAULT_ROUTE
+        response = raw.get("response")
+        if isinstance(response, dict):
+            txt = response.get("text") or raw.get("answer") or ""
+            meta = response.get("meta") or {}
+            return {"response": {"text": txt, "meta": meta}, "route": route}
+        if isinstance(response, str):
+            return {"response": response, "route": route}
+        if isinstance(raw.get("answer"), str):
+            return {"response": raw["answer"], "route": route}
+        return {"response": "", "route": route}
+    elif isinstance(raw, str):
+        return {"response": raw, "route": MCP_DEFAULT_ROUTE}
+    return {"response": "", "route": MCP_DEFAULT_ROUTE}
 
-    log_event(
-        "mcp_run_received",
-        {
-            "corr_id": corr_id,
-            "role": (body.role or "planner"),
-            "files_count": len(body.files or []),
-            "topics_count": len(body.topics or []),
-            "debug": body.debug,
-        },
-    )
 
-    # Orchestrate
+# ── Lazy-imported stage helpers (prevents circular imports) ──────────────────
+
+def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
+    """
+    Call into the planner. Imported LAZILY to avoid agent↔agent cycles.
+    Planner should return a dict that MAY include {"route": "...", "_diag": {...}, "final_answer": "..."}.
+    """
     try:
-        result = await run_mcp(
-            query=body.query,                 # already stripped by validator
-            role=(body.role or "planner"),
-            files=body.files or [],
-            topics=body.topics or [],
-            user_id="anonymous",
-            debug=body.debug,
-            corr_id=corr_id,
-            # timeout_s=body.timeout_s,  # keep as future param if your agent supports it
-        )
-    except HTTPException:
-        # Allow explicit HTTP exceptions to surface as-is (they already carry JSON)
-        raise
+        from agents.planner_agent import plan  # type: ignore  # LAZY
     except Exception as e:
-        log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e)})
-        return _make_error(500, "mcp_failed", corr_id, hint="See server logs for mcp_run_exception")
+        log_event("mcp_plan_import_error", {"corr_id": corr_id, "error": str(e)})
+        return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_import_error": True, "error": str(e)}}
 
-    # Normalize & JSON-coerce the result
-    if not isinstance(result, dict):
-        result = {"routed_result": result}
+    try:
+        return plan(query=query, files=files, topics=topics, debug=debug, corr_id=corr_id) or {}
+    except Exception as e:
+        log_event("mcp_plan_error", {"corr_id": corr_id, "error": str(e)})
+        return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_error": True, "error": str(e)}}
 
-    plan = result.get("plan") if isinstance(result.get("plan"), dict) else None
-    rr = result.get("routed_result")
-    critics = result.get("critics")
-    context = result.get("context") or ""
-    files_used = result.get("files_used") or []
-    meta_in = result.get("meta") or {}
 
-    final_text = _final_text_from(plan, rr)
+def _build_context(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
+    """
+    Build retrieval context and provide STRUCTURED matches.
+    Expected return: {"context": str, "files_used": [...], "matches": [{"path":..., "score":...}, ...]}
+    """
+    try:
+        from core.context_engine import build_context  # type: ignore  # LAZY
+    except Exception as e:
+        log_event("mcp_ctx_import_error", {"corr_id": corr_id, "error": str(e)})
+        return {"context": "", "files_used": [], "matches": []}
 
-    envelope = McpEnvelope(
-        plan=_json_safe(plan) if plan else None,
-        routed_result=_json_safe(rr) if isinstance(rr, (dict, str)) else {},
-        critics=_json_safe(critics) if critics is not None else None,
-        context=str(context or ""),
-        files_used=_json_safe(files_used) if isinstance(files_used, list) else [],
-        meta={**_json_safe(meta_in), "request_id": corr_id},
-        final_text=final_text or "",
-    )
+    try:
+        ctx = build_context(query=query, files=files, topics=topics, debug=debug, corr_id=corr_id) or {}
+        context = str(ctx.get("context") or "")
+        files_used = ctx.get("files_used") or []
+        matches = _filter_matches(ctx.get("matches") or [])
+        return {"context": context, "files_used": files_used, "matches": matches}
+    except Exception as e:
+        log_event("mcp_context_error", {"corr_id": corr_id, "error": str(e)})
+        return {"context": "", "files_used": [], "matches": []}
 
-    log_event(
-        "mcp_run_completed",
-        {
-            "corr_id": corr_id,
-            "route": envelope.meta.get("route"),
-            "kb_hits": ((envelope.meta.get("kb") or {}).get("hits")),
-            "kb_max_score": ((envelope.meta.get("kb") or {}).get("max_score")),
-            "final_len": len(envelope.final_text or ""),
+
+def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
+    """
+    Dispatch the request to a concrete agent. Default to echo.
+    Never raise; return {"response": str|{"text":...}, "route": str}.
+    """
+    # In the future you can branch on `route` here (docs/codex/control/etc).
+    try:
+        from agents.echo_agent import invoke as echo_invoke  # type: ignore  # LAZY
+        text = echo_invoke(query=query, context=context, user_id=user_id, corr_id=corr_id)
+        return {"response": text, "route": route or MCP_DEFAULT_ROUTE}
+    except Exception as e:
+        log_event("mcp_dispatch_error", {"corr_id": corr_id, "error": str(e), "route": route})
+        return {"response": "", "route": route or MCP_DEFAULT_ROUTE}
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+async def run_mcp(
+    query: str,
+    role: Optional[str] = "planner",
+    files: Optional[List[str]] = None,
+    topics: Optional[List[str]] = None,
+    user_id: str = "anonymous",
+    debug: bool = False,
+    corr_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Orchestrate plan → context → dispatch.
+    - Uses LAZY imports inside helpers to avoid circular imports.
+    - Attaches structured grounding; computes kb stats.
+    - Emits detailed logs for each stage with corr_id.
+    - Returns a stable dict (never raises), so routes can normalize safely.
+    """
+    cid = corr_id or str(uuid4())
+    t0 = time.perf_counter()
+
+    log_event("mcp_start", {"corr_id": cid, "role": role, "user": user_id, "debug": debug})
+
+    # 1) Plan
+    t_pl0 = time.perf_counter()
+    plan = _plan(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=cid)
+    t_pl1 = time.perf_counter()
+
+    route = plan.get("route") or role or MCP_DEFAULT_ROUTE
+
+    # 2) Context
+    t_ctx0 = time.perf_counter()
+    ctx = _build_context(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=cid)
+    context = str(ctx.get("context") or "")
+    files_used = ctx.get("files_used") or []
+    matches = ctx.get("matches") or []  # already filtered + top-k
+    t_ctx1 = time.perf_counter()
+
+    # 3) Dispatch
+    t_ds0 = time.perf_counter()
+    routed_raw = _dispatch(route=route, query=query, context=context, user_id=user_id, debug=debug, corr_id=cid)
+    t_ds1 = time.perf_counter()
+    routed_result = _shape_routed_result(routed_raw)
+
+    # 4) Attach structured grounding to result
+    if matches and isinstance(routed_result, dict):
+        # Preserve existing grounding if present; otherwise attach our matches
+        if not isinstance(routed_result.get("grounding"), list) or not routed_result.get("grounding"):
+            routed_result["grounding"] = matches
+
+    # 5) Meta (timings + kb stats)
+    meta: Dict[str, Any] = {
+        "request_id": cid,
+        "origin": plan.get("route") or route,
+        "route": route,
+        "timings_ms": {
+            "planner_ms": int((t_pl1 - t_pl0) * 1000),
+            "context_ms": int((t_ctx1 - t_ctx0) * 1000),
+            "dispatch_ms": int((t_ds1 - t_ds0) * 1000),
+            "total_ms": int((time.perf_counter() - t0) * 1000),
         },
-    )
+        "planner_diag": plan.get("_diag") or {},
+        "kb": {
+            "hits": len(matches),
+            "max_score": _max_score(matches),
+        },
+    }
 
-    return envelope
+    log_event("mcp_done", {
+        "corr_id": cid,
+        "route": route,
+        "kb_hits": meta["kb"]["hits"],
+        "kb_max_score": meta["kb"]["max_score"],
+        "total_ms": meta["timings_ms"]["total_ms"],
+    })
 
+    return {
+        "plan": plan,
+        "routed_result": routed_result,
+        "critics": None,    # plug your critic suite here if desired
+        "context": context,
+        "files_used": files_used,
+        "meta": meta,
+    }
