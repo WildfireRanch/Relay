@@ -1,8 +1,8 @@
 # File: routes/mcp.py
 # Directory: routes
-# Purpose: Stable /mcp endpoints that orchestrate the MCP pipeline (plan → context → dispatch)
+# Purpose: Stable /mcp endpoints that orchestrate MCP (plan → context → dispatch via mcp_agent)
 #          and return a normalized, JSON-safe envelope. Includes diagnostics and
-#          bulletproof error handling so UI never gets an opaque 500.
+#          bulletproof error handling so the UI never sees an opaque 500.
 
 from __future__ import annotations
 
@@ -15,13 +15,29 @@ from pydantic import BaseModel, Field, validator
 
 # ── Logging shim (prefer core.logging) ───────────────────────────────────────
 try:
-    from core.logging import log_event
+    from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
+    import logging, json
+    _LOG = logging.getLogger("relay.mcp")  # keep the 'relay.mcp' channel
+
     def log_event(event: str, data: Dict[str, Any] | None = None) -> None:
-        import logging
-        logging.getLogger("relay.mcp").info("event=%s data=%s", event, (data or {}))
+        """
+        Fallback logger that mirrors core.logging.log_event signature.
+        Writes a single-line, JSON-ish payload so corr_id is easy to grep.
+        """
+        payload = data or {}
+        try:
+            # Avoid raising if payload isn't JSON-serializable
+            msg = json.dumps({"event": event, **payload}, default=str)
+        except Exception:
+            # Absolute safety net
+            msg = f'{{"event": "{event}", "payload": "[unserializable]"}}'
+        _LOG.info(msg)
+
 
 # ── Orchestrator (async) ─────────────────────────────────────────────────────
+# NOTE: mcp_agent internally decides which agent to use (e.g., echo_agent),
+#       so routes/mcp.py doesn't import echo_agent directly.
 from agents.mcp_agent import run_mcp  # must be async
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
@@ -35,7 +51,7 @@ class McpRunBody(BaseModel):
     files: Optional[List[str]] = Field(default=None, description="Optional file IDs/paths")
     topics: Optional[List[str]] = Field(default=None, description="Optional topics/tags")
     debug: bool = Field(default=False, description="Enable extra debug where supported")
-    timeout_s: int = Field(default=45, ge=1, le=120, description="Soft timeout hint")
+    timeout_s: int = Field(default=45, ge=1, le=120, description="Soft timeout hint (agent may ignore)")
 
     @validator("query")
     def _strip_query(cls, v: str) -> str:
@@ -46,7 +62,7 @@ class McpRunBody(BaseModel):
 
 
 class McpEnvelope(BaseModel):
-    # Mirrors /ask envelope for UI consistency; `final_text` is included for convenience.
+    # Mirrors /ask envelope for UI consistency; `final_text` included for convenience.
     plan: Optional[Dict[str, Any]] = None
     routed_result: Optional[Dict[str, Any]] = None
     critics: Optional[List[Dict[str, Any]]] = None
@@ -66,7 +82,7 @@ def _json_safe(obj: Any) -> Any:
             return {str(k): _json_safe(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple, set)):
             return [_json_safe(x) for x in obj]
-        return str(obj)  # fallback
+        return str(obj)
     except Exception:
         return "[unserializable]"
 
@@ -77,7 +93,6 @@ def _final_text_from(plan: Any, routed_result: Any) -> str:
         txt = routed_result.get("response") or routed_result.get("answer") or ""
         if isinstance(txt, str) and txt.strip():
             return txt
-        # sometimes downstream nests: {"response": {"text": "..."}}
         resp = routed_result.get("response")
         if isinstance(resp, dict):
             txt = resp.get("text") or ""
@@ -112,7 +127,7 @@ async def mcp_diag() -> Dict[str, Any]:
     """Lightweight import/wiring check (no side effects)."""
     out = {"imports": {}, "checks": {}}
     try:
-        import agents.mcp_agent as m
+        import agents.mcp_agent as m  # existing orchestrator
         out["imports"]["mcp_agent"] = True
         out["checks"]["has_run_mcp"] = hasattr(m, "run_mcp")
     except Exception as e:
@@ -125,13 +140,7 @@ async def mcp_diag() -> Dict[str, Any]:
     except Exception as e:
         out["imports"]["context_engine"] = f"ERR: {e}"
 
-    try:
-        import agents.relay_mcp as rm
-        out["imports"]["relay_mcp"] = True
-        out["checks"]["relay_mcp_has_dispatch"] = hasattr(rm, "dispatch")
-    except Exception as e:
-        out["imports"]["relay_mcp"] = f"ERR: {e}"
-
+    # NOTE: no relay_mcp import here by design (module does not exist in this repo)
     return out
 
 
@@ -144,7 +153,7 @@ async def mcp_run(
     x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id"),
 ):
     """
-    Execute the MCP pipeline and return a normalized envelope.
+    Execute the MCP pipeline (via mcp_agent) and return a normalized envelope.
     Never leaks raw exceptions. Frontend always gets JSON with a corr_id.
     """
     # Correlation ID: prefer X-Corr-Id → X-Request-Id → request.state.corr_id → new UUID
@@ -169,16 +178,14 @@ async def mcp_run(
     # Orchestrate
     try:
         result = await run_mcp(
-            query=body.query,                        # already stripped by validator
+            query=body.query,                 # already stripped by validator
             role=(body.role or "planner"),
             files=body.files or [],
             topics=body.topics or [],
             user_id="anonymous",
             debug=body.debug,
             corr_id=corr_id,
-            # Note: timeout_s is a hint; if your agent ignores it, that's fine.
-            # Keep here for future support without breaking the API surface.
-            # timeout_s=body.timeout_s,
+            # timeout_s=body.timeout_s,  # keep as future param if your agent supports it
         )
     except HTTPException:
         # Allow explicit HTTP exceptions to surface as-is (they already carry JSON)
@@ -189,7 +196,6 @@ async def mcp_run(
 
     # Normalize & JSON-coerce the result
     if not isinstance(result, dict):
-        # Downstream returned a bare string/obj; wrap it.
         result = {"routed_result": result}
 
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else None
