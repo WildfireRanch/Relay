@@ -19,51 +19,34 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+# Router (no prefix; paths are /ask, /ask/stream, /ask/codex_stream)
 router = APIRouter()
 
-from core.logging import log_event
-from agents.mcp_agent import run_mcp
-
-# Optional streaming agents (best-effort imports)
+# Logging is safe to import at module load (does not import routes/agents)
 try:
-    from agents.echo_agent import stream as echo_stream
+    from core.logging import log_event
 except Exception:  # pragma: no cover
-    echo_stream = None  # type: ignore
-
-try:
-    from agents.codex_agent import stream as codex_stream
-except Exception:  # pragma: no cover
-    codex_stream = None  # type: ignore
-
-
-
+    import logging, json
+    _LOG = logging.getLogger("relay.ask")
+    def log_event(event: str, data: Dict[str, Any] | None = None) -> None:
+        payload = {"event": event, **(data or {})}
+        try:
+            _LOG.info(json.dumps(payload, default=str))
+        except Exception:
+            _LOG.info("event=%s data=%s", event, (data or {}))
 
 # ── Tunables (env-overridable) ───────────────────────────────────────────────
 
-# Minimum relevance score (0..1) to accept grounding as sufficient.
 KB_SCORE_THRESHOLD: float = float(os.getenv("KB_SCORE_THRESHOLD", "0.35"))
-
-# Minimum number of grounded hits (documents/sections) to consider.
 KB_MIN_HITS: int = int(os.getenv("KB_MIN_HITS", "1"))
-
-# Anti-parrot: if we detect any contiguous overlap >= this many characters
-# between final_text and provided context, we treat it as a paste.
 ANTI_PARROT_MAX_CONTIGUOUS_MATCH: int = int(os.getenv("ANTI_PARROT_MAX_CONTIGUOUS_MATCH", "180"))
-
-# Anti-parrot: n-gram Jaccard similarity threshold (0..1) across 5-grams.
 ANTI_PARROT_JACCARD: float = float(os.getenv("ANTI_PARROT_JACCARD", "0.35"))
-
-# Optional hard maximum final_text length to avoid pathological outputs
 FINAL_TEXT_MAX_LEN: int = int(os.getenv("FINAL_TEXT_MAX_LEN", "20000"))
-
 
 # ── Request / Response models (local, non-breaking) ─────────────────────────
 
 class AskRequest(BaseModel):
-    """
-    Validated payload for /ask (POST).
-    Supports legacy 'question' alias; we store into canonical 'query'.
-    """
+    """Validated payload for /ask (POST). Supports legacy 'question' alias."""
     model_config = {"populate_by_name": True}
     query: Annotated[str, Field(min_length=3, description="User question/prompt.", alias="question")] = ...
     role: Optional[str] = Field("planner", description="Planner (default) or a specific route key.")
@@ -74,10 +57,7 @@ class AskRequest(BaseModel):
 
 
 class AskResponse(BaseModel):
-    """
-    Normalized response from MCP pipeline (UI reads `final_text`).
-    We keep your existing shape to avoid breaking the frontend.
-    """
+    """Normalized response from MCP pipeline (UI reads `final_text`)."""
     plan: Optional[Dict[str, Any]] = None
     routed_result: Union[Dict[str, Any], str, None] = None
     critics: Optional[List[Dict[str, Any]]] = None
@@ -94,7 +74,6 @@ class StreamRequest(BaseModel):
     context: Optional[str] = Field(default="", description="Optional prebuilt context")
     user_id: str = Field("anonymous")
 
-
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 def _json_safe(obj: Any) -> Any:
@@ -106,7 +85,6 @@ def _json_safe(obj: Any) -> Any:
             return {str(k): _json_safe(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple, set)):
             return [_json_safe(x) for x in obj]
-        # Fallback to string for exotic objects
         return str(obj)
     except Exception:
         return "[unserializable]"
@@ -135,11 +113,15 @@ def _extract_final_text(plan: Any, routed_result: Any) -> str:
       3) plan.final_answer
       4) "" (never None)
     """
-    # routed_result may be dict/str/None
     if isinstance(routed_result, dict):
         text = routed_result.get("response") or routed_result.get("answer") or ""
         if isinstance(text, str) and text.strip():
             return text
+        resp = routed_result.get("response")
+        if isinstance(resp, dict):
+            t = resp.get("text") or ""
+            if isinstance(t, str) and t.strip():
+                return t
     elif isinstance(routed_result, str) and routed_result.strip():
         return routed_result
 
@@ -159,7 +141,7 @@ def _truncate(s: str, max_len: int) -> str:
 
 def _detect_grounding(meta: Dict[str, Any], routed_result: Any) -> Dict[str, Any]:
     """
-    Returns a dict with:
+    Returns:
       {
         "hits": int,
         "max_score": float|None,
@@ -182,7 +164,6 @@ def _detect_grounding(meta: Dict[str, Any], routed_result: Any) -> Dict[str, Any
         except Exception:
             max_score = None
 
-    # Fallbacks based on routed_result shape
     has_attr = False
     if isinstance(routed_result, dict):
         for k in ("grounding", "sources", "citations", "attributions"):
@@ -196,21 +177,14 @@ def _detect_grounding(meta: Dict[str, Any], routed_result: Any) -> Dict[str, Any
 
 
 def _anti_parrot_triggered(final_text: str, context: str) -> bool:
-    """
-    Detects large verbatim copy by searching for a contiguous overlap >= ANTI_PARROT_MAX_CONTIGUOUS_MATCH.
-    Uses a simple sliding window regex approach for robustness and speed.
-    """
+    """Detect large verbatim copy by contiguous overlap ≥ threshold."""
     if not final_text or not context:
         return False
-    # Only bother if the candidate output is longer than the threshold
     if len(final_text) < ANTI_PARROT_MAX_CONTIGUOUS_MATCH:
         return False
-
-    # Check overlapping chunks from final_text against context
     step = max(ANTI_PARROT_MAX_CONTIGUOUS_MATCH // 2, 60)
     for i in range(0, len(final_text) - ANTI_PARROT_MAX_CONTIGUOUS_MATCH + 1, step):
         snippet = final_text[i : i + ANTI_PARROT_MAX_CONTIGUOUS_MATCH]
-        # Make a moderately permissive pattern (escape most special chars)
         pattern = re.escape(snippet)
         if re.search(pattern, context):
             return True
@@ -233,19 +207,13 @@ def _make_no_answer_meta(reason: str, base_meta: Dict[str, Any], corr_id: str) -
     return meta
 
 
-# Parse sources out of the pretty "Top Matches" block in context, e.g.:
-# • **/path/to/file.md** — _(tier: ..., score: 0.552)
 GROUNDING_LINE_RE = re.compile(
     r"[\u2022\-\*]\s+\*\*(?P<path>[^*]+)\*\*.*?\(score:\s*(?P<score>0\.\d+|1\.0+)\)",
     re.IGNORECASE,
 )
 
-
 def _extract_grounding_from_context(context: str):
-    """
-    Parse 'Semantic Retrieval (Top Matches)' lines in the context block.
-    Returns (hits, max_score, sources[]) where sources = [{path, score}]
-    """
+    """Parse 'Top Matches' lines in the context block → (hits, max_score, sources[])."""
     hits = 0
     max_score = None
     sources: List[Dict[str, Any]] = []
@@ -265,9 +233,7 @@ def _extract_grounding_from_context(context: str):
 
 
 def _jaccard_ngrams(a: str, b: str, n: int = 5) -> float:
-    """
-    Simple n-gram Jaccard similarity to catch paraphrased pastes.
-    """
+    """Simple n-gram Jaccard similarity to catch paraphrased pastes."""
     def ngrams(s: str):
         toks = [t for t in re.findall(r"\w+", s.lower()) if t]
         return Counter(tuple(toks[i:i+n]) for i in range(0, max(0, len(toks)-n+1)))
@@ -277,7 +243,6 @@ def _jaccard_ngrams(a: str, b: str, n: int = 5) -> float:
     inter = sum((sa & sb).values())
     union = sum((sa | sb).values())
     return inter / union if union else 0.0
-
 
 # ── Routes ──────────────────────────────────────────────────────────────────
 
@@ -291,6 +256,14 @@ async def ask(payload: AskRequest, request: Request):
     Keeps response shape stable for the frontend (final_text or "").
     Details surface via `meta`.
     """
+    # 🔽 Lazy import here to avoid circular import at module load
+    try:
+        from agents.mcp_agent import run_mcp  # type: ignore
+    except Exception as e:
+        corr_id = request.headers.get("x-corr-id") or str(uuid4())
+        log_event("ask_import_error", {"corr_id": corr_id, "error": str(e)})
+        raise HTTPException(status_code=500, detail={"error": "mcp_import_failed", "corr_id": corr_id})
+
     q = (payload.query or "").strip()
     if not q:
         raise HTTPException(
@@ -300,7 +273,7 @@ async def ask(payload: AskRequest, request: Request):
 
     corr_id = request.headers.get("x-corr-id") or str(uuid4())
     try:
-        request.state.corr_id = corr_id  # for downstream logging
+        request.state.corr_id = corr_id
     except Exception:
         pass
 
@@ -322,7 +295,7 @@ async def ask(payload: AskRequest, request: Request):
         },
     )
 
-    # Run MCP (planner/docs/codex orchestration)
+    # Run MCP
     try:
         mcp_raw = await run_mcp(
             query=q,
@@ -331,7 +304,7 @@ async def ask(payload: AskRequest, request: Request):
             topics=topics,
             user_id=user_id,
             debug=debug,
-            corr_id=corr_id,  # if your agent supports it, great; otherwise ignored
+            corr_id=corr_id,
         )
     except Exception as e:
         log_event(
@@ -363,16 +336,14 @@ async def ask(payload: AskRequest, request: Request):
             detail={"error": "normalize_failed", "message": "Failed to normalize MCP result.", "corr_id": corr_id},
         )
 
-    # ---- Grounding detection (prefer structured; fallback to context parsing) ----
+    # Grounding detection (prefer structured; fallback to context parsing)
     grounding = _detect_grounding(upstream_meta if isinstance(upstream_meta, dict) else {}, routed_result)
-
     if grounding["hits"] == 0 and not grounding["has_attribution"]:
         hits, max_score_ctx, sources = _extract_grounding_from_context(context)
         if hits > 0:
             grounding["hits"] = hits
             grounding["max_score"] = max_score_ctx if max_score_ctx is not None else grounding["max_score"]
             grounding["has_attribution"] = True
-            # Surface parsed sources back to client for transparency
             if isinstance(routed_result, dict) and not routed_result.get("grounding"):
                 routed_result.setdefault("grounding", sources)
 
@@ -396,14 +367,12 @@ async def ask(payload: AskRequest, request: Request):
             },
         )
 
-    # ---- Anti-parrot guard (only if not already gated) ----
-    anti_parrot = False
+    # Anti-parrot (only if not already gated)
     if gated_no_answer_reason is None:
         final_text_candidate = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
         contiguous_hit = _anti_parrot_triggered(final_text_candidate, context)
         jaccard = _jaccard_ngrams(final_text_candidate, context, n=5)
         if contiguous_hit or jaccard >= ANTI_PARROT_JACCARD:
-            anti_parrot = True
             gated_no_answer_reason = "Anti-parrot guard: output mirrors source context"
             log_event(
                 "ask_anti_parrot_blocked",
@@ -417,36 +386,21 @@ async def ask(payload: AskRequest, request: Request):
                 },
             )
 
-    # ---- Shape meta and final_text according to gate results ----
+    # Shape meta + final_text
     meta: Dict[str, Any] = {"role": role, "debug": debug, "corr_id": corr_id}
     if isinstance(upstream_meta, dict):
-        # upstream meta may include origin, timings_ms, kb.*, request_id, etc.
         meta.update(_json_safe(upstream_meta))
-
-    # Always reflect grounding stats in meta for observability
-    meta.update({
-        "kb_hits": grounding["hits"],
-        "kb_max_score": grounding["max_score"],
-        "kb_has_attribution": has_attr,
-    })
+    meta.update({"kb_hits": grounding["hits"], "kb_max_score": grounding["max_score"], "kb_has_attribution": has_attr})
 
     if gated_no_answer_reason:
-        # No-answer outcome: clear final_text, record reason & flags
         meta = _make_no_answer_meta(gated_no_answer_reason, meta, corr_id)
         final_text_out = ""
     else:
         final_text_out = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
-        meta.update(
-            {
-                "no_answer": False,
-                "anti_parrot_triggered": False,
-            }
-        )
+        meta.update({"no_answer": False, "anti_parrot_triggered": False})
 
-    # Ensure routed_result is JSON-safe (only after we've extracted text)
     routed_result_safe = _json_safe(routed_result)
 
-    # Quick ops summary
     log_event(
         "ask_response_summary",
         {
@@ -474,20 +428,19 @@ async def ask(payload: AskRequest, request: Request):
 
 @router.get("/ask")
 async def ask_get(question: Annotated[str, Query(min_length=3)], request: Request):
-    """
-    Legacy GET shim: /ask?question=...
-    Reuses POST logic by constructing an AskRequest, so behavior stays identical.
-    """
+    """Legacy GET shim: /ask?question=..."""
     payload = AskRequest.model_validate({"question": question})
     return await ask(payload, request)
 
 
 @router.post("/ask/stream")
 async def ask_stream(payload: StreamRequest, request: Request):
-    """
-    Streamed answer via Echo. Returns 501 if echo streaming is unavailable.
-    Returns plain text chunks (compatible with your frontend's current reader).
-    """
+    """Streamed answer via Echo (lazy-imported)."""
+    try:
+        from agents.echo_agent import stream as echo_stream  # type: ignore
+    except Exception:
+        echo_stream = None  # type: ignore
+
     if echo_stream is None:
         raise HTTPException(status_code=501, detail={"error": "not_implemented", "message": "Echo streaming not available."})
 
@@ -510,9 +463,12 @@ async def ask_stream(payload: StreamRequest, request: Request):
 
 @router.post("/ask/codex_stream")
 async def ask_codex_stream(payload: StreamRequest, request: Request):
-    """
-    Streamed code/patch output via Codex agent. Returns 501 if codex streaming is unavailable.
-    """
+    """Streamed code/patch output via Codex (lazy-imported)."""
+    try:
+        from agents.codex_agent import stream as codex_stream  # type: ignore
+    except Exception:
+        codex_stream = None  # type: ignore
+
     if codex_stream is None:
         raise HTTPException(status_code=501, detail={"error": "not_implemented", "message": "Codex streaming not available."})
 
