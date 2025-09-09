@@ -2,10 +2,10 @@
 # Purpose: FastAPI entrypoint for Relay Command Center (ask, mcp, status, docs, webhooks, integrations)
 # Notes:
 #   - /health, /live: pure liveness (always 200) — good for Railway healthcheck
-#   - /ready: strict readiness (503 until required env/dirs exist)
+#   - /ready: strict readiness (503 until required env/dirs exist AND critical routers mounted)
 #   - Creates LOG_ROOT/SESSIONS_DIR/AUDIT_DIR on boot; safe fallback to /tmp if needed
-#   - OpenTelemetry: enabled only when OTEL_EXPORTER_OTLP_ENDPOINT is a valid http(s) URL
-#   - Router imports are guarded; missing optional routes won't crash startup
+#   - OpenTelemetry: only when OTEL_EXPORTER_OTLP_ENDPOINT is a valid http(s) URL
+#   - Router imports are guarded with explicit error logs (no silent skips)
 
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ import sys
 import logging
 import time
 import subprocess
+import importlib
+import traceback
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
@@ -94,7 +96,6 @@ try:
     if OTLP_ENDPOINT.startswith("http://") or OTLP_ENDPOINT.startswith("https://"):
         resource = Resource.create({"service.name": SERVICE})
         tp = TracerProvider(resource=resource)
-        # OTLPSpanExporter expects the base endpoint; many vendors accept the base or /v1/traces
         exporter = OTLPSpanExporter(endpoint=OTLP_ENDPOINT)
         tp.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(tp)
@@ -251,32 +252,43 @@ app.add_middleware(
     expose_headers=["Content-Disposition", "X-Request-Id", "X-Corr-Id"],
 )
 
-# ── Routers (guarded import/registration) ────────────────────────────────────
-def _include(router_path: str, name: str) -> None:
+# ── Router include helper with explicit error logs ───────────────────────────
+_CRITICAL_ROUTERS_REQUIRED: Set[str] = {"ask", "mcp"}  # must be present for readiness
+_CRITICAL_ROUTERS_LOADED: Set[str] = set()
+
+def _include(router_path: str, name: str, critical: bool = False) -> None:
     try:
-        module = __import__(router_path, fromlist=["router"])
-        app.include_router(module.router)
-        log.info("🔌 Router enabled: %s", name)
+        module = importlib.import_module(router_path)
+        router = getattr(module, "router", None)
+        if router is None:
+            raise RuntimeError(f"module has no 'router' export: {router_path}")
+        app.include_router(router)
+        log.info("🔌 Router enabled: %s (from %s)", name, router_path)
+        if critical:
+            _CRITICAL_ROUTERS_LOADED.add(name)
     except Exception as ex:
-        log.warning("⏭️  Router skipped (%s): %s", name, ex)
+        tb = traceback.format_exc(limit=8)
+        log.warning("⏭️  Router skipped (%s): %s\n%s", name, ex, tb)
 
 # Order: proxies first, core next, then webhooks/integrations
 _include("routes.github_proxy", "github_proxy")
 
-# Core user-facing
-_include("routes.ask", "ask")          # /ask, /ask/stream, /ask/codex_stream
-_include("routes.mcp", "mcp")          # /mcp/run (+ /mcp/diag if present)
-_include("routes.status", "status")    # /status/*
-_include("routes.kb", "kb")            # /kb/*
-_include("routes.search", "search")    # /search (if present)
+# Core user-facing (CRITICAL for your /ask pipeline)
+_include("routes.ask", "ask", critical=True)      # /ask, /ask/stream, /ask/codex_stream
+_include("routes.mcp", "mcp", critical=True)      # /mcp/ping, /mcp/run (and /mcp/diag if present)
 
-# Optional (guarded)
-_include("routes.control", "control")  # may be skipped if control_agent not exported
+# Supporting routes
+_include("routes.status", "status")               # /status/*
+_include("routes.kb", "kb")                       # /kb/*
+_include("routes.search", "search")               # /search (if present)
+
+# Optional (guarded; will log reason if skipped)
+_include("routes.control", "control")             # may be skipped if control_agent not exported
 _include("routes.docs", "docs")
 _include("routes.oauth", "oauth")
 _include("routes.debug", "debug")
 _include("routes.codex", "codex")
-_include("routes.logs", "logs")        # may be skipped if logs/ not writable
+_include("routes.logs", "logs")                   # may be skipped if logs/ not writable
 
 # Webhooks / Integrations
 _include("routes.webhooks_github", "github_webhooks")
@@ -286,6 +298,14 @@ if os.getenv("ENABLE_ADMIN_TOOLS", "").strip().lower() in ("1", "true", "yes"):
     _include("routes.admin", "admin")
 else:
     log.info("Admin tools disabled")
+
+# At startup, summarize mounted vs required
+log.info("📋 Mounted routes: %s", [getattr(r, "path", "?") for r in app.router.routes[:5]] + ["…"])
+missing = _CRITICAL_ROUTERS_REQUIRED - _CRITICAL_ROUTERS_LOADED
+if missing:
+    log.error("❌ Critical routers missing: %s (readiness will fail)", sorted(missing))
+else:
+    log.info("✅ Critical routers present: %s", sorted(_CRITICAL_ROUTERS_LOADED))
 
 # ── Exception handlers (structured, with request/corr id) ────────────────────
 @app.exception_handler(StarletteHTTPException)
@@ -336,9 +356,14 @@ def health():
 
 @app.get("/ready")
 def ready():
-    # Readiness: 503 until required env + dirs exist.
+    # Readiness: 503 until required env + dirs exist AND critical routers mounted.
     ok = True
     details: Dict[str, Any] = {}
+
+    # Critical routers present?
+    missing = _CRITICAL_ROUTERS_REQUIRED - _CRITICAL_ROUTERS_LOADED
+    details["routers"] = {"missing": sorted(missing), "loaded": sorted(_CRITICAL_ROUTERS_LOADED)}
+    ok &= (len(missing) == 0)
 
     # OpenAI optional via REQUIRE_OPENAI (default true in prod)
     require_openai = os.getenv("REQUIRE_OPENAI", "1").lower() in ("1", "true", "yes")
