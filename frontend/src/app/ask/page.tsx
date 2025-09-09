@@ -227,111 +227,109 @@ export default function AskPage() {
     localStorage.setItem(INPUT_KEY, input);
   }, [input]);
 
-  const sendMessage = useCallback(
-    async (e?: React.FormEvent): Promise<void> => {
-      if (e) e.preventDefault();
-      if (!input.trim() || loading) return;
+const sendMessage = useCallback(
+  async (e?: React.FormEvent): Promise<void> => {
+    if (e) e.preventDefault();
+    if (!input.trim() || loading) return;
 
-      const userMessage = input.trim();
+    const userMessage = input.trim();
 
-      // Add user message immediately
-      setMessages((msgs) => [
-        ...msgs,
-        { role: "user", content: toMDString(userMessage) },
-      ]);
-      setLoading(true);
-      setInput("");
+    // Add user message immediately
+    setMessages((msgs) => [
+      ...msgs,
+      { role: "user", content: toMDString(userMessage) },
+    ]);
+    setLoading(true);
+    setInput("");
 
-      const corrId = newCorrId();
+    const corrId = newCorrId();
 
+    try {
+      const res = await fetch(`${API_ROOT}/mcp/run`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": USER_ID,
+          "X-Corr-Id": corrId, // echoed by backend; useful for log triage
+        },
+        body: JSON.stringify({
+          query: userMessage,
+          // role: "planner", // ← let backend choose; uncomment only for explicit routing tests
+          debug: true,
+        }),
+      });
+
+      // Try to parse JSON even when !ok (server returns structured error JSON)
+      let data: MCPEnvelope | null = null;
       try {
-        const res = await fetch(`${API_ROOT}/mcp/run`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-User-Id": USER_ID,
-            "X-Corr-Id": corrId, // echoed by backend; useful for log triage
-          },
-          body: JSON.stringify({
-            query: userMessage,
-            // role: "planner", // ← let backend choose; uncomment only for explicit routing tests
-            debug: true,
-          }),
-        });
+        data = (await res.json()) as MCPEnvelope;
+      } catch {
+        data = null;
+      }
 
-        // Try to parse JSON even when !ok (server returns structured error JSON)
-        let data: MCPEnvelope | null = null;
-        try {
-          data = (await res.json()) as MCPEnvelope;
-        } catch {
-          data = null;
-        }
+      if (!res.ok || !data) {
+        const msg =
+          (data?.message && String(data.message)) ||
+          (data?.error && String(data.error)) ||
+          (typeof data?.detail === "object" &&
+            data?.detail !== null &&
+            "error" in (data.detail as MCPDetail) &&
+            String((data.detail as MCPDetail).error)) ||
+          "Server error";
 
-        if (!res.ok || !data) {
-          const msg =
-            (data?.message && String(data.message)) ||
-            (data?.error && String(data.error)) ||
-            (typeof data?.detail === "object" &&
-              data?.detail !== null &&
-              "error" in (data.detail as MCPDetail) &&
-              String((data.detail as MCPDetail).error)) ||
-            "Server error";
-
-          const cid =
-            (typeof data?.corr_id === "string" && data.corr_id) ||
-            (typeof data?.detail === "object" &&
-              data?.detail !== null &&
-              "corr_id" in (data.detail as MCPDetail) &&
-              typeof (data.detail as MCPDetail).corr_id === "string" &&
-              (data.detail as MCPDetail).corr_id) ||
-            (data?.meta && typeof data.meta.request_id === "string" && data.meta.request_id) ||
-            corrId;
-
-          setMessages((msgs) => [
-            ...msgs,
-            {
-              role: "assistant",
-              content: toMDString(`**Error:** ${msg}\n\n_Corr ID:_ \`${cid}\``),
-              corrId: cid,
-            },
-          ]);
-          setLoading(false);
-          return;
-        }
-
-        // Extract final text and sources from the envelope
-        const { text, sources } = extractAnswerAndSources(data);
-
-        const showSources = Array.isArray(sources) ? sources : undefined;
-        const displayCorrId =
-          (data.meta && (data.meta.corr_id || data.meta.request_id)) ||
-          data.corr_id ||
+        const cid =
+          (typeof data?.corr_id === "string" && data.corr_id) ||
+          (typeof data?.detail === "object" &&
+            data?.detail !== null &&
+            "corr_id" in (data.detail as MCPDetail) &&
+            typeof (data.detail as MCPDetail).corr_id === "string" &&
+            (data.detail as MCPDetail).corr_id) ||
+          (data?.meta && typeof data.meta.request_id === "string" && data.meta.request_id) ||
           corrId;
 
         setMessages((msgs) => [
           ...msgs,
           {
             role: "assistant",
-            content: toMDString(text),
-            sources: showSources,
-            corrId: typeof displayCorrId === "string" ? displayCorrId : undefined,
+            content: toMDString(`**Error:** ${msg}\n\n_Corr ID:_ \`${cid}\``),
+            corrId: cid,
           },
         ]);
-      } catch (err) {
-        // Network or parsing-level failure
-        setMessages((msgs) => [
-          ...msgs,
-          {
-            role: "assistant",
-            content: toMDString("**Network error** — unable to reach the server."),
-          },
-        ]);
-      } finally {
         setLoading(false);
+        return;
       }
-    },
-    [input, loading]
-  );
+
+      // Extract final text and sources from the envelope
+      const { text, sources } = extractAnswerAndSources(data);
+
+      const showSources = Array.isArray(sources) ? sources : undefined;
+      const displayCorrId =
+        (data.meta && (data.meta.corr_id || data.meta.request_id)) ||
+        data.corr_id ||
+        corrId;
+
+      setMessages((msgs) => [
+        ...msgs,
+        {
+          role: "assistant",
+          content: toMDString(text),
+          sources: showSources,
+          corrId: typeof displayCorrId === "string" ? displayCorrId : undefined,
+        },
+      ]);
+    } catch (err) {
+      console.error("⚠️ Network or parsing error:", err);
+      setMessages((msgs) => [
+        ...msgs,
+        {
+          role: "assistant",
+          content: toMDString("**Network error** — unable to reach the server."),
+        },
+      ]);
+    }
+  },
+  [input, loading]
+);
 
   // Render a single assistant bubble's source chips (if any)
   const SourcesChips: React.FC<{ sources?: MCPGrounding }> = ({ sources }) => {
