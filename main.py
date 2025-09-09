@@ -30,6 +30,24 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+# ── Paths, ENV, logging ──────────────────────────────────────────────────────
+ENV_NAME = os.getenv("ENV", "local").strip() or "local"
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+log = logging.getLogger("relay.main")
+
+# ✅ Banner goes here (now `log` and `ENV_NAME` exist)
+log.info(
+    "🚦 main.py LOADED (file=%s, commit=%s, env=%s)",
+    __file__,
+    os.getenv("GIT_SHA", "unknown"),
+    ENV_NAME,
+)
+
+
 # ── Local dev: load .env (no-op in prod) ─────────────────────────────────────
 if os.getenv("ENV", "local") == "local":
     try:

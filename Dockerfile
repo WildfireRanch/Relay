@@ -44,5 +44,6 @@ USER appuser
 # IMPORTANT: use shell so ${PORT} expands
 # (Switch to gunicorn variant if you prefer)
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+
 # Alternative:
 # CMD ["sh", "-c", "gunicorn -k uvicorn.workers.UvicornWorker -w 2 -b 0.0.0.0:${PORT} main:app"]
