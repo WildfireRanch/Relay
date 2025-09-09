@@ -1,8 +1,11 @@
 # File: routes/mcp.py
-# Purpose: Stable /mcp endpoints; import mcp_agent lazily inside handlers to avoid circular imports.
-
+# Purpose: /mcp endpoints with lazy imports, structured errors, and diagnostics.
 from __future__ import annotations
 
+import os
+import importlib
+import traceback
+from pathlib import Path
 from typing import Optional, Literal, List, Dict, Any
 from uuid import uuid4
 
@@ -10,7 +13,7 @@ from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, validator
 
-# Structured logging shim
+# Logging shim
 try:
     from core.logging import log_event
 except Exception:  # pragma: no cover
@@ -87,9 +90,46 @@ def _err(status: int, err: str, corr_id: str, hint: Optional[str] = None) -> JSO
         payload["hint"] = hint
     return JSONResponse(status_code=status, content=payload)
 
+# ---- DIAGNOSTICS ------------------------------------------------------------
+
 @router.get("/ping")
 async def mcp_ping() -> Dict[str, str]:
-    return {"status": "ok", "impl": "routes.mcp v2 (lazy import)"}
+    return {"status": "ok", "impl": "routes.mcp v3 (import-safe)"}
+
+@router.get("/diag")
+async def mcp_diag() -> Dict[str, Any]:
+    """Check FS and imports without running the pipeline."""
+    out: Dict[str, Any] = {"fs": {}, "imports": {}, "checks": {}}
+
+    # File system view
+    routes_dir = Path(__file__).resolve().parent
+    agents_dir = routes_dir.parent / "agents"
+    out["fs"]["routes_listing"] = sorted([p.name for p in routes_dir.iterdir()]) if routes_dir.exists() else "missing"
+    out["fs"]["agents_listing"] = sorted([p.name for p in agents_dir.iterdir()]) if agents_dir.exists() else "missing"
+
+    # Import probes (no exceptions thrown to caller; we capture and return)
+    def probe(mod: str, attr: Optional[str] = None):
+        try:
+            m = importlib.import_module(mod)
+            res = {"ok": True}
+            if attr:
+                res["has_attr"] = hasattr(m, attr)
+            return res
+        except Exception as e:
+            return {"ok": False, "error": str(e), "trace": traceback.format_exc(limit=6)}
+
+    out["imports"]["agents.mcp_agent"] = probe("agents.mcp_agent")
+    out["imports"]["core.context_engine"] = probe("core.context_engine", "build_context")
+
+    try:
+        import agents.mcp_agent as m
+        out["checks"]["has_run_mcp"] = hasattr(m, "run_mcp")
+    except Exception as e:
+        out["checks"]["has_run_mcp"] = f"ERR: {e}"
+
+    return out
+
+# ---- MAIN ENDPOINT ----------------------------------------------------------
 
 @router.post("/run", response_model=McpEnvelope)
 async def mcp_run(
@@ -99,16 +139,8 @@ async def mcp_run(
     x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id"),
 ):
     """
-    Execute MCP via agents.mcp_agent.run_mcp. Import is deferred to avoid circular imports.
+    Execute MCP. If importing mcp_agent fails, optionally serve SAFE MODE via echo.
     """
-    # Defer the import here (prevents circular import during module init)
-    try:
-        from agents.mcp_agent import run_mcp  # type: ignore
-    except Exception as e:
-        cid = x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex
-        log_event("mcp_import_error", {"corr_id": cid, "error": str(e)})
-        return _err(500, "mcp_failed", cid, hint="Import run_mcp failed; see mcp_import_error")
-
     corr_id = (
         (x_corr_id or "").strip()
         or (x_request_id or "").strip()
@@ -116,6 +148,33 @@ async def mcp_run(
         or uuid4().hex
     )
 
+    # Try to import run_mcp lazily. If it fails, decide safe-mode or error.
+    try:
+        from agents.mcp_agent import run_mcp  # type: ignore
+    except Exception as e:
+        log_event("mcp_import_error", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
+
+        # Optional SAFE MODE at the router level (works even when mcp_agent import fails)
+        if os.getenv("MCP_SAFE_MODE", "false").lower() in ("1", "true", "yes"):
+            try:
+                from agents.echo_agent import invoke as echo_invoke  # type: ignore
+                text = echo_invoke(query=body.query, context="", user_id="anonymous", corr_id=corr_id)
+            except Exception:
+                text = ""
+            return McpEnvelope(
+                plan={"route": "echo", "_diag": {"safe_mode": True}},
+                routed_result={"response": text, "route": "echo", "grounding": []},
+                critics=None,
+                context="",
+                files_used=[],
+                meta={"request_id": corr_id, "route": "echo", "kb": {"hits": 0, "max_score": None}},
+                final_text=text or "",
+            )
+
+        # No safe mode → structured error
+        return _err(500, "mcp_failed", corr_id, hint="Import run_mcp failed; see mcp_import_error")
+
+    # Normal path: we have run_mcp
     log_event("mcp_run_received", {
         "corr_id": corr_id,
         "role": (body.role or "planner"),
@@ -133,12 +192,11 @@ async def mcp_run(
             user_id="anonymous",
             debug=body.debug,
             corr_id=corr_id,
-            # timeout_s=body.timeout_s,  # keep as future hint
         )
     except HTTPException:
         raise
     except Exception as e:
-        log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e)})
+        log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
         return _err(500, "mcp_failed", corr_id, hint="See server logs for mcp_run_exception")
 
     if not isinstance(result, dict):
@@ -152,7 +210,6 @@ async def mcp_run(
     meta_in = result.get("meta") or {}
 
     final_text = _final_text_from(plan, rr)
-
     envelope = McpEnvelope(
         plan=_json_safe(plan) if plan else None,
         routed_result=_json_safe(rr) if isinstance(rr, (dict, str)) else {},
@@ -170,5 +227,4 @@ async def mcp_run(
         "kb_max_score": ((envelope.meta.get("kb") or {}).get("max_score")),
         "final_len": len(envelope.final_text or ""),
     })
-
     return envelope
