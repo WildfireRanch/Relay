@@ -299,14 +299,18 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
             raise RuntimeError("context engine not available")
 
         # Use your semantic retriever (optional env threshold pass-through)
-        from services.semantic_retriever import SemanticRetriever  # type: ignore
+        from services.semantic_retriever import SemanticRetriever, TieredSemanticRetriever  # type: ignore
+
         score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
         score_thresh = float(score_thresh_env) if score_thresh_env else None
 
-        retrievers = {RetrievalTier.GLOBAL: SemanticRetriever(score_threshold=score_thresh)}  # type: ignore[index]
-        cfg = EngineConfig(retrievers=retrievers)  # type: ignore[call-arg]
+        retrievers = {
+            RetrievalTier.GLOBAL:        TieredSemanticRetriever("global",        score_threshold=score_thresh),
+            RetrievalTier.PROJECT_DOCS:  TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
+    }
+        cfg = EngineConfig(retrievers=retrievers)  # type: ignore
+        ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore
 
-        ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore[misc]
 
         # Normalize into the stable shape
         context_text = str((ctx or {}).get("context") or "")

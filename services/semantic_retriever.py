@@ -158,3 +158,22 @@ class SemanticRetriever:
             except Exception:
                 continue
         return out
+# Put near SemanticRetriever
+class TieredSemanticRetriever(SemanticRetriever):
+    """Same as SemanticRetriever, but only returns hits where hit['tier'] == wanted_tier."""
+    def __init__(self, wanted_tier: str, score_threshold: Optional[float] = None) -> None:
+        super().__init__(score_threshold=score_threshold)
+        self.wanted_tier = wanted_tier
+
+    def search(self, query: str, k: int):
+        rows = search(q=query, k=k, score_threshold=self.score_threshold)
+        out = []
+        for r in rows:
+            if (r.get("tier") or "").strip().lower() != self.wanted_tier:
+                continue
+            path = r.get("path") or ""
+            score = r.get("score")
+            snippet = r.get("snippet") or ""
+            if path and (score is not None):
+                out.append((str(path), float(score), str(snippet)))
+        return out

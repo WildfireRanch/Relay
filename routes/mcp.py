@@ -3,14 +3,15 @@
 # Purpose: /mcp endpoints with lazy imports, structured errors, diagnostics,
 #          and production-grade robustness (corr-id, timeouts, safe mode).
 #
-# Design notes:
+# Key behaviors
 # - No module-level imports from agents/* or context to avoid circular deps.
-# - Structured errors: {"error", "message"?, "corr_id", "hint"?}
-# - Corr-ID: prefer X-Corr-Id → X-Request-Id → request.state.corr_id → uuid4
-# - Optional SAFE MODE: if agents.mcp_agent import fails, fallback to echo.
-# - Timeout enforcement using asyncio.wait_for (supports sync or async agents).
+# - Corr-ID precedence: X-Corr-Id → X-Request-Id → request.state.corr_id → uuid4
+# - SAFE MODE fallback (echo agent) when mcp_agent import fails.
+# - Context is prebuilt (GLOBAL + PROJECT_DOCS tiers) using core.context_engine
+#   and services.semantic_retriever.TieredSemanticRetriever.
+# - Timeout enforcement works for both sync/async agent functions.
 # - Pydantic v1/v2 compatible validators.
-# - Diag endpoint verifies filesystem visibility & importability of key modules.
+# - Diagnostics endpoint verifies FS visibility & importability.
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 
-# --- Pydantic v1/v2 compatibility ------------------------------------------------
+# --- Pydantic v1/v2 compatibility --------------------------------------------
 try:
     from pydantic import BaseModel, Field  # type: ignore
     try:
@@ -39,7 +40,7 @@ try:
 except Exception as _e:  # pragma: no cover
     raise RuntimeError("Pydantic is required") from _e
 
-# --- Logging shim (uses core.logging if available) --------------------------------
+# --- Logging shim (uses core.logging if available) ----------------------------
 try:
     from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
@@ -54,7 +55,7 @@ except Exception:  # pragma: no cover
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
-# --- Models ----------------------------------------------------------------------
+# --- Models -------------------------------------------------------------------
 
 AllowedRole = Literal["planner", "echo", "docs", "codex", "control"]
 
@@ -97,7 +98,7 @@ class McpEnvelope(BaseModel):
     meta: Dict[str, Any] = {}
     final_text: str = ""
 
-# --- Helpers ---------------------------------------------------------------------
+# --- Helpers ------------------------------------------------------------------
 
 SAFE_MODE_ENV = "MCP_SAFE_MODE"
 
@@ -117,7 +118,6 @@ def _final_text_from(plan: Any, rr: Any, root_final: Optional[str] = None) -> st
     # 1) explicit final_text at root
     if isinstance(root_final, str) and root_final.strip():
         return root_final
-
     # 2) routed_result fields
     if isinstance(rr, dict):
         for key in ("final_text", "response", "answer"):
@@ -131,7 +131,6 @@ def _final_text_from(plan: Any, rr: Any, root_final: Optional[str] = None) -> st
                 return t
     elif isinstance(rr, str) and rr.strip():
         return rr
-
     # 3) plan fallback
     if isinstance(plan, dict):
         fa = plan.get("final_answer")
@@ -148,21 +147,19 @@ def _err(status: int, err: str, corr_id: str, hint: Optional[str] = None, messag
     return JSONResponse(status_code=status, content=payload)
 
 async def _maybe_await(func, *args, timeout_s: int = 45, **kwargs):
-    """
-    Call a function that may be sync or async with a timeout.
-    """
+    """Call a function that may be sync or async with a timeout."""
     if iscoroutinefunction(func):
         return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
     loop = asyncio.get_running_loop()
     return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=timeout_s)
 
-# --- Diagnostics -----------------------------------------------------------------
+# --- Diagnostics ---------------------------------------------------------------
 
 @router.get("/ping")
 async def mcp_ping() -> Dict[str, str]:
     return {
         "status": "ok",
-        "impl": "routes.mcp v4",
+        "impl": "routes.mcp v5",
         "safe_mode": str(os.getenv(SAFE_MODE_ENV, "false")).lower() in ("1", "true", "yes"),
     }
 
@@ -211,19 +208,19 @@ async def mcp_diag() -> Dict[str, Any]:
     out["env"]["ASK_MIN_MAX_SCORE"] = os.getenv("ASK_MIN_MAX_SCORE")
     out["env"]["MAX_CONTEXT_TOKENS"] = os.getenv("MAX_CONTEXT_TOKENS")
     out["env"]["TOPK_GLOBAL"] = os.getenv("TOPK_GLOBAL")
+    out["env"]["TOPK_PROJECT_DOCS"] = os.getenv("TOPK_PROJECT_DOCS")
+    out["env"]["RERANK_MIN_SCORE_GLOBAL"] = os.getenv("RERANK_MIN_SCORE_GLOBAL")
+    out["env"]["RERANK_MIN_SCORE_PROJECT_DOCS"] = os.getenv("RERANK_MIN_SCORE_PROJECT_DOCS")
 
     return out
 
-# --- Main endpoint ---------------------------------------------------------------
+# --- Main endpoint -------------------------------------------------------------
 
 @router.post(
     "/run",
     response_model=McpEnvelope,
     response_model_exclude_none=True,
-    responses={
-        400: {"model": ErrorEnvelope},
-        500: {"model": ErrorEnvelope},
-    },
+    responses={400: {"model": ErrorEnvelope}, 500: {"model": ErrorEnvelope}, 504: {"model": ErrorEnvelope}},
 )
 async def mcp_run(
     body: McpRunBody,
@@ -234,6 +231,8 @@ async def mcp_run(
     """
     Execute MCP pipeline. If importing agents.mcp_agent fails and SAFE MODE is enabled
     (MCP_SAFE_MODE=true/1/yes), fallback to echo agent to keep the system responsive.
+    Always tries to prebuild context so we can attach kb stats + grounding even when
+    downstream agents don't.
     """
     corr_id = (
         (x_corr_id or "").strip()
@@ -242,31 +241,34 @@ async def mcp_run(
         or uuid4().hex
     )
 
-    # Optional: pre-build context here so we always return kb stats + grounding,
-    # even if the downstream agent does not. If core.context_engine isn't present,
-    # we proceed with empty context.
+    # ── Prebuild context (GLOBAL + PROJECT_DOCS via SemanticRetriever) ────────
     context_text: str = ""
     files_used: List[Dict[str, Any]] = []
     kb_meta: Dict[str, Any] = {"hits": 0, "max_score": 0.0, "sources": []}
     grounding_from_ctx: List[Dict[str, Any]] = []
 
     try:
-        # Lazy import to avoid circular deps
+        # Lazy imports to avoid cycles
         ctx_mod = importlib.import_module("core.context_engine")
-        build_context = getattr(ctx_mod, "build_context", None)
-        ContextRequest = getattr(ctx_mod, "ContextRequest", None)
-        EngineConfig = getattr(ctx_mod, "EngineConfig", None)
-        Retriever = getattr(ctx_mod, "Retriever", None)
-        RetrievalTier = getattr(ctx_mod, "RetrievalTier", None)
+        build_context = getattr(ctx_mod, "build_context")
+        ContextRequest = getattr(ctx_mod, "ContextRequest")
+        EngineConfig = getattr(ctx_mod, "EngineConfig")
+        RetrievalTier = getattr(ctx_mod, "RetrievalTier")
 
-        class _NullRetriever(getattr(ctx_mod, "Retriever")):  # type: ignore
-            def search(self, query: str, k: int):  # type: ignore[override]
-                return []
+        # Use your semantic retrievers by tier (score threshold via env)
+        from services.semantic_retriever import TieredSemanticRetriever  # type: ignore
+        score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
+        score_thresh = float(score_thresh_env) if score_thresh_env else None
 
-        cfg = EngineConfig(retrievers={})  # type: ignore
+        retrievers = {
+            RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",        score_threshold=score_thresh),
+            RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
+        }
+
+        cfg = EngineConfig(retrievers=retrievers)  # type: ignore
         ctx = build_context(ContextRequest(query=body.query, corr_id=corr_id), cfg)  # type: ignore
 
-        context_text = str(ctx.get("context", "") or "")
+        context_text = str(ctx.get("context") or "")
         _files = ctx.get("files_used") or []
         files_used = [{"path": p} for p in _files if isinstance(p, str)]
 
@@ -283,18 +285,15 @@ async def mcp_run(
             if isinstance(m, dict) and m.get("path")
         ]
     except Exception as e:
-        # Context is optional; log and continue.
+        # Context is optional; log and continue with empty stats.
         log_event("mcp_context_build_skipped", {"corr_id": corr_id, "error": str(e)})
 
-    # Import agent lazily; if it fails, decide safe-mode or error.
+    # ── Import agent lazily; if it fails, decide safe-mode or error ───────────
     try:
         mcp_agent = importlib.import_module("agents.mcp_agent")
         run_mcp = getattr(mcp_agent, "run_mcp")
     except Exception as e:
-        log_event(
-            "mcp_import_error",
-            {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)},
-        )
+        log_event("mcp_import_error", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
 
         # Router-level SAFE MODE (echo fallback) if enabled
         if str(os.getenv(SAFE_MODE_ENV, "false")).lower() in ("1", "true", "yes"):
@@ -303,10 +302,13 @@ async def mcp_run(
                 echo_invoke = getattr(echo_agent, "invoke", None)
                 text: str = ""
                 if echo_invoke:
-                    # echo.invoke may be sync or async
                     text = await _maybe_await(
-                        echo_invoke, query=body.query, context=context_text, user_id="anonymous", corr_id=corr_id,
-                        timeout_s=body.timeout_s
+                        echo_invoke,
+                        query=body.query,
+                        context=context_text,
+                        user_id="anonymous",
+                        corr_id=corr_id,
+                        timeout_s=body.timeout_s,
                     ) or ""
             except Exception as e2:
                 log_event("mcp_safe_mode_echo_error", {"corr_id": corr_id, "error": str(e2)})
@@ -323,14 +325,9 @@ async def mcp_run(
             )
 
         # No safe mode → structured 500
-        return _err(
-            500,
-            "mcp_failed",
-            corr_id,
-            hint="Import agents.mcp_agent.run_mcp failed; see mcp_import_error",
-        )
+        return _err(500, "mcp_failed", corr_id, hint="Import agents.mcp_agent.run_mcp failed; see mcp_import_error")
 
-    # Normal path: run the agent with enforced timeout
+    # ── Normal path: run the agent with enforced timeout ──────────────────────
     log_event(
         "mcp_run_received",
         {
@@ -361,10 +358,7 @@ async def mcp_run(
         log_event("mcp_run_timeout", {"corr_id": corr_id, "timeout_s": body.timeout_s})
         return _err(504, "mcp_timeout", corr_id, hint="Agent exceeded timeout", message=f"{body.timeout_s}s")
     except Exception as e:
-        log_event(
-            "mcp_run_exception",
-            {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)},
-        )
+        log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
         return _err(500, "mcp_failed", corr_id, hint="See server logs for mcp_run_exception")
 
     if not isinstance(result, dict):
@@ -373,6 +367,7 @@ async def mcp_run(
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else None
     rr = result.get("routed_result")
     critics = result.get("critics")
+
     # Prefer agent-provided context/files if present; otherwise fallback to ours
     context_out = str(result.get("context") or context_text or "")
     files_out = result.get("files_used") or files_used
