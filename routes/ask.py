@@ -1,30 +1,55 @@
+# ──────────────────────────────────────────────────────────────────────────────
 # File: routes/ask.py
 # Directory: routes
-# Purpose: FastAPI endpoints for /ask — validates input, runs MCP pipeline,
-#          enforces Retrieval Gate (no-answer on insufficient grounding),
-#          adds Anti-Parrot guard (no raw pastes), normalizes output,
-#          provides GET compatibility and streaming shims, and guarantees
-#          JSON-safe responses with correlation IDs and structured logs.
+# Purpose: FastAPI endpoints for /ask — production-grade:
+#          • Validates input (Pydantic v1/v2 compatible)
+#          • Builds context via core.context_engine (lazy import, no cycles)
+#          • Enforces Retrieval Gate (no-answer on insufficient grounding)
+#          • Anti-Parrot guard (contiguous copy + n-gram Jaccard)
+#          • Calls MCP pipeline lazily (agents.mcp_agent.run_mcp) with timeout
+#          • Normalizes output into stable AskResponse
+#          • Structured errors with corr_id; JSON-safe; streaming shims
+#
+# Design notes:
+# - No module-level imports from agents/* to avoid circular deps.
+# - Corr-ID precedence: X-Corr-Id → X-Request-Id → request.state.corr_id → uuid4
+# - Context is optional; we fallback gracefully if core.context_engine is absent.
+# - Grounding: prefer engine matches; else upstream meta; else parse context.
+# - Threshold envs support both legacy and new names for compatibility.
+# ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import traceback
 from collections import Counter
+from inspect import iscoroutinefunction
 from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator, Union
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, HTTPException, Query, Request, Header
+from fastapi.responses import StreamingResponse, JSONResponse
+
+# --- Pydantic v1/v2 compatibility ---------------------------------------------
+try:
+    from pydantic import BaseModel, Field  # type: ignore
+    try:
+        from pydantic import field_validator  # v2
+        _PD_V2 = True
+    except Exception:  # pragma: no cover
+        from pydantic import validator as field_validator  # v1
+        _PD_V2 = False
+except Exception as _e:  # pragma: no cover
+    raise RuntimeError("Pydantic is required") from _e
 
 # Router (no prefix; paths are /ask, /ask/stream, /ask/codex_stream)
 router = APIRouter()
 
-# Logging is safe to import at module load (does not import routes/agents)
+# --- Logging shim (safe to import at module load; no agent/route deps) --------
 try:
-    from core.logging import log_event
+    from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
     import logging, json
     _LOG = logging.getLogger("relay.ask")
@@ -35,19 +60,52 @@ except Exception:  # pragma: no cover
         except Exception:
             _LOG.info("event=%s data=%s", event, (data or {}))
 
-# ── Tunables (env-overridable) ───────────────────────────────────────────────
+# ── Env helpers & tunables (support legacy + new names) -----------------------
 
-KB_SCORE_THRESHOLD: float = float(os.getenv("KB_SCORE_THRESHOLD", "0.35"))
-KB_MIN_HITS: int = int(os.getenv("KB_MIN_HITS", "1"))
-ANTI_PARROT_MAX_CONTIGUOUS_MATCH: int = int(os.getenv("ANTI_PARROT_MAX_CONTIGUOUS_MATCH", "180"))
-ANTI_PARROT_JACCARD: float = float(os.getenv("ANTI_PARROT_JACCARD", "0.35"))
-FINAL_TEXT_MAX_LEN: int = int(os.getenv("FINAL_TEXT_MAX_LEN", "20000"))
+def _env_float(*names: str, default: float) -> float:
+    for n in names:
+        v = os.getenv(n)
+        if v is not None:
+            try:
+                return float(v)
+            except Exception:
+                continue
+    return default
 
-# ── Request / Response models (local, non-breaking) ─────────────────────────
+def _env_int(*names: str, default: int) -> int:
+    for n in names:
+        v = os.getenv(n)
+        if v is not None:
+            try:
+                return int(v)
+            except Exception:
+                continue
+    return default
+
+# Retrieval gate thresholds
+KB_SCORE_THRESHOLD: float = _env_float("ASK_MIN_MAX_SCORE", "KB_SCORE_THRESHOLD", default=0.35)
+KB_MIN_HITS: int = _env_int("ASK_MIN_HITS", "KB_MIN_HITS", default=1)
+
+# Anti-parrot thresholds
+ANTI_PARROT_MAX_CONTIGUOUS_MATCH: int = _env_int("ANTI_PARROT_MAX_CONTIGUOUS_MATCH", default=180)
+ANTI_PARROT_JACCARD: float = _env_float("ANTI_PARROT_JACCARD", default=0.35)
+
+# Final text clamp
+FINAL_TEXT_MAX_LEN: int = _env_int("FINAL_TEXT_MAX_LEN", default=20000)
+
+# Agent timeout (router-enforced)
+ASK_TIMEOUT_S: int = _env_int("ASK_TIMEOUT_S", default=60)
+
+# ── Request / Response models --------------------------------------------------
 
 class AskRequest(BaseModel):
     """Validated payload for /ask (POST). Supports legacy 'question' alias."""
-    model_config = {"populate_by_name": True}
+    if _PD_V2:
+        model_config = {"populate_by_name": True}  # type: ignore[attr-defined]
+    else:
+        class Config:  # type: ignore[no-redef]
+            allow_population_by_field_name = True
+
     query: Annotated[str, Field(min_length=3, description="User question/prompt.", alias="question")] = ...
     role: Optional[str] = Field("planner", description="Planner (default) or a specific route key.")
     files: Optional[List[str]] = Field(default=None, description="Optional file IDs/paths to include.")
@@ -55,6 +113,27 @@ class AskRequest(BaseModel):
     user_id: str = Field("anonymous", description="Caller identity for logging/metrics.")
     debug: bool = Field(False, description="Enable extra debug output where supported.")
 
+    if _PD_V2:
+        @field_validator("query")
+        @classmethod
+        def _strip_query(cls, v: str) -> str:
+            v = (v or "").strip()
+            if len(v) < 3:
+                raise ValueError("query must be at least 3 chars")
+            return v
+    else:  # v1
+        @field_validator("query")  # type: ignore[no-redef]
+        def _strip_query(cls, v: str) -> str:
+            v = (v or "").strip()
+            if len(v) < 3:
+                raise ValueError("query must be at least 3 chars")
+            return v
+
+class ErrorEnvelope(BaseModel):
+    error: str
+    corr_id: str
+    message: Optional[str] = None
+    hint: Optional[str] = None
 
 class AskResponse(BaseModel):
     """Normalized response from MCP pipeline (UI reads `final_text`)."""
@@ -66,15 +145,19 @@ class AskResponse(BaseModel):
     meta: Dict[str, Any] = {}
     final_text: str = ""  # Canonical field for UI rendering
 
-
 class StreamRequest(BaseModel):
     """Payload for streaming endpoints; mirrors AskRequest minimally."""
-    model_config = {"populate_by_name": True}
+    if _PD_V2:
+        model_config = {"populate_by_name": True}  # type: ignore[attr-defined]
+    else:
+        class Config:  # type: ignore[no-redef]
+            allow_population_by_field_name = True
+
     query: Annotated[str, Field(min_length=3, alias="question")] = ...
     context: Optional[str] = Field(default="", description="Optional prebuilt context")
     user_id: str = Field("anonymous")
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# ── Core helpers ---------------------------------------------------------------
 
 def _json_safe(obj: Any) -> Any:
     """Best-effort coercion of arbitrary objects into JSON-serializable structures."""
@@ -88,7 +171,6 @@ def _json_safe(obj: Any) -> Any:
         return str(obj)
     except Exception:
         return "[unserializable]"
-
 
 def _normalize_result(result_or_wrapper: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -104,79 +186,32 @@ def _normalize_result(result_or_wrapper: Dict[str, Any]) -> Dict[str, Any]:
             return inner
     return result_or_wrapper
 
-
-def _extract_final_text(plan: Any, routed_result: Any) -> str:
-    """
-    Canonical extraction of the user-facing text (synthesis only, no raw paste):
-      1) routed_result.response
-      2) routed_result.answer
-      3) plan.final_answer
-      4) "" (never None)
-    """
-    if isinstance(routed_result, dict):
-        text = routed_result.get("response") or routed_result.get("answer") or ""
-        if isinstance(text, str) and text.strip():
-            return text
-        resp = routed_result.get("response")
+def _final_text_from(plan: Any, rr: Any, root_final: Optional[str] = None) -> str:
+    """Canonical extraction of user-facing text."""
+    if isinstance(root_final, str) and root_final.strip():
+        return root_final
+    if isinstance(rr, dict):
+        for key in ("final_text", "response", "answer"):
+            val = rr.get(key)
+            if isinstance(val, str) and val.strip():
+                return val
+        resp = rr.get("response")
         if isinstance(resp, dict):
-            t = resp.get("text") or ""
+            t = resp.get("text")
             if isinstance(t, str) and t.strip():
                 return t
-    elif isinstance(routed_result, str) and routed_result.strip():
-        return routed_result
-
+    elif isinstance(rr, str) and rr.strip():
+        return rr
     if isinstance(plan, dict):
         fa = plan.get("final_answer")
         if isinstance(fa, str) and fa.strip():
             return fa
-
     return ""
 
-
 def _truncate(s: str, max_len: int) -> str:
-    if max_len and len(s) > max_len:
-        return s[:max_len]
-    return s
+    return s[:max_len] if (max_len and isinstance(s, str) and len(s) > max_len) else s
 
-
-def _detect_grounding(meta: Dict[str, Any], routed_result: Any) -> Dict[str, Any]:
-    """
-    Returns:
-      {
-        "hits": int,
-        "max_score": float|None,
-        "has_attribution": bool
-      }
-    Heuristics:
-      - Prefer meta.kb.{hits,max_score}
-      - Fallback to routed_result.grounding/sources/citations lengths
-    """
-    kb = {}
-    if isinstance(meta, dict):
-        kb = meta.get("kb") or meta.get("retrieval") or {}
-
-    hits = 0
-    max_score = None
-    if isinstance(kb, dict):
-        hits = int(kb.get("hits") or 0)
-        try:
-            max_score = float(kb.get("max_score")) if kb.get("max_score") is not None else None
-        except Exception:
-            max_score = None
-
-    has_attr = False
-    if isinstance(routed_result, dict):
-        for k in ("grounding", "sources", "citations", "attributions"):
-            v = routed_result.get(k)
-            if isinstance(v, list) and len(v) > 0:
-                has_attr = True
-                if hits == 0:
-                    hits = len(v)
-
-    return {"hits": hits, "max_score": max_score, "has_attribution": has_attr}
-
-
-def _anti_parrot_triggered(final_text: str, context: str) -> bool:
+def _anti_parrot_contiguous(final_text: str, context: str) -> bool:
     """Detect large verbatim copy by contiguous overlap ≥ threshold."""
     if not final_text or not context:
         return False
@@ -190,22 +225,17 @@ def _anti_parrot_triggered(final_text: str, context: str) -> bool:
             return True
     return False
 
-
-def _make_no_answer_meta(reason: str, base_meta: Dict[str, Any], corr_id: str) -> Dict[str, Any]:
-    meta = dict(base_meta or {})
-    meta.update(
-        {
-            "no_answer": True,
-            "reason": reason,
-            "corr_id": corr_id,
-            "kb_threshold": KB_SCORE_THRESHOLD,
-            "kb_min_hits": KB_MIN_HITS,
-            "anti_parrot_threshold": ANTI_PARROT_MAX_CONTIGUOUS_MATCH,
-            "anti_parrot_jaccard": ANTI_PARROT_JACCARD,
-        }
-    )
-    return meta
-
+def _jaccard_ngrams(a: str, b: str, n: int = 5) -> float:
+    """Simple n-gram Jaccard similarity to catch paraphrased pastes."""
+    def ngrams(s: str):
+        toks = [t for t in re.findall(r"\w+", s.lower()) if t]
+        return Counter(tuple(toks[i:i+n]) for i in range(0, max(0, len(toks)-n+1)))
+    sa, sb = ngrams(a), ngrams(b)
+    if not sa or not sb:
+        return 0.0
+    inter = sum((sa & sb).values())
+    union = sum((sa | sb).values())
+    return inter / union if union else 0.0
 
 GROUNDING_LINE_RE = re.compile(
     r"[\u2022\-\*]\s+\*\*(?P<path>[^*]+)\*\*.*?\(score:\s*(?P<score>0\.\d+|1\.0+)\)",
@@ -213,7 +243,7 @@ GROUNDING_LINE_RE = re.compile(
 )
 
 def _extract_grounding_from_context(context: str):
-    """Parse 'Top Matches' lines in the context block → (hits, max_score, sources[])."""
+    """Parse 'Top Matches' style lines in the context block → (hits, max_score, sources[])."""
     hits = 0
     max_score = None
     sources: List[Dict[str, Any]] = []
@@ -231,23 +261,76 @@ def _extract_grounding_from_context(context: str):
             max_score = score if max_score is None else max(max_score, score)
     return hits, max_score, sources
 
+async def _maybe_await(func, *args, timeout_s: int, **kwargs):
+    """Call a function that may be sync or async with a timeout."""
+    if iscoroutinefunction(func):
+        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
+    loop = asyncio.get_running_loop()
+    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=timeout_s)
 
-def _jaccard_ngrams(a: str, b: str, n: int = 5) -> float:
-    """Simple n-gram Jaccard similarity to catch paraphrased pastes."""
-    def ngrams(s: str):
-        toks = [t for t in re.findall(r"\w+", s.lower()) if t]
-        return Counter(tuple(toks[i:i+n]) for i in range(0, max(0, len(toks)-n+1)))
-    sa, sb = ngrams(a), ngrams(b)
-    if not sa or not sb:
-        return 0.0
-    inter = sum((sa & sb).values())
-    union = sum((sa | sb).values())
-    return inter / union if union else 0.0
+# ── Context building (safe optional) ------------------------------------------
 
-# ── Routes ──────────────────────────────────────────────────────────────────
+async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
+    """
+    Try to build context via core.context_engine. Never raises; returns dict:
+      {
+        "context": str, "files_used": [ {path}... ],
+        "kb": {"hits": int, "max_score": float, "sources": [paths]},
+        "grounding": [ {path, score, tier} ... ]
+      }
+    """
+    out = {
+        "context": "",
+        "files_used": [],
+        "kb": {"hits": 0, "max_score": 0.0, "sources": []},
+        "grounding": [],
+    }
+    try:
+        import importlib  # local to avoid top-level weight
+        ctx_mod = importlib.import_module("core.context_engine")
+        build_context = getattr(ctx_mod, "build_context", None)
+        ContextRequest = getattr(ctx_mod, "ContextRequest", None)
+        EngineConfig = getattr(ctx_mod, "EngineConfig", None)
 
-@router.post("/ask", response_model=AskResponse)
-async def ask(payload: AskRequest, request: Request):
+        # Provide an empty retriever set; engine will return empty gracefully.
+        cfg = EngineConfig(retrievers={})  # type: ignore
+        ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore
+
+        context_text = str(ctx.get("context") or "")
+        files_used = ctx.get("files_used") or []
+        kb = (ctx.get("meta") or {}).get("kb") or {}
+        matches = ctx.get("matches") or []
+
+        out["context"] = context_text
+        out["files_used"] = [{"path": p} for p in files_used if isinstance(p, str)]
+        out["kb"] = {
+            "hits": int(kb.get("hits") or 0),
+            "max_score": float(kb.get("max_score") or 0.0),
+            "sources": list(kb.get("sources") or []),
+        }
+        out["grounding"] = [
+            {"path": m.get("path"), "score": float(m.get("score", 0.0)), "tier": m.get("tier")}
+            for m in matches
+            if isinstance(m, dict) and m.get("path")
+        ]
+    except Exception as e:
+        log_event("ask_context_build_skipped", {"corr_id": corr_id, "error": str(e)})
+    return out
+
+# ── Routes --------------------------------------------------------------------
+
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    response_model_exclude_none=True,
+    responses={400: {"model": ErrorEnvelope}, 500: {"model": ErrorEnvelope}, 504: {"model": ErrorEnvelope}},
+)
+async def ask(
+    payload: AskRequest,
+    request: Request,
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id"),
+):
     """
     Run the MCP pipeline for a validated query and return a normalized response.
     Enforces:
@@ -256,22 +339,17 @@ async def ask(payload: AskRequest, request: Request):
     Keeps response shape stable for the frontend (final_text or "").
     Details surface via `meta`.
     """
-    # 🔽 Lazy import here to avoid circular import at module load
+    # Lazy agent import to avoid circular imports at module load
     try:
         from agents.mcp_agent import run_mcp  # type: ignore
     except Exception as e:
-        corr_id = request.headers.get("x-corr-id") or str(uuid4())
+        corr_id = (x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex)
         log_event("ask_import_error", {"corr_id": corr_id, "error": str(e)})
         raise HTTPException(status_code=500, detail={"error": "mcp_import_failed", "corr_id": corr_id})
 
     q = (payload.query or "").strip()
-    if not q:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "bad_request", "hint": "query must be non-empty"},
-        )
+    corr_id = (x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex)
 
-    corr_id = request.headers.get("x-corr-id") or str(uuid4())
     try:
         request.state.corr_id = corr_id
     except Exception:
@@ -295,37 +373,73 @@ async def ask(payload: AskRequest, request: Request):
         },
     )
 
-    # Run MCP
-    try:
-        mcp_raw = await run_mcp(
-            query=q,
-            role=role,
-            files=files,
-            topics=topics,
-            user_id=user_id,
-            debug=debug,
-            corr_id=corr_id,
-        )
-    except Exception as e:
+    # 1) Build context (optional; never errors)
+    ctx = await _build_context_safe(q, corr_id)
+    context_text = ctx["context"]
+    files_used = ctx["files_used"]
+    kb_meta = ctx["kb"]
+    grounding_from_ctx = ctx["grounding"]
+
+    # 2) Retrieval Gate (require evidence before answering)
+    has_hits = int(kb_meta["hits"]) >= KB_MIN_HITS
+    score_ok = float(kb_meta["max_score"]) >= KB_SCORE_THRESHOLD
+    has_attr = len(grounding_from_ctx) > 0
+    gated_no_answer_reason = None
+    if not (has_hits and score_ok and has_attr):
+        # Fallback: attempt to infer grounding from upstream meta after agent run? We gate first by default.
+        gated_no_answer_reason = "Insufficient grounding"
         log_event(
-            "ask_mcp_exception",
-            {"corr_id": corr_id, "user": user_id, "error": str(e), "trace": traceback.format_exc()},
-        )
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "mcp_failed", "message": "Failed to run MCP.", "corr_id": corr_id},
+            "ask_gate_blocked",
+            {
+                "corr_id": corr_id,
+                "user": user_id,
+                "hits": kb_meta["hits"],
+                "max_score": kb_meta["max_score"],
+                "has_attribution": has_attr,
+                "threshold": KB_SCORE_THRESHOLD,
+            },
         )
 
-    # Normalize & JSON-coerce all parts
+    # 3) If not gated yet, call MCP with timeout; pass context for reuse
+    mcp_raw: Dict[str, Any] | Any = {}
+    if gated_no_answer_reason is None:
+        try:
+            mcp_raw = await _maybe_await(
+                run_mcp,
+                query=q,
+                role=role,
+                files=files,
+                topics=topics,
+                user_id=user_id,
+                debug=debug,
+                corr_id=corr_id,
+                context=context_text,
+                timeout_s=ASK_TIMEOUT_S,
+            )
+        except asyncio.TimeoutError:
+            log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
+            raise HTTPException(status_code=504, detail={"error": "ask_timeout", "message": "Agent exceeded timeout", "corr_id": corr_id})
+        except Exception as e:
+            log_event(
+                "ask_mcp_exception",
+                {"corr_id": corr_id, "user": user_id, "error": str(e), "trace": traceback.format_exc()},
+            )
+            raise HTTPException(
+                status_code=500,
+                detail={"error": "mcp_failed", "message": "Failed to run MCP.", "corr_id": corr_id},
+            )
+
+    # 4) Normalize agent result (or empty if gated earlier)
+    normalized = {}
     try:
         normalized = _normalize_result(mcp_raw if isinstance(mcp_raw, dict) else {})
         plan = _json_safe(normalized.get("plan"))
         routed_result = normalized.get("routed_result", {})
         critics = _json_safe(normalized.get("critics"))
-        context = str(normalized.get("context") or "")
-        files_used = _json_safe(normalized.get("files_used") or [])
+        context_from_agent = str(normalized.get("context") or "")
+        files_used_agent = _json_safe(normalized.get("files_used") or [])
         upstream_meta = normalized.get("meta") or {}
-        final_text_raw = _extract_final_text(plan, routed_result)
+        final_text_raw = _final_text_from(plan, routed_result, root_final=normalized.get("final_text"))
     except Exception as e:
         log_event(
             "ask_normalize_exception",
@@ -336,41 +450,32 @@ async def ask(payload: AskRequest, request: Request):
             detail={"error": "normalize_failed", "message": "Failed to normalize MCP result.", "corr_id": corr_id},
         )
 
-    # Grounding detection (prefer structured; fallback to context parsing)
-    grounding = _detect_grounding(upstream_meta if isinstance(upstream_meta, dict) else {}, routed_result)
-    if grounding["hits"] == 0 and not grounding["has_attribution"]:
-        hits, max_score_ctx, sources = _extract_grounding_from_context(context)
-        if hits > 0:
-            grounding["hits"] = hits
-            grounding["max_score"] = max_score_ctx if max_score_ctx is not None else grounding["max_score"]
-            grounding["has_attribution"] = True
-            if isinstance(routed_result, dict) and not routed_result.get("grounding"):
-                routed_result.setdefault("grounding", sources)
+    # Prefer agent context/files if provided, else our own
+    context = context_from_agent or context_text
+    files_used_out = files_used_agent or files_used
+    if isinstance(files_used_out, list) and files_used_out and isinstance(files_used_out[0], str):
+        # normalize to list[dict] for UI consistency
+        files_used_out = [{"path": p} for p in files_used_out]  # type: ignore[assignment]
 
-    # Tightened criteria: require non-None score meeting threshold AND attributions
-    has_hits = grounding["hits"] >= KB_MIN_HITS
-    score_ok = (grounding["max_score"] is not None) and (grounding["max_score"] >= KB_SCORE_THRESHOLD)
-    has_attr = grounding["has_attribution"]
+    # 5) Grounding: prefer engine matches; else agent; else parse context text
+    grounding = grounding_from_ctx[:]
+    if isinstance(routed_result, dict):
+        grounding_agent = routed_result.get("grounding") or []
+        if grounding_agent:
+            grounding = grounding_agent
+    if not grounding:
+        hits_ctx, max_score_ctx, sources_ctx = _extract_grounding_from_context(context)
+        if hits_ctx > 0:
+            grounding = sources_ctx
+            if kb_meta["hits"] == 0:
+                kb_meta["hits"] = hits_ctx
+            if (kb_meta["max_score"] or 0.0) == 0.0 and (max_score_ctx is not None):
+                kb_meta["max_score"] = max_score_ctx
 
-    gated_no_answer_reason = None
-    if not (has_hits and score_ok and has_attr):
-        gated_no_answer_reason = "Insufficient grounding"
-        log_event(
-            "ask_gate_blocked",
-            {
-                "corr_id": corr_id,
-                "user": user_id,
-                "hits": grounding["hits"],
-                "max_score": grounding["max_score"],
-                "has_attribution": has_attr,
-                "threshold": KB_SCORE_THRESHOLD,
-            },
-        )
-
-    # Anti-parrot (only if not already gated)
+    # 6) Anti-parrot (only if not already gated)
     if gated_no_answer_reason is None:
         final_text_candidate = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
-        contiguous_hit = _anti_parrot_triggered(final_text_candidate, context)
+        contiguous_hit = _anti_parrot_contiguous(final_text_candidate, context)
         jaccard = _jaccard_ngrams(final_text_candidate, context, n=5)
         if contiguous_hit or jaccard >= ANTI_PARROT_JACCARD:
             gated_no_answer_reason = "Anti-parrot guard: output mirrors source context"
@@ -386,52 +491,70 @@ async def ask(payload: AskRequest, request: Request):
                 },
             )
 
-    # Shape meta + final_text
+    # 7) Shape meta + final_text
     meta: Dict[str, Any] = {"role": role, "debug": debug, "corr_id": corr_id}
     if isinstance(upstream_meta, dict):
         meta.update(_json_safe(upstream_meta))
-    meta.update({"kb_hits": grounding["hits"], "kb_max_score": grounding["max_score"], "kb_has_attribution": has_attr})
+    # ensure kb stats present
+    meta["kb"] = {
+        "hits": int(kb_meta.get("hits") or 0),
+        "max_score": float(kb_meta.get("max_score") or 0.0),
+        "sources": kb_meta.get("sources") or [s.get("path") for s in grounding if isinstance(s, dict) and s.get("path")],
+    }
 
     if gated_no_answer_reason:
-        meta = _make_no_answer_meta(gated_no_answer_reason, meta, corr_id)
+        meta.update(
+            {
+                "no_answer": True,
+                "reason": gated_no_answer_reason,
+                "kb_threshold": KB_SCORE_THRESHOLD,
+                "kb_min_hits": KB_MIN_HITS,
+                "anti_parrot_threshold": ANTI_PARROT_MAX_CONTIGUOUS_MATCH,
+                "anti_parrot_jaccard": ANTI_PARROT_JACCARD,
+            }
+        )
         final_text_out = ""
+        routed_result_out = {"grounding": grounding}
     else:
         final_text_out = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
         meta.update({"no_answer": False, "anti_parrot_triggered": False})
-
-    routed_result_safe = _json_safe(routed_result)
+        routed_result_out = normalized.get("routed_result") or {}
+        if isinstance(routed_result_out, dict) and not routed_result_out.get("grounding"):
+            routed_result_out["grounding"] = grounding
 
     log_event(
         "ask_response_summary",
         {
             "corr_id": corr_id,
             "user": user_id,
-            "origin": meta.get("origin"),
             "final_text_head": (final_text_out or "")[:200],
-            "no_answer": bool(gated_no_answer_reason),
-            "kb_hits": grounding["hits"],
-            "kb_max_score": grounding["max_score"],
-            "kb_has_attr": has_attr,
+            "no_answer": meta.get("no_answer"),
+            "kb_hits": meta["kb"]["hits"],
+            "kb_max_score": meta["kb"]["max_score"],
+            "has_grounding": bool(grounding),
         },
     )
 
     return AskResponse(
         plan=plan if isinstance(plan, dict) else None,
-        routed_result=routed_result_safe if isinstance(routed_result_safe, (dict, str)) else {},
+        routed_result=_json_safe(routed_result_out) if isinstance(routed_result_out, (dict, str)) else {},
         critics=critics if critics is not None else None,
         context=context,
-        files_used=files_used if isinstance(files_used, list) else [],
-        meta=meta,
+        files_used=files_used_out if isinstance(files_used_out, list) else [],
+        meta=_json_safe(meta),
         final_text=final_text_out,
     )
 
-
 @router.get("/ask")
-async def ask_get(question: Annotated[str, Query(min_length=3)], request: Request):
+async def ask_get(
+    question: Annotated[str, Query(min_length=3)],
+    request: Request,
+    x_request_id: Optional[str] = Header(default=None, alias="X-Request-Id"),
+    x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id"),
+):
     """Legacy GET shim: /ask?question=..."""
     payload = AskRequest.model_validate({"question": question})
-    return await ask(payload, request)
-
+    return await ask(payload, request, x_request_id=x_request_id, x_corr_id=x_corr_id)
 
 @router.post("/ask/stream")
 async def ask_stream(payload: StreamRequest, request: Request):
@@ -448,18 +571,17 @@ async def ask_stream(payload: StreamRequest, request: Request):
     if not q:
         raise HTTPException(status_code=400, detail={"error": "bad_request", "hint": "query must be non-empty"})
 
-    corr_id = request.headers.get("x-corr-id") or str(uuid4())
+    corr_id = request.headers.get("X-Corr-Id") or uuid4().hex
 
     async def gen() -> AsyncGenerator[bytes, None]:
         try:
             async for chunk in echo_stream(query=q, context=payload.context or "", user_id=payload.user_id, corr_id=corr_id):
-                yield chunk.encode("utf-8")
+                yield (chunk if isinstance(chunk, str) else str(chunk)).encode("utf-8")
         except Exception as e:
             log_event("ask_stream_error", {"corr_id": corr_id, "error": str(e)})
             yield f"[stream error] {str(e)}".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/plain")
-
 
 @router.post("/ask/codex_stream")
 async def ask_codex_stream(payload: StreamRequest, request: Request):
@@ -476,14 +598,15 @@ async def ask_codex_stream(payload: StreamRequest, request: Request):
     if not q:
         raise HTTPException(status_code=400, detail={"error": "bad_request", "hint": "query must be non-empty"})
 
-    corr_id = request.headers.get("x-corr-id") or str(uuid4())
+    corr_id = request.headers.get("X-Corr-Id") or uuid4().hex
 
     async def gen() -> AsyncGenerator[bytes, None]:
         try:
             async for chunk in codex_stream(query=q, context=payload.context or "", user_id=payload.user_id, corr_id=corr_id):
-                yield chunk.encode("utf-8")
+                yield (chunk if isinstance(chunk, str) else str(chunk)).encode("utf-8")
         except Exception as e:
             log_event("ask_codex_stream_error", {"corr_id": corr_id, "error": str(e)})
             yield f"[stream error] {str(e)}".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/plain")
+# ──────────────────────────────────────────────────────────────────────────────
