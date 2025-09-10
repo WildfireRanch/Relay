@@ -10,7 +10,7 @@
 #       RERANK_MIN_SCORE_GLOBAL, RERANK_MIN_SCORE_CONTEXT,
 #       RERANK_MIN_SCORE_PROJECT_DOCS, RERANK_MIN_SCORE_CODE
 #       MAX_CONTEXT_TOKENS
-#   - Adapters (required at call site): retrievers per tier implementing `Retriever`.
+#   - Adapters (at call site): dict of {RetrievalTier: Retriever}
 #
 # Downstream:
 #   - Routers/Agents call build_context() and consume ContextResult.
@@ -27,19 +27,14 @@ import os
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
+from typing import Dict, List, Optional, Sequence, Tuple, TypedDict
 
 try:
-    # Optional precise tokenization if available in the project
     import tiktoken  # type: ignore
     _HAS_TIKTOKEN = True
 except Exception:
     _HAS_TIKTOKEN = False
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Public models (importable by routes/agents)
-# ──────────────────────────────────────────────────────────────────────────────
 
 class RetrievalTier(str, Enum):
     GLOBAL = "global"
@@ -81,7 +76,6 @@ class Retriever:
     Returns a list of (path, raw_score, snippet) where raw_score is unbounded (e.g., cosine sim).
     The engine will normalize to [0,1].
     """
-
     def search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
         raise NotImplementedError
 
@@ -97,10 +91,9 @@ class EngineConfig:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _approx_token_count(text: str) -> int:
-    """Cheap estimator: ~4 chars/token (English prose)."""
     if not text:
         return 0
-    return max(1, math.ceil(len(text) / 4))
+    return max(1, math.ceil(len(text) / 4))  # ~4 chars/token heuristic
 
 def _tiktoken_count(text: str, model: str = "gpt-4o") -> int:
     try:
@@ -112,7 +105,6 @@ def _tiktoken_count(text: str, model: str = "gpt-4o") -> int:
 def _load_external_token_budget():
     try:
         mod = importlib.import_module("services.token_budget")
-        # Expect optional callable: tokens(text: str) -> int
         counter = getattr(mod, "tokens", None)
         if callable(counter):
             return counter
@@ -161,53 +153,35 @@ def _float_env(name: str, default: float) -> float:
 
 def _defaults_for_tier(tier: RetrievalTier) -> Tuple[int, float]:
     if tier == RetrievalTier.GLOBAL:
-        return (
-            _int_env("TOPK_GLOBAL", 6),
-            _float_env("RERANK_MIN_SCORE_GLOBAL", 0.35),
-        )
+        return (_int_env("TOPK_GLOBAL", 6), _float_env("RERANK_MIN_SCORE_GLOBAL", 0.35))
     if tier == RetrievalTier.CONTEXT:
-        return (
-            _int_env("TOPK_CONTEXT", 6),
-            _float_env("RERANK_MIN_SCORE_CONTEXT", 0.35),
-        )
+        return (_int_env("TOPK_CONTEXT", 6), _float_env("RERANK_MIN_SCORE_CONTEXT", 0.35))
     if tier == RetrievalTier.PROJECT_DOCS:
-        return (
-            _int_env("TOPK_PROJECT_DOCS", 6),
-            _float_env("RERANK_MIN_SCORE_PROJECT_DOCS", 0.35),
-        )
+        return (_int_env("TOPK_PROJECT_DOCS", 6), _float_env("RERANK_MIN_SCORE_PROJECT_DOCS", 0.35))
     if tier == RetrievalTier.CODE:
-        return (
-            _int_env("TOPK_CODE", 6),
-            _float_env("RERANK_MIN_SCORE_CODE", 0.35),
-        )
+        return (_int_env("TOPK_CODE", 6), _float_env("RERANK_MIN_SCORE_CODE", 0.35))
     return (6, 0.35)
-
 
 def _normalize(scores: Sequence[float]) -> List[float]:
     if not scores:
         return []
     lo, hi = min(scores), max(scores)
     if hi - lo <= 1e-12:
-        # Avoid div-by-zero; map all to 1.0 if there was any score at all
         return [1.0 for _ in scores]
     return [(s - lo) / (hi - lo) for s in scores]
 
-
-def _assemble_snippet_header(path: str, tier: RetrievalTier, idx: int) -> str:
+def _assemble_header(path: str, tier: RetrievalTier, idx: int) -> str:
     return f"\n--- [source:{tier.value} #{idx+1}] {path} ---\n"
-
 
 def _apply_threshold(matches: List[Match], min_score: float) -> List[Match]:
     return [m for m in matches if m["score"] >= min_score]
 
-
 def _budgeted_concat(snippets: List[Tuple[str, str, RetrievalTier]], max_tokens: int) -> Tuple[str, List[int]]:
-    """Concatenate with budget; returns (context, included_indices)."""
     out: List[str] = []
     used_indices: List[int] = []
     running = 0
     for i, (path, snippet, tier) in enumerate(snippets):
-        piece = _assemble_snippet_header(path, tier, i) + snippet.strip() + "\n"
+        piece = _assemble_header(path, tier, i) + snippet.strip() + "\n"
         cost = count_tokens(piece)
         if running + cost > max_tokens:
             continue
@@ -216,7 +190,6 @@ def _budgeted_concat(snippets: List[Tuple[str, str, RetrievalTier]], max_tokens:
         running += cost
     return ("".join(out).strip(), used_indices)
 
-
 def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
     """
     Deterministic, tiered retrieval:
@@ -224,9 +197,8 @@ def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
       - For each tier:
          1) retrieve Top-K
          2) normalize scores to [0,1]
-         3) threshold by tier min score
-      - Merge results, preserve tier labels, dedupe by path (keep best score).
-      - Token-budget assemble into final context.
+         3) threshold by tier min score (env)
+      - Merge results, dedupe by path (keep best score), then token-budget assemble.
     """
     query = (req.query or "").strip()
     max_context_tokens = req.max_tokens or _int_env("MAX_CONTEXT_TOKENS", 2400)
@@ -239,9 +211,8 @@ def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
     ]
 
     all_matches: List[Match] = []
-    seen_best: Dict[str, float] = {}  # path -> best normalized score
+    seen_best: Dict[str, float] = {}
     raw_for_meta: List[float] = []
-    source_paths: List[str] = []
 
     for tier in ordered_tiers:
         retriever = cfg.retrievers.get(tier)
@@ -260,11 +231,9 @@ def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
             m: Match = {"path": p, "score": float(s_norm), "tier": tier.value, "snippet": snip}
             tier_matches.append(m)
             raw_for_meta.append(float(s_norm))
-            source_paths.append(p)
 
         tier_kept = _apply_threshold(tier_matches, min_score)
 
-        # Deduplicate by path, keep the higher score
         for m in tier_kept:
             best = seen_best.get(m["path"])
             if best is None or m["score"] > best:
@@ -272,14 +241,11 @@ def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
 
         all_matches.extend(tier_kept)
 
-    # Collapse to unique best-by-path
     best_by_path: Dict[str, Match] = {}
     for m in all_matches:
-        prev = best_by_path.get(m["path"])
-        if (prev is None) or (m["score"] > prev["score"]):
+        if (prev := best_by_path.get(m["path"])) is None or (m["score"] > prev["score"]):
             best_by_path[m["path"]] = m
 
-    # Budgeted assembly
     ordered = sorted(best_by_path.values(), key=lambda m: m["score"], reverse=True)
     concat_inputs: List[Tuple[str, str, RetrievalTier]] = [
         (m["path"], m["snippet"], RetrievalTier(m["tier"])) for m in ordered
@@ -292,12 +258,12 @@ def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
     result: ContextResult = {
         "context": context_str,
         "files_used": files_used,
-        "matches": ordered,  # includes snippet & score; caller can drop snippet if desired
+        "matches": ordered,  # includes snippet & score for downstream grounding
         "meta": {
             "kb": {
                 "hits": len(ordered),
                 "max_score": float(max_score),
-                "sources": list(dict.fromkeys(files_used)),  # stable, deduped
+                "sources": list(dict.fromkeys(files_used)),
             }
         },
     }
