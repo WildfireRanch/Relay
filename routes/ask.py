@@ -14,7 +14,7 @@
 # - No module-level imports from agents/* to avoid circular deps.
 # - Corr-ID precedence: X-Corr-Id → X-Request-Id → request.state.corr_id → uuid4
 # - Context is optional; we fallback gracefully if core.context_engine is absent.
-# - Grounding: prefer engine matches; else upstream meta; else parse context.
+# - Grounding: prefer engine matches; else upstream meta; else parse context text.
 # - Threshold envs support both legacy and new names for compatibility.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator, Union
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Header
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse
 
 # --- Pydantic v1/v2 compatibility ---------------------------------------------
 try:
@@ -47,7 +47,7 @@ except Exception as _e:  # pragma: no cover
 # Router (no prefix; paths are /ask, /ask/stream, /ask/codex_stream)
 router = APIRouter()
 
-# --- Logging shim (safe to import at module load; no agent/route deps) --------
+# --- Logging shim (safe; no agent/route deps) ---------------------------------
 try:
     from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
@@ -96,7 +96,7 @@ FINAL_TEXT_MAX_LEN: int = _env_int("FINAL_TEXT_MAX_LEN", default=20000)
 # Agent timeout (router-enforced)
 ASK_TIMEOUT_S: int = _env_int("ASK_TIMEOUT_S", default=60)
 
-# ── Request / Response models --------------------------------------------------
+# ── Models --------------------------------------------------------------------
 
 class AskRequest(BaseModel):
     """Validated payload for /ask (POST). Supports legacy 'question' alias."""
@@ -140,7 +140,7 @@ class AskResponse(BaseModel):
     plan: Optional[Dict[str, Any]] = None
     routed_result: Union[Dict[str, Any], str, None] = None
     critics: Optional[List[Dict[str, Any]]] = None
-    context: str
+    context: str = ""
     files_used: List[Dict[str, Any]] = []
     meta: Dict[str, Any] = {}
     final_text: str = ""  # Canonical field for UI rendering
@@ -272,50 +272,64 @@ async def _maybe_await(func, *args, timeout_s: int, **kwargs):
 
 async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
     """
-    Try to build context via core.context_engine. Never raises; returns dict:
+    Build grounded context via core.context_engine using services.semantic_retriever.
+    Never raises; always returns:
       {
-        "context": str, "files_used": [ {path}... ],
-        "kb": {"hits": int, "max_score": float, "sources": [paths]},
-        "grounding": [ {path, score, tier} ... ]
+        "context": str,
+        "files_used": [{"path": str}],
+        "kb": {"hits": int, "max_score": float, "sources": [str]},
+        "grounding": [{"path": str, "score": float, "tier": str}]
       }
     """
-    out = {
+    result: Dict[str, Any] = {
         "context": "",
         "files_used": [],
         "kb": {"hits": 0, "max_score": 0.0, "sources": []},
         "grounding": [],
     }
     try:
-        import importlib  # local to avoid top-level weight
+        import importlib
         ctx_mod = importlib.import_module("core.context_engine")
         build_context = getattr(ctx_mod, "build_context", None)
         ContextRequest = getattr(ctx_mod, "ContextRequest", None)
         EngineConfig = getattr(ctx_mod, "EngineConfig", None)
+        RetrievalTier = getattr(ctx_mod, "RetrievalTier", None)
 
-        # Provide an empty retriever set; engine will return empty gracefully.
-        cfg = EngineConfig(retrievers={})  # type: ignore
-        ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore
+        if not callable(build_context) or ContextRequest is None or EngineConfig is None or RetrievalTier is None:
+            raise RuntimeError("context engine not available")
 
-        context_text = str(ctx.get("context") or "")
-        files_used = ctx.get("files_used") or []
-        kb = (ctx.get("meta") or {}).get("kb") or {}
-        matches = ctx.get("matches") or []
+        # Use your semantic retriever (optional env threshold pass-through)
+        from services.semantic_retriever import SemanticRetriever  # type: ignore
+        score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
+        score_thresh = float(score_thresh_env) if score_thresh_env else None
 
-        out["context"] = context_text
-        out["files_used"] = [{"path": p} for p in files_used if isinstance(p, str)]
-        out["kb"] = {
+        retrievers = {RetrievalTier.GLOBAL: SemanticRetriever(score_threshold=score_thresh)}  # type: ignore[index]
+        cfg = EngineConfig(retrievers=retrievers)  # type: ignore[call-arg]
+
+        ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore[misc]
+
+        # Normalize into the stable shape
+        context_text = str((ctx or {}).get("context") or "")
+        files_used = (ctx or {}).get("files_used") or []
+        kb = ((ctx or {}).get("meta") or {}).get("kb") or {}
+        matches = (ctx or {}).get("matches") or []
+
+        result["context"] = context_text
+        result["files_used"] = [{"path": p} for p in files_used if isinstance(p, str)]
+        result["kb"] = {
             "hits": int(kb.get("hits") or 0),
             "max_score": float(kb.get("max_score") or 0.0),
             "sources": list(kb.get("sources") or []),
         }
-        out["grounding"] = [
+        result["grounding"] = [
             {"path": m.get("path"), "score": float(m.get("score", 0.0)), "tier": m.get("tier")}
             for m in matches
             if isinstance(m, dict) and m.get("path")
         ]
     except Exception as e:
         log_event("ask_context_build_skipped", {"corr_id": corr_id, "error": str(e)})
-    return out
+
+    return result
 
 # ── Routes --------------------------------------------------------------------
 
@@ -386,7 +400,6 @@ async def ask(
     has_attr = len(grounding_from_ctx) > 0
     gated_no_answer_reason = None
     if not (has_hits and score_ok and has_attr):
-        # Fallback: attempt to infer grounding from upstream meta after agent run? We gate first by default.
         gated_no_answer_reason = "Insufficient grounding"
         log_event(
             "ask_gate_blocked",
