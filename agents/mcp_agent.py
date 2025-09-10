@@ -2,27 +2,27 @@
 # Purpose: Orchestrate MCP (plan → context → dispatch) with lazy imports to avoid
 #          circular imports; emit structured grounding and kb stats; robust logging.
 #
-# Contract (returned dict, all keys optional except meta.request_id):
+# Returned dict contract (stable; never raises):
 # {
-#   "plan": dict,
-#   "routed_result": dict|str,   # normalized to include "response" (str or {"text":...})
-#   "critics": list|None,
-#   "context": str,
-#   "files_used": list,
+#   "plan": dict,                        # planner output (may include final_answer, route, _diag)
+#   "routed_result": dict|str,           # normalized to include {"response": str|{"text":...}, "route": str, "grounding": [...]}
+#   "critics": list|None,                # (reserved)
+#   "context": str,                      # pretty context (optional, for debugging/traceability)
+#   "files_used": list,                  # [{path, tier, score}, ...] where available
 #   "meta": {
-#     "request_id": str,         # corr_id propagated by routes
-#     "route": str,              # chosen route (echo/docs/codex/…)
-#     "origin": str,             # same as route or planner suggestion
-#     "timings_ms": { ... },     # planner/context/dispatch/total
-#     "planner_diag": dict,      # pass-through diagnostics from planner
-#     "kb": { "hits": int, "max_score": float|None }
+#     "request_id": str,                 # corr_id propagated by routes
+#     "route": str,                      # chosen route (echo/docs/codex/…)
+#     "origin": str,                     # planner-suggested route or final route
+#     "timings_ms": { planner_ms, context_ms, dispatch_ms, total_ms },
+#     "planner_diag": dict,              # pass-through diagnostics from planner
+#     "kb": { "hits": int, "max_score": float|None, "sources": [{path, score}, ...] }
 #   }
 # }
 #
-# NOTES
-# - NO top-level imports of other agents or core modules (prevents cycles).
-# - All heavy imports happen inside helper functions.
-# - This file MUST NOT import routes.* or main.
+# IMPORTANT
+# - No top-level imports of other agents or core modules (prevents init-time cycles).
+# - All heavy imports happen inside helper functions right before first use.
+# - This file must NOT import routes.* or main.
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
-# ── Logging shim (prefer core.logging; fallback to simple logger) ────────────
+# ── Logging shim (prefer core.logging; safe fallback) ────────────────────────
 try:
     from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
@@ -41,15 +41,14 @@ except Exception:  # pragma: no cover
         _LOG.info("event=%s data=%s", event, (data or {}))
 
 # ── Tunables (env) ───────────────────────────────────────────────────────────
-KB_MIN_SCORE_FLOOR: float = float(os.getenv("KB_MIN_SCORE_FLOOR", "0.0"))  # drop weak matches
-KB_TOPK_LIMIT: int = int(os.getenv("KB_TOPK_LIMIT", "10"))                 # cap sources
-MCP_DEFAULT_ROUTE: str = os.getenv("MCP_DEFAULT_ROUTE", "echo")            # fallback route
+KB_MIN_SCORE_FLOOR: float = float(os.getenv("KB_MIN_SCORE_FLOOR", "0.0"))  # drop weak retrievals
+KB_TOPK_LIMIT: int = int(os.getenv("KB_TOPK_LIMIT", "10"))                 # surface at most N sources
+MCP_DEFAULT_ROUTE: str = os.getenv("MCP_DEFAULT_ROUTE", "echo")            # fallback route if planner fails
 
 
-# ── Small utilities (pure, no imports) ───────────────────────────────────────
-
+# ── Small utilities (pure, no external imports) ──────────────────────────────
 def _max_score(matches: List[Dict[str, Any]]) -> Optional[float]:
-    """Return max(score) across matches (None if empty or unparseable)."""
+    """Return max(score) across matches (None if empty/unparseable)."""
     mx = None
     for m in matches or []:
         s = m.get("score")
@@ -64,7 +63,10 @@ def _max_score(matches: List[Dict[str, Any]]) -> Optional[float]:
 
 
 def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Normalize grounding matches and apply floor + top-k."""
+    """
+    Normalize grounding matches and apply min-score floor + top-k cap.
+    Ensures each entry is {"path": str, "score": float}.
+    """
     out: List[Dict[str, Any]] = []
     for m in matches or []:
         path = (m.get("path") or "").strip()
@@ -103,11 +105,10 @@ def _shape_routed_result(raw: Any) -> Dict[str, Any]:
 
 
 # ── Lazy-imported stage helpers (prevents circular imports) ──────────────────
-
 def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
     """
-    Call into the planner. Imported LAZILY to avoid agent↔agent cycles.
-    Planner should return a dict that MAY include {"route": "...", "_diag": {...}, "final_answer": "..."}.
+    Invoke the planner. Imported LAZILY to avoid agent↔agent cycles.
+    Expected to return a dict that may include {"route": "...", "_diag": {...}, "final_answer": "..."}.
     """
     try:
         from agents.planner_agent import plan  # type: ignore  # LAZY
@@ -125,7 +126,8 @@ def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id:
 def _build_context(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
     """
     Build retrieval context and provide STRUCTURED matches.
-    Expected return: {"context": str, "files_used": [...], "matches": [{"path":..., "score":...}, ...]}
+    Returns:
+      {"context": str, "files_used": [...], "matches": [{"path":..., "score":...}, ...]}
     """
     try:
         from core.context_engine import build_context  # type: ignore  # LAZY
@@ -146,10 +148,9 @@ def _build_context(query: str, files: List[str], topics: List[str], debug: bool,
 
 def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
     """
-    Dispatch the request to a concrete agent. Default to echo.
-    Never raise; return {"response": str|{"text":...}, "route": str}.
+    Dispatch to a concrete agent. Default to echo; never raise.
+    You can later branch on `route` (docs/codex/control/etc).
     """
-    # In the future you can branch on `route` here (docs/codex/control/etc).
     try:
         from agents.echo_agent import invoke as echo_invoke  # type: ignore  # LAZY
         text = echo_invoke(query=query, context=context, user_id=user_id, corr_id=corr_id)
@@ -160,7 +161,6 @@ def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, c
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
-
 async def run_mcp(
     query: str,
     role: Optional[str] = "planner",
@@ -194,7 +194,7 @@ async def run_mcp(
     ctx = _build_context(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=cid)
     context = str(ctx.get("context") or "")
     files_used = ctx.get("files_used") or []
-    matches = ctx.get("matches") or []  # already filtered + top-k
+    matches = ctx.get("matches") or []  # already normalized + filtered + top-k
     t_ctx1 = time.perf_counter()
 
     # 3) Dispatch
@@ -203,11 +203,11 @@ async def run_mcp(
     t_ds1 = time.perf_counter()
     routed_result = _shape_routed_result(routed_raw)
 
-    # 4) Attach structured grounding to result
-    if matches and isinstance(routed_result, dict):
-        # Preserve existing grounding if present; otherwise attach our matches
-        if not isinstance(routed_result.get("grounding"), list) or not routed_result.get("grounding"):
-            routed_result["grounding"] = matches
+    # 4) Attach structured grounding to result (always present as list)
+    if isinstance(routed_result, dict):
+        existing = routed_result.get("grounding")
+        if not isinstance(existing, list) or not existing:
+            routed_result["grounding"] = matches  # may be []
 
     # 5) Meta (timings + kb stats)
     meta: Dict[str, Any] = {
@@ -224,6 +224,7 @@ async def run_mcp(
         "kb": {
             "hits": len(matches),
             "max_score": _max_score(matches),
+            "sources": matches,  # explicit copy for easy inspection/UX
         },
     }
 
@@ -238,7 +239,7 @@ async def run_mcp(
     return {
         "plan": plan,
         "routed_result": routed_result,
-        "critics": None,    # plug your critic suite here if desired
+        "critics": None,            # hook up critics when ready
         "context": context,
         "files_used": files_used,
         "meta": meta,
