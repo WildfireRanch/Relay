@@ -1,236 +1,304 @@
+# ──────────────────────────────────────────────────────────────────────────────
 # File: core/context_engine.py
-# Directory: core
-# Purpose: Deterministic, tiered context assembly with reranker thresholds and
-#          structured grounding for MCP + /ask gate.
+# Purpose: Single authoritative context engine for /ask and /mcp pipelines.
+#          Deterministic tiered retrieval with tunable Top-K, score thresholds,
+#          normalized scores, and token budgeting.
 #
-# Output (dict):
-#   {
-#     "context": str,                  # pretty, human-readable context block (UI/debug)
-#     "files_used": List[dict],        # optional file metadata
-#     "matches": List[{path, score}],  # structured grounding for MCP (/ask reads this)
-#   }
+# Upstream:
+#   - ENV (optional):
+#       TOPK_GLOBAL, TOPK_CONTEXT, TOPK_PROJECT_DOCS, TOPK_CODE
+#       RERANK_MIN_SCORE_GLOBAL, RERANK_MIN_SCORE_CONTEXT,
+#       RERANK_MIN_SCORE_PROJECT_DOCS, RERANK_MIN_SCORE_CODE
+#       MAX_CONTEXT_TOKENS
+#   - Adapters (required at call site): retrievers per tier implementing `Retriever`.
 #
-# Env (optional):
-#   TIER_ORDER                 (default "global,context,project_docs,code")
-#   RERANK_MIN_SCORE_GLOBAL    (default "0.20")   # tier-wise thresholds
-#   RERANK_MIN_SCORE_CONTEXT   (default "0.25")
-#   RERANK_MIN_SCORE_DOCS      (default "0.30")
-#   RERANK_MIN_SCORE_CODE      (default "0.28")
-#   TOPK_PER_TIER_GLOBAL       (default "4")
-#   TOPK_PER_TIER_CONTEXT      (default "6")
-#   TOPK_PER_TIER_DOCS         (default "12")
-#   TOPK_PER_TIER_CODE         (default "10")
+# Downstream:
+#   - Routers/Agents call build_context() and consume ContextResult.
+#
+# Notes:
+#   - No imports from routes/main to avoid circularity.
+#   - Will use services.token_budget if present; otherwise uses internal estimator.
+# ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
+import importlib
 import os
-from typing import Any, Dict, List, Tuple
+import math
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TypedDict
 
-from services.token_budget import (
-    DEFAULT_TIERS,
-    TierSpec,
-    estimate_tokens,
-    pack_tier_chunks,
-)
-
-# Optional logging (best-effort)
 try:
-    from core.logging import log_event
-except Exception:  # pragma: no cover
-    def log_event(evt: str, payload: Dict[str, Any]) -> None:  # type: ignore
+    # Optional precise tokenization if available in the project
+    import tiktoken  # type: ignore
+    _HAS_TIKTOKEN = True
+except Exception:
+    _HAS_TIKTOKEN = False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Public models (importable by routes/agents)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class RetrievalTier(str, Enum):
+    GLOBAL = "global"
+    CONTEXT = "context"
+    PROJECT_DOCS = "project_docs"
+    CODE = "code"
+
+
+class Match(TypedDict):
+    path: str
+    score: float  # normalized [0,1]
+    tier: str
+    snippet: str
+
+
+class KBMeta(TypedDict):
+    hits: int
+    max_score: float
+    sources: List[str]
+
+
+class ContextResult(TypedDict):
+    context: str
+    files_used: List[str]
+    matches: List[Match]
+    meta: Dict[str, KBMeta]
+
+
+@dataclass
+class ContextRequest:
+    query: str
+    corr_id: Optional[str] = None
+    max_tokens: Optional[int] = None  # override MAX_CONTEXT_TOKENS if needed
+
+
+class Retriever:
+    """
+    Adapter interface that concrete tiers must implement.
+    Returns a list of (path, raw_score, snippet) where raw_score is unbounded (e.g., cosine sim).
+    The engine will normalize to [0,1].
+    """
+
+    def search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
+        raise NotImplementedError
+
+
+@dataclass
+class EngineConfig:
+    """Provide retrievers per tier. Missing tiers are simply skipped."""
+    retrievers: Dict[RetrievalTier, Retriever]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Token budgeting (optional external, internal fallback)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _approx_token_count(text: str) -> int:
+    """Cheap estimator: ~4 chars/token (English prose)."""
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / 4))
+
+def _tiktoken_count(text: str, model: str = "gpt-4o") -> int:
+    try:
+        enc = tiktoken.encoding_for_model(model)  # type: ignore
+    except Exception:
+        enc = tiktoken.get_encoding("cl100k_base")  # type: ignore
+    return len(enc.encode(text))  # type: ignore
+
+def _load_external_token_budget():
+    try:
+        mod = importlib.import_module("services.token_budget")
+        # Expect optional callable: tokens(text: str) -> int
+        counter = getattr(mod, "tokens", None)
+        if callable(counter):
+            return counter
+    except Exception:
         pass
+    return None
 
-# Optional KB service
-try:
-    from services import kb  # type: ignore
-except Exception:  # pragma: no cover
-    kb = None  # type: ignore
+_EXTERNAL_COUNTER = _load_external_token_budget()
 
-
-# ── Tunables ────────────────────────────────────────────────────────────────
-TIER_ORDER = [s.strip() for s in os.getenv("TIER_ORDER", "global,context,project_docs,code").split(",") if s.strip()]
-
-RERANK_MIN_SCORE_GLOBAL  = float(os.getenv("RERANK_MIN_SCORE_GLOBAL",  "0.20"))
-RERANK_MIN_SCORE_CONTEXT = float(os.getenv("RERANK_MIN_SCORE_CONTEXT", "0.25"))
-RERANK_MIN_SCORE_DOCS    = float(os.getenv("RERANK_MIN_SCORE_DOCS",    "0.30"))
-RERANK_MIN_SCORE_CODE    = float(os.getenv("RERANK_MIN_SCORE_CODE",    "0.28"))
-
-TOPK_PER_TIER_GLOBAL  = int(os.getenv("TOPK_PER_TIER_GLOBAL",  "4"))
-TOPK_PER_TIER_CONTEXT = int(os.getenv("TOPK_PER_TIER_CONTEXT", "6"))
-TOPK_PER_TIER_DOCS    = int(os.getenv("TOPK_PER_TIER_DOCS",    "12"))
-TOPK_PER_TIER_CODE    = int(os.getenv("TOPK_PER_TIER_CODE",    "10"))
-
-MIN_SCORE_BY_TIER = {
-    "global":       RERANK_MIN_SCORE_GLOBAL,
-    "context":      RERANK_MIN_SCORE_CONTEXT,
-    "project_docs": RERANK_MIN_SCORE_DOCS,
-    "code":         RERANK_MIN_SCORE_CODE,
-}
-
-TOPK_BY_TIER = {
-    "global":       TOPK_PER_TIER_GLOBAL,
-    "context":      TOPK_PER_TIER_CONTEXT,
-    "project_docs": TOPK_PER_TIER_DOCS,
-    "code":         TOPK_PER_TIER_CODE,
-}
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────
-def _search_tier(tier: str, query: str, files: List[str]) -> List[Dict[str, Any]]:
-    """
-    Query the KB by tier. This function expects services.kb.search_tier or kb.search
-    to exist; it falls back gracefully if the function is missing.
-    Returns a list of {path, score, text, tier}
-    """
-    results: List[Dict[str, Any]] = []
-
-    # Preferred: tier-aware search (if implemented in your kb service)
-    if kb and hasattr(kb, "search_tier"):
+def count_tokens(text: str) -> int:
+    if _EXTERNAL_COUNTER:
         try:
-            raw = kb.search_tier(query=query, tier=tier, files=files, k=TOPK_BY_TIER.get(tier, 8))  # type: ignore
-            for r in raw or []:
-                results.append(
-                    {
-                        "path": r.get("path") or r.get("id") or "",
-                        "score": float(r.get("score") or 0.0),
-                        "text": r.get("text") or "",
-                        "tier": tier,
-                    }
-                )
-            return results
+            return int(_EXTERNAL_COUNTER(text))
         except Exception:
             pass
-
-    # Fallback: generic kb.search(query, k) without tier semantics
-    if kb and hasattr(kb, "search"):
+    if _HAS_TIKTOKEN:
         try:
-            raw = kb.search(query=query, k=TOPK_BY_TIER.get(tier, 8))  # type: ignore
-            for r in raw or []:
-                results.append(
-                    {
-                        "path": r.get("path") or r.get("id") or "",
-                        "score": float(r.get("score") or 0.0),
-                        "text": r.get("text") or "",
-                        "tier": tier,
-                    }
-                )
+            return _tiktoken_count(text)
         except Exception:
             pass
+    return _approx_token_count(text)
 
-    return results
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Env helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        v = int(os.getenv(name, "").strip())
+        return v if v > 0 else default
+    except Exception:
+        return default
+
+def _float_env(name: str, default: float) -> float:
+    try:
+        v = float(os.getenv(name, "").strip())
+        return v if v >= 0 else default
+    except Exception:
+        return default
 
 
-def _filter_and_take(results: List[Dict[str, Any]], tier: str) -> List[Dict[str, Any]]:
-    """Apply tier reranker threshold and top-k."""
-    if not results:
+# ──────────────────────────────────────────────────────────────────────────────
+# Core logic
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _defaults_for_tier(tier: RetrievalTier) -> Tuple[int, float]:
+    if tier == RetrievalTier.GLOBAL:
+        return (
+            _int_env("TOPK_GLOBAL", 6),
+            _float_env("RERANK_MIN_SCORE_GLOBAL", 0.35),
+        )
+    if tier == RetrievalTier.CONTEXT:
+        return (
+            _int_env("TOPK_CONTEXT", 6),
+            _float_env("RERANK_MIN_SCORE_CONTEXT", 0.35),
+        )
+    if tier == RetrievalTier.PROJECT_DOCS:
+        return (
+            _int_env("TOPK_PROJECT_DOCS", 6),
+            _float_env("RERANK_MIN_SCORE_PROJECT_DOCS", 0.35),
+        )
+    if tier == RetrievalTier.CODE:
+        return (
+            _int_env("TOPK_CODE", 6),
+            _float_env("RERANK_MIN_SCORE_CODE", 0.35),
+        )
+    return (6, 0.35)
+
+
+def _normalize(scores: Sequence[float]) -> List[float]:
+    if not scores:
         return []
-    min_score = MIN_SCORE_BY_TIER.get(tier, 0.0)
-    k = TOPK_BY_TIER.get(tier, 8)
-    keep = [r for r in results if float(r.get("score") or 0.0) >= min_score]
-    keep.sort(key=lambda x: float(x.get("score") or 0.0), reverse=True)
-    return keep[:k]
+    lo, hi = min(scores), max(scores)
+    if hi - lo <= 1e-12:
+        # Avoid div-by-zero; map all to 1.0 if there was any score at all
+        return [1.0 for _ in scores]
+    return [(s - lo) / (hi - lo) for s in scores]
 
 
-def _make_pretty_block(tier: str, items: List[Dict[str, Any]]) -> str:
-    """Human-readable context block for debugging/UX."""
-    if not items:
-        return ""
-    lines = [f"## {tier.upper()} — Top Matches (min_score={MIN_SCORE_BY_TIER.get(tier):.2f})"]
-    for it in items:
-        path = it.get("path", "")
-        score = float(it.get("score") or 0.0)
-        snippet = (it.get("text") or "").strip()
-        # keep the block readable but compact
-        if len(snippet) > 300:
-            snippet = snippet[:297].rstrip() + "…"
-        lines.append(f"• **{path}** (score: {score:.3f})\n{snippet}")
-    return "\n".join(lines)
+def _assemble_snippet_header(path: str, tier: RetrievalTier, idx: int) -> str:
+    return f"\n--- [source:{tier.value} #{idx+1}] {path} ---\n"
 
 
-# ── Public API ──────────────────────────────────────────────────────────────
-def build_context(
-    query: str,
-    files: List[str] | None = None,
-    topics: List[str] | None = None,
-    debug: bool = False,
-    corr_id: str | None = None,
-) -> Dict[str, Any]:
+def _apply_threshold(matches: List[Match], min_score: float) -> List[Match]:
+    return [m for m in matches if m["score"] >= min_score]
+
+
+def _budgeted_concat(snippets: List[Tuple[str, str, RetrievalTier]], max_tokens: int) -> Tuple[str, List[int]]:
+    """Concatenate with budget; returns (context, included_indices)."""
+    out: List[str] = []
+    used_indices: List[int] = []
+    running = 0
+    for i, (path, snippet, tier) in enumerate(snippets):
+        piece = _assemble_snippet_header(path, tier, i) + snippet.strip() + "\n"
+        cost = count_tokens(piece)
+        if running + cost > max_tokens:
+            continue
+        out.append(piece)
+        used_indices.append(i)
+        running += cost
+    return ("".join(out).strip(), used_indices)
+
+
+def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
     """
-    Build deterministic, tiered context and structured matches.
-    - Honors per-tier thresholds and top-k.
-    - Enforces token caps (by tier) using services.token_budget.
-    - Returns 'matches' for MCP to surface as structured grounding.
+    Deterministic, tiered retrieval:
+      Order: GLOBAL → CONTEXT → PROJECT_DOCS → CODE
+      - For each tier:
+         1) retrieve Top-K
+         2) normalize scores to [0,1]
+         3) threshold by tier min score
+      - Merge results, preserve tier labels, dedupe by path (keep best score).
+      - Token-budget assemble into final context.
     """
-    files = files or []
-    topics = topics or []
-    corr_id = corr_id or "no-corr"
+    query = (req.query or "").strip()
+    max_context_tokens = req.max_tokens or _int_env("MAX_CONTEXT_TOKENS", 2400)
 
-    log_event("ctx_build_start", {"corr_id": corr_id, "q": query, "files": len(files), "topics": len(topics)})
+    ordered_tiers = [
+        RetrievalTier.GLOBAL,
+        RetrievalTier.CONTEXT,
+        RetrievalTier.PROJECT_DOCS,
+        RetrievalTier.CODE,
+    ]
 
-    # 1) Gather raw candidates per tier
-    tier_buckets: Dict[str, List[Dict[str, Any]]] = {t: [] for t in TIER_ORDER}
-    for tier in TIER_ORDER:
-        try:
-            tier_buckets[tier] = _filter_and_take(_search_tier(tier, query, files), tier)
-        except Exception as e:
-            log_event("ctx_search_error", {"corr_id": corr_id, "tier": tier, "err": str(e)})
-            tier_buckets[tier] = []
+    all_matches: List[Match] = []
+    seen_best: Dict[str, float] = {}  # path -> best normalized score
+    raw_for_meta: List[float] = []
+    source_paths: List[str] = []
 
-    # 2) Build per-tier packed text with deterministic caps
-    packed_blocks: List[str] = []
-    structured_matches: List[Dict[str, Any]] = []
-    files_used: List[Dict[str, Any]] = []
-
-    for tier in TIER_ORDER:
-        items = tier_buckets.get(tier, [])
-        if not items:
+    for tier in ordered_tiers:
+        retriever = cfg.retrievers.get(tier)
+        if not retriever:
             continue
 
-        # Remember structured grounding
-        for it in items:
-            structured_matches.append({"path": it.get("path", ""), "score": float(it.get("score") or 0.0)})
+        topk, min_score = _defaults_for_tier(tier)
+        raw = retriever.search(query=query, k=topk)
+        if not raw:
+            continue
 
-        # Pack text snippets under the tier token budget
-        # Prefer item["text"]; if empty, use just a line with path/score
-        raw_chunks: List[str] = []
-        for it in items:
-            path = it.get("path", "")
-            score = float(it.get("score") or 0.0)
-            text = (it.get("text") or "").strip()
-            if text:
-                raw_chunks.append(f"[{tier}] {path} (score {score:.3f})\n{text}")
-            else:
-                raw_chunks.append(f"[{tier}] {path} (score {score:.3f})")
+        paths, scores, snippets = zip(*raw)
+        normalized = _normalize(scores)
+        tier_matches: List[Match] = []
+        for p, s_norm, snip in zip(paths, normalized, snippets):
+            m: Match = {"path": p, "score": float(s_norm), "tier": tier.value, "snippet": snip}
+            tier_matches.append(m)
+            raw_for_meta.append(float(s_norm))
+            source_paths.append(p)
 
-        tier_spec: TierSpec = DEFAULT_TIERS.get(tier, DEFAULT_TIERS["context"])
-        packed_text, used_chunks = pack_tier_chunks(raw_chunks, tier_spec, allow_summarize=True, extractive_sentences=3)
+        tier_kept = _apply_threshold(tier_matches, min_score)
 
-        if packed_text:
-            # Add a small header for readability (optional; harmless to model)
-            header = _make_pretty_block(tier, items[: max(1, min(3, len(items)))])
-            block = f"{header}\n\n{packed_text}" if header else packed_text
-            packed_blocks.append(block)
+        # Deduplicate by path, keep the higher score
+        for m in tier_kept:
+            best = seen_best.get(m["path"])
+            if best is None or m["score"] > best:
+                seen_best[m["path"]] = m["score"]
 
-        # Track files used (basic)
-        for it in items:
-            if it.get("path"):
-                files_used.append({"path": it["path"], "tier": tier, "score": float(it.get("score") or 0.0)})
+        all_matches.extend(tier_kept)
 
-    # 3) Final pretty context (order-preserving)
-    pretty_context = "\n\n".join(packed_blocks)
+    # Collapse to unique best-by-path
+    best_by_path: Dict[str, Match] = {}
+    for m in all_matches:
+        prev = best_by_path.get(m["path"])
+        if (prev is None) or (m["score"] > prev["score"]):
+            best_by_path[m["path"]] = m
 
-    log_event(
-        "ctx_build_done",
-        {
-            "corr_id": corr_id,
-            "tiers": TIER_ORDER,
-            "matches": len(structured_matches),
-            "context_tokens": estimate_tokens(pretty_context),
-        },
-    )
+    # Budgeted assembly
+    ordered = sorted(best_by_path.values(), key=lambda m: m["score"], reverse=True)
+    concat_inputs: List[Tuple[str, str, RetrievalTier]] = [
+        (m["path"], m["snippet"], RetrievalTier(m["tier"])) for m in ordered
+    ]
+    context_str, used_idx = _budgeted_concat(concat_inputs, max_tokens=max_context_tokens)
 
-    return {
-        "context": pretty_context,
+    files_used = [ordered[i]["path"] for i in used_idx]
+    max_score = max(raw_for_meta) if raw_for_meta else 0.0
+
+    result: ContextResult = {
+        "context": context_str,
         "files_used": files_used,
-        "matches": structured_matches,
+        "matches": ordered,  # includes snippet & score; caller can drop snippet if desired
+        "meta": {
+            "kb": {
+                "hits": len(ordered),
+                "max_score": float(max_score),
+                "sources": list(dict.fromkeys(files_used)),  # stable, deduped
+            }
+        },
     }
+    return result
