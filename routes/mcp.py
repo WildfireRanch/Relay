@@ -545,13 +545,35 @@ async def mcp_run(
         # normalize to list[dict] for UI consistency
         files_out = [{"path": p} for p in files_out]  # type: ignore[assignment]
 
-    meta_in = result.get("meta") or {}
-    kb_from_agent = (meta_in.get("kb") or {})
-    kb_final = {
-        "hits": int(kb_from_agent.get("hits", kb_meta["hits"])),
-        "max_score": float(kb_from_agent.get("max_score", kb_meta["max_score"])),
-        "sources": list(kb_from_agent.get("sources") or kb_meta["sources"]),
-    }
+    meta_in = result.get("meta")
+    meta_in = meta_in if isinstance(meta_in, dict) else {}
+
+    kb_from_agent = meta_in.get("kb")
+    kb_from_agent = kb_from_agent if isinstance(kb_from_agent, dict) else {}
+
+    hits = _as_int(kb_from_agent.get("hits"), kb_meta.get("hits", 0))
+    max_score = _as_float(kb_from_agent.get("max_score"), kb_meta.get("max_score", 0.0))
+
+# sources can be list[str] or list[dict]; normalize to list[str]
+    sources_raw = kb_from_agent.get("sources")
+    if isinstance(sources_raw, list):
+        _srcs: List[str] = []
+    for s in sources_raw:
+        if isinstance(s, str):
+            _srcs.append(s)
+        elif isinstance(s, dict) and s.get("path"):
+            _srcs.append(str(s["path"]))
+        else:
+            try:
+                _srcs.append(str(s))
+            except Exception:
+                continue
+        sources = _srcs or kb_meta.get("sources", [])
+    else:
+        sources = kb_meta.get("sources", [])
+
+    kb_final = {"hits": hits, "max_score": max_score, "sources": sources}
+
 
     # Ensure envelope carries grounding; prefer agent, fallback to ctx
     grounding: List[Dict[str, Any]] = []
