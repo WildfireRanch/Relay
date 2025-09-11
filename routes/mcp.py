@@ -3,30 +3,39 @@
 # Purpose: /mcp endpoints with lazy imports, structured errors, diagnostics,
 #          and production-grade robustness (corr-id, timeouts, safe mode).
 #
-# Key behaviors
+# Highlights
 # - No module-level imports from agents/* or context to avoid circular deps.
 # - Corr-ID precedence: X-Corr-Id → X-Request-Id → request.state.corr_id → uuid4
 # - SAFE MODE fallback (echo agent) when mcp_agent import fails.
-# - Context is prebuilt (GLOBAL + PROJECT_DOCS tiers) using core.context_engine
-#   and services.semantic_retriever.TieredSemanticRetriever.
-# - Timeout enforcement works for both sync/async agent functions.
+# - Context prebuild (GLOBAL + PROJECT_DOCS) using core.context_engine
+#   with services.semantic_retriever.TieredSemanticRetriever.
+# - Timeout enforcement for sync/async agents; kwargs filtered by signature.
 # - Pydantic v1/v2 compatible validators.
-# - Diagnostics endpoint verifies FS visibility & importability.
+# - Diagnostics: /mcp/diag and /mcp/diag_ctx
+#
+# Pylance-friendly notes
+# - Use TYPE_CHECKING for optional types; avoid importing runtime-only modules
+#   at top level. Dynamic imports are isolated inside route functions.
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 import os
 import traceback
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Optional, Literal, List, Dict, Any
+from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
 from uuid import uuid4
 
-from fastapi import APIRouter, Request, HTTPException, Header
+from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+
+if TYPE_CHECKING:
+    # Hints only (do not create import cycles at runtime)
+    from pydantic.typing import AnyCallable
 
 # --- Pydantic v1/v2 compatibility --------------------------------------------
 try:
@@ -55,7 +64,9 @@ except Exception:  # pragma: no cover
 
 router = APIRouter(prefix="/mcp", tags=["mcp"])
 
-# --- Models -------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Models
+# ──────────────────────────────────────────────────────────────────────────────
 
 AllowedRole = Literal["planner", "echo", "docs", "codex", "control"]
 
@@ -98,7 +109,9 @@ class McpEnvelope(BaseModel):
     meta: Dict[str, Any] = {}
     final_text: str = ""
 
-# --- Helpers ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
 
 SAFE_MODE_ENV = "MCP_SAFE_MODE"
 
@@ -110,6 +123,11 @@ def _json_safe(obj: Any) -> Any:
             return {str(k): _json_safe(v) for k, v in obj.items()}
         if isinstance(obj, (list, tuple, set)):
             return [_json_safe(x) for x in obj]
+        # Pydantic v1/v2 models
+        if hasattr(obj, "model_dump"):
+            return obj.model_dump()  # type: ignore[attr-defined]
+        if hasattr(obj, "dict"):
+            return obj.dict()  # type: ignore[attr-defined]
         return str(obj)
     except Exception:
         return "[unserializable]"
@@ -138,7 +156,30 @@ def _final_text_from(plan: Any, rr: Any, root_final: Optional[str] = None) -> st
             return fa
     return ""
 
-def _err(status: int, err: str, corr_id: str, hint: Optional[str] = None, message: Optional[str] = None) -> JSONResponse:
+async def _maybe_await(func: Any, *args, timeout_s: int = 45, **kwargs) -> Any:
+    """Call a function that may be sync or async with a timeout."""
+    if iscoroutinefunction(func):
+        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
+    loop = asyncio.get_running_loop()
+    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=timeout_s)
+
+def _filter_kwargs_for_callable(func: Any, **kwargs) -> Dict[str, Any]:
+    """
+    Return kwargs filtered to only those accepted by `func`'s signature.
+    Prevents TypeError: unexpected keyword argument 'context' (etc).
+    """
+    try:
+        sig = inspect.signature(func)
+        params = sig.parameters
+        # if **kwargs present, just return everything
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return kwargs
+        return {k: v for k, v in kwargs.items() if k in params}
+    except Exception:
+        # if we can't inspect, pass nothing (safe) and let upstream handle missing args
+        return {}
+
+def _err(status: int, err: str, corr_id: str, *, hint: Optional[str] = None, message: Optional[str] = None) -> JSONResponse:
     payload: Dict[str, Any] = {"error": err, "corr_id": corr_id}
     if hint:
         payload["hint"] = hint
@@ -146,20 +187,15 @@ def _err(status: int, err: str, corr_id: str, hint: Optional[str] = None, messag
         payload["message"] = message
     return JSONResponse(status_code=status, content=payload)
 
-async def _maybe_await(func, *args, timeout_s: int = 45, **kwargs):
-    """Call a function that may be sync or async with a timeout."""
-    if iscoroutinefunction(func):
-        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
-    loop = asyncio.get_running_loop()
-    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=timeout_s)
-
-# --- Diagnostics ---------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Diagnostics
+# ──────────────────────────────────────────────────────────────────────────────
 
 @router.get("/ping")
-async def mcp_ping() -> Dict[str, str]:
+async def mcp_ping() -> Dict[str, Any]:
     return {
         "status": "ok",
-        "impl": "routes.mcp v5",
+        "impl": "routes.mcp v6",
         "safe_mode": str(os.getenv(SAFE_MODE_ENV, "false")).lower() in ("1", "true", "yes"),
     }
 
@@ -171,43 +207,6 @@ async def mcp_diag() -> Dict[str, Any]:
     """
     out: Dict[str, Any] = {"fs": {}, "imports": {}, "checks": {}, "env": {}}
 
-@router.get("/diag_ctx")
-async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
-    """
-    Try to build context end-to-end and report kb stats or the precise error.
-    DOES NOT call any agents; only the engine + retrievers.
-    """
-    resp = {"query": q, "kb": None, "grounding_len": 0, "error": None, "trace": None}
-    try:
-        ctx_mod = importlib.import_module("core.context_engine")
-        build_context = getattr(ctx_mod, "build_context")
-        ContextRequest = getattr(ctx_mod, "ContextRequest")
-        EngineConfig = getattr(ctx_mod, "EngineConfig")
-        RetrievalTier = getattr(ctx_mod, "RetrievalTier")
-
-        sem = importlib.import_module("services.semantic_retriever")
-        TieredSemanticRetriever = getattr(sem, "TieredSemanticRetriever")
-
-        score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
-        score_thresh = float(score_thresh_env) if score_thresh_env else None
-
-        retrievers = {
-            RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",        score_threshold=score_thresh),
-            RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
-        }
-
-        cfg = EngineConfig(retrievers=retrievers)
-        ctx = build_context(ContextRequest(query=q, corr_id="diag"), cfg)
-
-        kb = (ctx.get("meta") or {}).get("kb") or {}
-        resp["kb"] = kb
-        resp["grounding_len"] = len(ctx.get("matches") or [])
-    except Exception as e:
-        resp["error"] = str(e)
-        resp["trace"] = traceback.format_exc(limit=6)
-    return resp
-
-
     # File system view
     routes_dir = Path(__file__).resolve().parent
     agents_dir = routes_dir.parent / "agents"
@@ -215,7 +214,7 @@ async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
     out["fs"]["routes_listing"] = sorted([p.name for p in routes_dir.iterdir()]) if routes_dir.exists() else "missing"
     out["fs"]["agents_listing"] = sorted([p.name for p in agents_dir.iterdir()]) if agents_dir.exists() else "missing"
     out["fs"]["core_listing"] = sorted([p.name for p in core_dir.iterdir()]) if core_dir.exists() else "missing"
-    
+
     # Import probes (capture errors instead of raising)
     def probe(mod: str, attr: Optional[str] = None):
         try:
@@ -253,7 +252,45 @@ async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
 
     return out
 
-# --- Main endpoint -------------------------------------------------------------
+@router.get("/diag_ctx")
+async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
+    """
+    Try to build context end-to-end and report kb stats or the precise error.
+    DOES NOT call any agents; only the engine + retrievers.
+    """
+    resp: Dict[str, Any] = {"query": q, "kb": None, "grounding_len": 0, "error": None, "trace": None}
+    try:
+        ctx_mod = importlib.import_module("core.context_engine")
+        build_context = getattr(ctx_mod, "build_context")
+        ContextRequest = getattr(ctx_mod, "ContextRequest")
+        EngineConfig = getattr(ctx_mod, "EngineConfig")
+        RetrievalTier = getattr(ctx_mod, "RetrievalTier")
+
+        sem = importlib.import_module("services.semantic_retriever")
+        TieredSemanticRetriever = getattr(sem, "TieredSemanticRetriever")
+
+        score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
+        score_thresh = float(score_thresh_env) if score_thresh_env else None
+
+        retrievers = {
+            RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",        score_threshold=score_thresh),
+            RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
+        }
+
+        cfg = EngineConfig(retrievers=retrievers)
+        ctx = build_context(ContextRequest(query=q, corr_id="diag"), cfg)
+
+        kb = (ctx.get("meta") or {}).get("kb") or {}
+        resp["kb"] = kb
+        resp["grounding_len"] = len(ctx.get("matches") or [])
+    except Exception as e:
+        resp["error"] = str(e)
+        resp["trace"] = traceback.format_exc(limit=6)
+    return resp
+
+# ──────────────────────────────────────────────────────────────────────────────
+# /mcp/run
+# ──────────────────────────────────────────────────────────────────────────────
 
 @router.post(
     "/run",
@@ -287,15 +324,15 @@ async def mcp_run(
     grounding_from_ctx: List[Dict[str, Any]] = []
 
     try:
-        # Lazy imports to avoid cycles
         ctx_mod = importlib.import_module("core.context_engine")
         build_context = getattr(ctx_mod, "build_context")
         ContextRequest = getattr(ctx_mod, "ContextRequest")
         EngineConfig = getattr(ctx_mod, "EngineConfig")
         RetrievalTier = getattr(ctx_mod, "RetrievalTier")
 
-        # Use your semantic retrievers by tier (score threshold via env)
-        from services.semantic_retriever import TieredSemanticRetriever  # type: ignore
+        sem = importlib.import_module("services.semantic_retriever")
+        TieredSemanticRetriever = getattr(sem, "TieredSemanticRetriever")
+
         score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
         score_thresh = float(score_thresh_env) if score_thresh_env else None
 
@@ -304,8 +341,8 @@ async def mcp_run(
             RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
         }
 
-        cfg = EngineConfig(retrievers=retrievers)  # type: ignore
-        ctx = build_context(ContextRequest(query=body.query, corr_id=corr_id), cfg)  # type: ignore
+        cfg = EngineConfig(retrievers=retrievers)
+        ctx = build_context(ContextRequest(query=body.query, corr_id=corr_id), cfg)
 
         context_text = str(ctx.get("context") or "")
         _files = ctx.get("files_used") or []
@@ -325,7 +362,7 @@ async def mcp_run(
         ]
     except Exception as e:
         # Context is optional; log and continue with empty stats.
-        log_event("mcp_context_build_skipped", {"corr_id": corr_id, "error": str(e)})
+        log_event("mcp_context_build_skipped", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
 
     # ── Import agent lazily; if it fails, decide safe-mode or error ───────────
     try:
@@ -379,8 +416,7 @@ async def mcp_run(
     )
 
     try:
-        result = await _maybe_await(
-            run_mcp,
+        provided = dict(
             query=body.query,
             role=(body.role or "planner"),
             files=body.files or [],
@@ -388,9 +424,10 @@ async def mcp_run(
             user_id="anonymous",
             debug=body.debug,
             corr_id=corr_id,
-            context=context_text,  # provide already-built context
-            timeout_s=body.timeout_s,
+            context=context_text,
         )
+        filtered = _filter_kwargs_for_callable(run_mcp, **provided)
+        result = await _maybe_await(run_mcp, **filtered, timeout_s=body.timeout_s)
     except HTTPException:
         raise
     except asyncio.TimeoutError:
@@ -398,10 +435,18 @@ async def mcp_run(
         return _err(504, "mcp_timeout", corr_id, hint="Agent exceeded timeout", message=f"{body.timeout_s}s")
     except Exception as e:
         log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
-        return _err(500, "mcp_failed", corr_id, hint="See server logs for mcp_run_exception")
+        return _err(500, "mcp_failed", corr_id, hint="See server logs for mcp_run_exception", message=str(e))
 
+    # Normalize possible Pydantic/custom objects
+    try:
+        if hasattr(result, "model_dump"):
+            result = result.model_dump()  # pydantic v2
+        elif hasattr(result, "dict"):
+            result = result.dict()        # pydantic v1
+    except Exception:
+        pass
     if not isinstance(result, dict):
-        result = {"routed_result": result}
+        result = {"routed_result": _json_safe(result)}
 
     plan = result.get("plan") if isinstance(result.get("plan"), dict) else None
     rr = result.get("routed_result")
@@ -423,7 +468,7 @@ async def mcp_run(
     }
 
     # Ensure envelope carries grounding; prefer agent, fallback to ctx
-    grounding = []
+    grounding: List[Dict[str, Any]] = []
     if isinstance(rr, dict):
         grounding = rr.get("grounding") or []
     if not grounding:
@@ -452,3 +497,14 @@ async def mcp_run(
         },
     )
     return envelope
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Recommendations (next PRs)
+# - Keep MCP_SAFE_MODE=true in prod until agents are fully stable; false in CI.
+# - Add PYTHONPATH=. in Railway if imports of services/* ever fail.
+# - Add circuit breaker: on repeated mcp_run failures, auto-enable SAFE MODE briefly.
+# - Add unit tests for:
+#   • diag imports ok
+#   • safe mode on agent import failure
+#   • context prebuild attaches kb with tiered retrievers
+# ──────────────────────────────────────────────────────────────────────────────

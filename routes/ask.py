@@ -159,6 +159,24 @@ class StreamRequest(BaseModel):
 
 # ── Core helpers ---------------------------------------------------------------
 
+import inspect
+
+def _filter_kwargs_for_callable(func, **kwargs):
+    """
+    Return kwargs filtered to only those accepted by `func`'s signature.
+    Prevents TypeError: unexpected keyword argument 'context' (etc).
+    """
+    try:
+        sig = inspect.signature(func)
+        params = sig.parameters
+        # if **kwargs present, just return everything
+        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return kwargs
+        return {k: v for k, v in kwargs.items() if k in params}
+    except Exception:
+        # if we can't inspect, pass nothing (safe) and let upstream handle missing args
+        return {}
+
 def _json_safe(obj: Any) -> Any:
     """Best-effort coercion of arbitrary objects into JSON-serializable structures."""
     try:
