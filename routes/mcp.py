@@ -401,7 +401,80 @@ async def mcp_run(
             )
 
         # No safe mode → structured 500
-        return _err(500, "mcp_failed", corr_id, hint="Import agents.mcp_agent.run_mcp failed; see mcp_import_error")
+        return _err(
+            500,
+            "mcp_failed",
+            corr_id,
+            hint="Import agents.mcp_agent.run_mcp failed; see mcp_import_error",
+            message=str(e),
+        )
+
+    # ── Normal path: run the agent with enforced timeout ──────────────────────
+    log_event(
+        "mcp_run_received",
+        {
+            "corr_id": corr_id,
+            "role": (body.role or "planner"),
+            "files_count": len(body.files or []),
+            "topics_count": len(body.topics or []),
+            "debug": body.debug,
+        },
+    )
+
+    # Log the agent signature + what we plan to pass (helps quickly debug)
+    try:
+        import inspect as _inspect  # local import to avoid top-level weight
+        _sig = str(_inspect.signature(run_mcp))
+        log_event("mcp_run_sig", {"corr_id": corr_id, "signature": _sig})
+    except Exception:
+        pass
+
+    try:
+        # Build intended kwargs and filter to agent signature to avoid TypeError
+        provided = dict(
+            query=body.query,
+            role=(body.role or "planner"),
+            files=body.files or [],
+            topics=body.topics or [],
+            user_id="anonymous",
+            debug=body.debug,
+            corr_id=corr_id,
+            context=context_text,
+        )
+        filtered = _filter_kwargs_for_callable(run_mcp, **provided)
+        log_event("mcp_run_call_args", {"corr_id": corr_id, "args": list(filtered.keys())})
+
+        # Execute with timeout (works for sync/async agents)
+        result = await _maybe_await(run_mcp, **filtered, timeout_s=body.timeout_s)
+
+        # Normalize common return types before any further use
+        try:
+            if hasattr(result, "model_dump"):
+                result = result.model_dump()  # pydantic v2
+            elif hasattr(result, "dict"):
+                result = result.dict()        # pydantic v1
+        except Exception as _e:
+            log_event("mcp_result_normalize_warn", {"corr_id": corr_id, "error": str(_e)})
+
+        if not isinstance(result, dict):
+            result = {"routed_result": _json_safe(result)}
+
+    except HTTPException:
+        raise  # FastAPI-generated; bubble up
+    except asyncio.TimeoutError:
+        log_event("mcp_run_timeout", {"corr_id": corr_id, "timeout_s": body.timeout_s})
+        return _err(504, "mcp_timeout", corr_id, hint="Agent exceeded timeout", message=f"{body.timeout_s}s")
+    except Exception as e:
+        trace = traceback.format_exc(limit=6)
+        log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e), "trace": trace})
+        return _err(
+            500,
+            "mcp_failed",
+            corr_id,
+            hint="agents.mcp_agent.run_mcp raised; see logs for 'mcp_run_exception'",
+            message=str(e),
+        )
+
 
     # ── Normal path: run the agent with enforced timeout ──────────────────────
     log_event(
