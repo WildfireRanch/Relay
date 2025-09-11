@@ -115,6 +115,19 @@ class McpEnvelope(BaseModel):
 
 SAFE_MODE_ENV = "MCP_SAFE_MODE"
 
+def _as_float(val: Any, default: float) -> float:
+    try:
+        return float(val) if val is not None else float(default)
+    except Exception:
+        return float(default)
+
+def _as_int(val: Any, default: int) -> int:
+    try:
+        return int(val) if val is not None else int(default)
+    except Exception:
+        return int(default)
+
+
 def _json_safe(obj: Any) -> Any:
     try:
         if isinstance(obj, (str, int, float, bool)) or obj is None:
