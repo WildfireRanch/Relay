@@ -171,6 +171,43 @@ async def mcp_diag() -> Dict[str, Any]:
     """
     out: Dict[str, Any] = {"fs": {}, "imports": {}, "checks": {}, "env": {}}
 
+@router.get("/diag_ctx")
+async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
+    """
+    Try to build context end-to-end and report kb stats or the precise error.
+    DOES NOT call any agents; only the engine + retrievers.
+    """
+    resp = {"query": q, "kb": None, "grounding_len": 0, "error": None, "trace": None}
+    try:
+        ctx_mod = importlib.import_module("core.context_engine")
+        build_context = getattr(ctx_mod, "build_context")
+        ContextRequest = getattr(ctx_mod, "ContextRequest")
+        EngineConfig = getattr(ctx_mod, "EngineConfig")
+        RetrievalTier = getattr(ctx_mod, "RetrievalTier")
+
+        sem = importlib.import_module("services.semantic_retriever")
+        TieredSemanticRetriever = getattr(sem, "TieredSemanticRetriever")
+
+        score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
+        score_thresh = float(score_thresh_env) if score_thresh_env else None
+
+        retrievers = {
+            RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",        score_threshold=score_thresh),
+            RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
+        }
+
+        cfg = EngineConfig(retrievers=retrievers)
+        ctx = build_context(ContextRequest(query=q, corr_id="diag"), cfg)
+
+        kb = (ctx.get("meta") or {}).get("kb") or {}
+        resp["kb"] = kb
+        resp["grounding_len"] = len(ctx.get("matches") or [])
+    except Exception as e:
+        resp["error"] = str(e)
+        resp["trace"] = traceback.format_exc(limit=6)
+    return resp
+
+
     # File system view
     routes_dir = Path(__file__).resolve().parent
     agents_dir = routes_dir.parent / "agents"
@@ -178,7 +215,7 @@ async def mcp_diag() -> Dict[str, Any]:
     out["fs"]["routes_listing"] = sorted([p.name for p in routes_dir.iterdir()]) if routes_dir.exists() else "missing"
     out["fs"]["agents_listing"] = sorted([p.name for p in agents_dir.iterdir()]) if agents_dir.exists() else "missing"
     out["fs"]["core_listing"] = sorted([p.name for p in core_dir.iterdir()]) if core_dir.exists() else "missing"
-
+    
     # Import probes (capture errors instead of raising)
     def probe(mod: str, attr: Optional[str] = None):
         try:
@@ -194,6 +231,8 @@ async def mcp_diag() -> Dict[str, Any]:
     out["imports"]["agents.echo_agent"] = probe("agents.echo_agent")
     out["imports"]["core.context_engine"] = probe("core.context_engine", "build_context")
     out["imports"]["services.token_budget"] = probe("services.token_budget")
+    out["imports"]["services.semantic_retriever"] = probe("services.semantic_retriever", "TieredSemanticRetriever")
+    out["imports"]["core.logging"] = probe("core.logging", "log_event")
 
     # Quick attribute check (doesn't fail diag)
     try:
