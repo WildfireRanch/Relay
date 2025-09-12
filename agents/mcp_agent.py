@@ -156,20 +156,15 @@ def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id:
         return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_error": True, "error": str(e)}}
 
 def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
-    """
-    Build retrieval context via core.context_engine with TieredSemanticRetriever
-    for GLOBAL + PROJECT_DOCS. Returns {"context": str, "matches": [...], "files_used": [...]}
-    """
     try:
         from core.context_engine import (
             build_context, ContextRequest, EngineConfig, RetrievalTier,
-        )  # type: ignore
-        from services.semantic_retriever import TieredSemanticRetriever  # type: ignore
+        )
+        from services.semantic_retriever import TieredSemanticRetriever
     except Exception as e:
         log_event("mcp_ctx_import_error", {"corr_id": corr_id, "error": str(e)})
         return {"context": "", "files_used": [], "matches": []}
 
-    # Build retriever map (tier-specific filtering is handled inside TieredSemanticRetriever)
     retrievers = {
         RetrievalTier.GLOBAL:       TieredSemanticRetriever("global"),
         RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs"),
@@ -179,13 +174,42 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
 
     try:
         ctx = build_context(req=req, cfg=cfg)
-        # Normalize outward structure
-        files_used = [{"path": r.path, "tier": r.tier.value, "score": r.score} for r in ctx.used]
-        matches = [{"path": r.path, "score": r.score} for r in ctx.matches]
-        return {"context": ctx.context, "files_used": files_used, "matches": matches}
+
+        # Support both object and dict shapes
+        if isinstance(ctx, dict):
+            context_text = str(ctx.get("context") or "")
+            # prefer explicit lists if present; fall back gracefully
+            used = ctx.get("used") or ctx.get("files_used") or []
+            matches = ctx.get("matches") or ctx.get("grounding") or []
+            files_used = []
+            for r in used:
+                if isinstance(r, dict):
+                    files_used.append({
+                        "path": (r.get("path") or r.get("file") or "").strip(),
+                        "tier": (r.get("tier") or r.get("source") or "unknown"),
+                        "score": r.get("score"),
+                    })
+            norm_matches = []
+            for m in matches:
+                if isinstance(m, dict):
+                    norm_matches.append({
+                        "path": (m.get("path") or m.get("file") or "").strip(),
+                        "score": m.get("score"),
+                    })
+            return {"context": context_text, "files_used": files_used, "matches": norm_matches}
+
+        # object shape (preferred)
+        context_text = str(getattr(ctx, "context", "") or "")
+        used = getattr(ctx, "used", []) or []
+        matches = getattr(ctx, "matches", []) or []
+        files_used = [{"path": getattr(r, "path", ""), "tier": getattr(getattr(r, "tier", None), "value", None) or getattr(r, "tier", None), "score": getattr(r, "score", None)} for r in used if r]
+        norm_matches = [{"path": getattr(m, "path", ""), "score": getattr(m, "score", None)} for m in matches if m]
+        return {"context": context_text, "files_used": files_used, "matches": norm_matches}
+
     except Exception as e:
         log_event("mcp_context_error", {"corr_id": corr_id, "error": str(e)})
         return {"context": "", "files_used": [], "matches": []}
+
 
 def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
     """
@@ -210,7 +234,9 @@ async def run_mcp(
     user_id: str = "anonymous",
     debug: bool = False,
     corr_id: Optional[str] = None,
+    **_: Any,   # tolerate unexpected kwargs like `context`
 ) -> Dict[str, Any]:
+    
     """
     Orchestrates: plan → context → dispatch. Returns a stable dict; never raises.
     """

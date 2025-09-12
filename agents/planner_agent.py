@@ -95,37 +95,40 @@ def plan(
     max_context_tokens: Optional[int] = 120_000,
     request_id: Optional[str] = None,
     corr_id: Optional[str] = None,
-    **kwargs: Any,  # tolerate unknowns to avoid TypeError
+    **kwargs: Any,
 ) -> Dict[str, Any]:
-    """
-    Sync facade around _plan_core. Ignores unknown kwargs, accepts corr_id.
-    Keeps prior behavior; safe to call from sync code.
-    """
-    # Prefer corr_id if provided
-    req_id = request_id or corr_id
+    # keep behavior, ignore unknown kwargs
+    files = files or []
+    topics = topics or []
+    rid = request_id or corr_id
+
     try:
-        coro = _plan_core(
-            query=query,
-            files=files,
-            topics=topics,
-            debug=debug,
-            timeout_s=timeout_s,
-            max_context_tokens=max_context_tokens,
-            request_id=req_id,
-        )
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In FastAPI event loop; run with nested task
-                fut = asyncio.run_coroutine_threadsafe(coro, loop)
-                return fut.result(timeout=timeout_s)
-            else:
-                return loop.run_until_complete(coro)
-        except RuntimeError:
-            # No running loop
-            return asyncio.run(coro)
+        if _looks_definitional(query):
+            head = f"{_key_from_query(query).title()}: a concise answer will follow."
+            out = {
+                "route": "echo",
+                "plan_id": _plan_id(),
+                "final_answer": head,
+                "focus": _key_from_query(query),
+                "steps": ["Provide a concise answer without preambles."],
+                "context": {"files": files[:6], "topics": topics[:6]},
+                "_diag": {"definitional": True},
+            }
+            return out
+
+        steps = ["Answer concisely, avoid parroting.", "Use retrieved context if present."]
+        ctx_hint = {"files": files[:6], "topics": topics[:6]}
+        return {
+            "route": "echo",
+            "plan_id": _plan_id(),
+            "focus": _key_from_query(query),
+            "steps": steps,
+            "context": ctx_hint,
+            "_diag": {"definitional": False},
+        }
+
     except Exception as e:
-        log_event("planner_error", {"error": str(e), "request_id": req_id})
+        log_event("planner_error", {"error": str(e or ""), "request_id": rid})
         return {
             "route": "echo",
             "plan_id": _plan_id(),
@@ -133,5 +136,6 @@ def plan(
             "focus": _key_from_query(query),
             "steps": ["Provide a concise answer without preambles."],
             "context": {"files": [], "topics": []},
-            "_diag": {"error": True, "msg": str(e)},
+            "_diag": {"error": True, "msg": str(e or "")},
         }
+

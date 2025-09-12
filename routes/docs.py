@@ -40,7 +40,9 @@ from fastapi.responses import JSONResponse
 
 from services.google_docs_sync import sync_google_docs
 from services import kb
-from services.context_engine import ContextEngine
+from core.context_engine import ContextEngine  # or build_context, etc., per its usage
+
+
 from services.docs_utils import (
     extract_doc_id,
     build_doc_registry,
