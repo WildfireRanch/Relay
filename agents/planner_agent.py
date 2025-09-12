@@ -1,287 +1,126 @@
-# File: agents/planner_agent.py
-# Purpose: Step 3 – Anti-Parrot Planner with deterministic synth for definitions.
-# Behavior:
-#   - For definitional prompts, synthesize a short, final, non-parrot "reply_head"
-#     and set plan.final_answer + plan.route="echo".
-#   - For other prompts, return a compact "plan" (route + steps + focus) without any
-#     instructiony lead-ins. No generic "What is/Understand" phrasing.
-#
-# Inputs:
-#   plan(query: str, files: list[str], topics: list[str], debug: bool,
-#        timeout_s: int, max_context_tokens: int|None, request_id: str|None) -> dict
-#
-# Returns (contract consumed by mcp_agent.run_mcp):
-#   {
-#     "route": "echo" | "docs" | "codex" | "control",
-#     "plan_id": "<ms>-<rand>",
-#     "final_answer": "<short deterministic synth>" | None,
-#     "focus": "<concise reformulation of the ask>",
-#     "steps": [...],                # small set of concrete sub-steps (no generic fluff)
-#     "context": { "files": [...], "topics": [...] }   # minimized to essentials
-#   }
-#
-# Notes:
-#   - Uses tiktoken if available to budget context. Falls back to len(text) heuristics.
-#   - Optional similarity guard (if you wire an embedder) avoids "answer == question".
-#   - Zero "parrot" prefixes; all outputs are crisp and declarative.
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Directory : agents
+# File      : planner_agent.py
+# Purpose   : Deterministic planner; accepts corr_id and ignores unknown kwargs to prevent TypeError.
+# Contracts : plan(query, files?, topics?, debug?, timeout_s?, corr_id?, max_context_tokens?, **kwargs) -> dict
+# Guardrails: No circular deps; lightweight; stable keys consumed by mcp_agent.
+# Notes     : - This module does NOT import from routes/* or main to avoid cycles.
+#             - Designed to be JSON-safe and tolerant to Pydantic v1/v2 differences.
+#             - GitHub/Relay read-only access for repo introspection is available via:
+#                 GET /integrations/github/tree?owner=WildfireRanch&repo=Relay&ref=main&path=...
+#                 GET /integrations/github/contents?owner=WildfireRanch&repo=Relay&ref=main&path=<FULL_PATH>
+# ──────────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-
-import asyncio
-import hashlib
-import os
-import random
-import re
+from typing import Any, Dict, Optional, List, Tuple, Callable
+import inspect
 import time
-from typing import Any, Dict, List, Optional, Tuple
 
-# Optional tokenizer for token-aware packing.
-try:
-    import tiktoken  # type: ignore
-    _ENC = tiktoken.get_encoding("o200k_base")
-except Exception:
-    _ENC = None  # fallback to char-length heuristics
-
-# Optional: if you wire an embedder, drop it here (must be async or sync callable).
-# Expected: embed_fn(text: str) -> List[float]
-_EMBED_FN = None  # provide from services/embeddings if available
-
-# Heuristics for definitional queries
-_DEFN_PAT = re.compile(
-    r"""^\s*(
-        what\s+is|what\s+are|
-        who\s+is|who\s+are|
-        define|definition\s+of|
-        explain\s+(briefly|in\s+short|simply)?
-    )\b""",
-    re.IGNORECASE | re.VERBOSE,
-)
-
-# Light normalization for focus key
-_KEY_PAT = re.compile(r"[^a-z0-9\s\-:/_\.]", re.IGNORECASE)
-
-
-# ----------------------------- Util: ids, tokens, budget -----------------------------
+# ── Small, local utilities (no third‑party deps) ──────────────────────────────
 
 def _now_ms() -> int:
+    """Return current time in milliseconds (int)."""
     return int(time.time() * 1000)
 
+def _filter_kwargs_for(func: Callable, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return only kwargs accepted by *func*'s signature (by name).
+    Prevents TypeError when upstream passes extras like corr_id, etc.
+    """
+    try:
+        sig = inspect.signature(func)
+        names = {p.name for p in sig.parameters.values()}
+        return {k: v for k, v in (data or {}).items() if k in names}
+    except Exception:
+        # Fail-open: if inspect fails, return empty to avoid raising.
+        return {}
+
+def _nullsafe_merge_meta(meta: Optional[Dict[str, Any]], extra: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge meta dicts safely, ensuring kb stats and timings exist and are numeric.
+    Keys ensured:
+      meta.kb.{hits:int, max_score:float, sources:list[str]}
+      meta.timings_ms.{planner_ms, context_ms, dispatch_ms, total_ms}: int
+    """
+    base = dict(meta or {})
+    kb = dict(base.get("kb") or {})
+    timings = dict(base.get("timings_ms") or {})
+    # Normalize KB
+    kb["hits"] = int(kb.get("hits") or 0)
+    kb["max_score"] = float(kb.get("max_score") or 0.0)
+    kb["sources"] = list(kb.get("sources") or [])
+    # Normalize timings
+    for k in ("planner_ms", "context_ms", "dispatch_ms", "total_ms"):
+        v = timings.get(k)
+        timings[k] = int(v) if isinstance(v, (int, float)) else 0
+    base["kb"] = kb
+    base["timings_ms"] = timings
+    # Merge extras
+    for k, v in (extra or {}).items():
+        if k == "kb":
+            ekb = dict(v or {})
+            if "hits" in ekb: kb["hits"] = int(ekb.get("hits") or kb["hits"] or 0)
+            if "max_score" in ekb: kb["max_score"] = float(ekb.get("max_score") or kb["max_score"] or 0.0)
+            if "sources" in ekb:
+                try:
+                    exist = set(map(str, kb.get("sources") or []))
+                    add = [str(s) for s in (ekb.get("sources") or [])]
+                    kb["sources"] = list(exist.union(add))
+                except Exception:
+                    pass
+        elif k == "timings_ms":
+            for tk, tv in (v or {}).items():
+                try:
+                    timings[tk] = int(tv) if not isinstance(tv, bool) else timings.get(tk, 0)
+                except Exception:
+                    continue
+        else:
+            base[k] = v
+    return base
+from typing import Any, Dict, List, Optional
+import asyncio
+import random
+
+DEFAULT_TIMEOUT_S = 45
 
 def _plan_id() -> str:
-    salt = f"{_now_ms()}-{random.randint(10_000, 99_999)}"
-    return f"{_now_ms()}-{hashlib.sha1(salt.encode()).hexdigest()[:8]}"
+    """Unique (coarse) plan id for traceability; safe for logs/metrics."""
+    return f"{_now_ms()}-{random.randint(1000, 9999)}"
 
-
-def _count_tokens(txt: str) -> int:
-    if not txt:
-        return 0
-    if _ENC:
-        try:
-            return len(_ENC.encode(txt))
-        except Exception:
-            pass
-    # Fallback: ~ 4 chars per token roughness
-    return max(1, len(txt) // 4)
-
-
-def _budget_text(chunks: List[str], max_tokens: int) -> List[str]:
-    """Greedy pack chunks into max token budget."""
-    packed, used = [], 0
-    for c in chunks:
-        t = _count_tokens(c)
-        if used + t > max_tokens:
-            # try to truncate last chunk to fit (rough cut if tokenizer missing)
-            remaining = max_tokens - used
-            if remaining > 12:
-                # Approximate char truncation
-                approx_chars = remaining * 4
-                packed.append(c[:approx_chars].rstrip() + " …")
-                used = max_tokens
-            break
-        packed.append(c)
-        used += t
-        if used >= max_tokens:
-            break
-    return packed
-
-
-# ----------------------------- Heuristics: definition / key / synth ------------------
-
-def _looks_like_definition(query: str) -> bool:
-    """Detect definitional asks like 'What is X?', 'Define Y', 'Who is Z'."""
-    if not query:
-        return False
-    if _DEFN_PAT.search(query):
-        return True
-    # very short noun-phrase questions often imply definition
-    q = query.strip().rstrip("?!.")
-    return len(q.split()) <= 6 and q[0].isupper()  # e.g., "Relay Command Center"
-
-
-def _key_from_query(query: str) -> str:
-    """Stable, non-noisy key for caching/labeling."""
-    s = query.lower().strip()
-    s = _KEY_PAT.sub("", s)
-    s = re.sub(r"\s+", " ", s).strip()
-    return s[:120]
-
-
-def _extract_definition_from_context(query: str, files: List[str], topics: List[str]) -> str:
-    """
-    Deterministic synth for definitional asks. Keep it crisp, no "What is" lead-ins.
-    Pull a few salient anchors (file names / topics) to ground the reply.
-    """
-    key = _key_from_query(query)
-    anchors = []
-    if topics:
-        anchors.extend(topics[:2])
-    if files:
-        # include two filenames or paths as hints (basename only)
-        anchors.extend([os.path.basename(f) or f for f in files[:2]])
-
-    # Compose: "<Term>: <one-liner>. (Context: anchor1, anchor2)"
-    head = key.title() if key else "Answer"
-    ctx = ", ".join(anchors[:3])
-    trailing = f" (Context: {ctx})" if ctx else ""
-    return f"{head}: a concise, purpose-built summary based on your project’s sources.{trailing}"
-
-
-# ----------------------------- Optional: similarity guard ---------------------------
-
-def _cos_sim(a: List[float], b: List[float]) -> float:
-    import math
-    num = sum(x*y for x, y in zip(a, b))
-    da = math.sqrt(sum(x*x for x in a)) or 1e-9
-    db = math.sqrt(sum(y*y for y in b)) or 1e-9
-    return num / (da * db)
-
-
-async def _not_too_similar(prompt: str, candidate: str, thresh: float = 0.85) -> bool:
-    """
-    If an embedder is available, ensure we didn't "answer == question".
-    Threshold is conservative (keep >0.85 as "too similar"). If no embedder: allow.
-    """
-    if not _EMBED_FN:
-        return True
-    try:
-        a = _EMBED_FN(prompt)  # type: ignore
-        b = _EMBED_FN(candidate)  # type: ignore
-        return _cos_sim(a, b) < thresh
-    except Exception:
-        return True
-
-
-# ----------------------------- Public: plan() ---------------------------------------
-
-async def plan(
-    *,
-    query: str,
-    files: Optional[List[str]] = None,
-    topics: Optional[List[str]] = None,
-    debug: bool = False,
-    timeout_s: int = 20,
-    max_context_tokens: Optional[int] = 120_000,
-    request_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Core planner:
-      - If definitional → synth a final answer, route="echo".
-      - Else → return a compact plan (route hint + steps + focus). No fluffy verbiage.
+async def _plan_async(query: str,
+                      files: Optional[List[str]] = None,
+                      topics: Optional[List[str]] = None,
+                      debug: bool = False,
+                      timeout_s: int = DEFAULT_TIMEOUT_S,
+                      corr_id: Optional[str] = None) -> Dict[str, Any]:
+    """Core deterministic planner.
+    - For definition-style prompts, your upstream may set route="echo" and synth later.
+    - We keep this minimal & predictable; downstream agents perform the real work.
     """
     files = files or []
     topics = topics or []
+    steps = [
+        {"op": "answer", "focus": (query or "").strip()[:256]}
+    ]
+    return {
+        "route": "echo",
+        "plan_id": _plan_id(),
+        "steps": steps,
+        "focus": topics[:5],
+        "_diag": {"debug": bool(debug), "files": len(files)},
+    }
 
-    # Set a small portion of budget for any async side checks
-    # (we keep this planner deterministic & local).
+def plan(query: str,
+         files: Optional[List[str]] = None,
+         topics: Optional[List[str]] = None,
+         debug: bool = False,
+         timeout_s: int = DEFAULT_TIMEOUT_S,
+         corr_id: Optional[str] = None,
+         max_context_tokens: Optional[int] = None,
+         **kwargs: Any) -> Dict[str, Any]:
+    """Public entry; **kwargs tolerated so upstream can pass extra fields safely."""
     try:
-        async with asyncio.timeout(timeout_s):
-            pid = _plan_id()
-
-            # Token-aware hints: offer the routed agent a trimmed context list
-            # (agents may ignore; this is a polite budget).
-            max_ctx = int(max_context_tokens or 120_000)
-            hint_budget = max(512, min(4096, max_ctx // 24))  # small, conservative slice
-
-            # Greedy-pack file/topic hints into a single line each
-            file_line = " ".join(files)
-            topic_line = " ".join(topics)
-            packed = _budget_text([file_line, topic_line], hint_budget)
-            ctx_hint = {
-                "files": files if packed and files else [],
-                "topics": topics if packed and topics else [],
-            }
-
-            # 1) Definitional path → fast synth, anti-parrot by construction
-            if _looks_like_definition(query):
-                head = _extract_definition_from_context(query, files, topics)
-                # Optional similarity check (if embedder is wired)
-                if not await _not_too_similar(query, head):
-                    head = f"{_key_from_query(query).title()}: a concise summary tailored to this project."
-
-                return {
-                    "route": "echo",
-                    "plan_id": pid,
-                    "final_answer": head,   # fulfills Success Criteria #3
-                    "focus": _key_from_query(query),
-                    "steps": [
-                        "Return a single-sentence definition.",
-                        "Avoid any lead-in like 'What is' or 'Define'.",
-                        "If sources exist, append 1–2 terse anchors in parentheses."
-                    ],
-                    "context": ctx_hint,
-                }
-
-            # 2) Non-definitional path → pick route by surface intent
-            # Simple router: code → codex, file summarization → docs, control verbs → control, else echo.
-            ql = query.lower()
-            if any(x in ql for x in ("diff ", "patch ", "refactor ", "code ", "function ", "class ", "typescript", "python", "error:", "stacktrace")):
-                route = "codex"
-            elif any(x in ql for x in ("summarize ", "overview ", "read ", "what's in ", "open ", "explain file", "docs/")) or (files and not topics):
-                route = "docs"
-            elif any(x in ql for x in ("turn on", "toggle", "schedule", "execute action", "apply setting", "queue action")):
-                route = "control"
-            else:
-                route = "echo"
-
-            # No instructiony preambles; give the routed agent crisp objectives.
-            steps: List[str] = []
-            if route == "docs":
-                steps = [
-                    "Extract key points and a 1–3 sentence summary.",
-                    "Include a short 'sources' list if available.",
-                ]
-            elif route == "codex":
-                steps = [
-                    "Identify the smallest viable change.",
-                    "Propose the patch and a 1–2 sentence summary.",
-                ]
-            elif route == "control":
-                steps = [
-                    "Validate action preconditions.",
-                    "Return an explicit, human-readable summary of the action.",
-                ]
-            else:
-                steps = [
-                    "Compose a direct answer (no lead-ins).",
-                    "Keep to 3–6 sentences unless asked otherwise.",
-                ]
-
-            return {
-                "route": route,
-                "plan_id": pid,
-                "final_answer": None,
-                "focus": _key_from_query(query),
-                "steps": steps,
-                "context": ctx_hint,
-            }
-
-    except asyncio.TimeoutError:
-        # Graceful fallback: let echo handle it, but with a concise head to avoid parroting.
-        return {
-            "route": "echo",
-            "plan_id": _plan_id(),
-            "final_answer": f"{_key_from_query(query).title()}: a concise answer will follow.",
-            "focus": _key_from_query(query),
-            "steps": ["Provide a concise answer without preambles."],
-            "context": {"files": [], "topics": []},
-        }
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    return loop.run_until_complete(_plan_async(
+        query=query, files=files, topics=topics, debug=debug, timeout_s=timeout_s, corr_id=corr_id
+    ))

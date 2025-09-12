@@ -1,246 +1,277 @@
-# File: agents/mcp_agent.py
-# Purpose: Orchestrate MCP (plan → context → dispatch) with lazy imports to avoid
-#          circular imports; emit structured grounding and kb stats; robust logging.
-#
-# Returned dict contract (stable; never raises):
-# {
-#   "plan": dict,                        # planner output (may include final_answer, route, _diag)
-#   "routed_result": dict|str,           # normalized to include {"response": str|{"text":...}, "route": str, "grounding": [...]}
-#   "critics": list|None,                # (reserved)
-#   "context": str,                      # pretty context (optional, for debugging/traceability)
-#   "files_used": list,                  # [{path, tier, score}, ...] where available
-#   "meta": {
-#     "request_id": str,                 # corr_id propagated by routes
-#     "route": str,                      # chosen route (echo/docs/codex/…)
-#     "origin": str,                     # planner-suggested route or final route
-#     "timings_ms": { planner_ms, context_ms, dispatch_ms, total_ms },
-#     "planner_diag": dict,              # pass-through diagnostics from planner
-#     "kb": { "hits": int, "max_score": float|None, "sources": [{path, score}, ...] }
-#   }
-# }
-#
-# IMPORTANT
-# - No top-level imports of other agents or core modules (prevents init-time cycles).
-# - All heavy imports happen inside helper functions right before first use.
-# - This file must NOT import routes.* or main.
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Directory : agents
+# File      : mcp_agent.py
+# Purpose   : Plan → build context → dispatch. Kwarg-filtering, ContextEngine adoption, null-safe meta.
+# Contracts : run_mcp(query, files?, topics?, debug?, corr_id?, **kwargs) -> dict (never raises)
+# Guardrails: No route/main imports; uses lazy imports; SAFE-MODE on failures.
+# Notes     : - This module does NOT import from routes/* or main to avoid cycles.
+#             - Designed to be JSON-safe and tolerant to Pydantic v1/v2 differences.
+#             - GitHub/Relay read-only access for repo introspection is available via:
+#                 GET /integrations/github/tree?owner=WildfireRanch&repo=Relay&ref=main&path=...
+#                 GET /integrations/github/contents?owner=WildfireRanch&repo=Relay&ref=main&path=<FULL_PATH>
+# ──────────────────────────────────────────────────────────────────────────────
 from __future__ import annotations
-
-import os
+from typing import Any, Dict, Optional, List, Tuple, Callable
+import inspect
 import time
+
+# ── Small, local utilities (no third‑party deps) ──────────────────────────────
+
+def _now_ms() -> int:
+    """Return current time in milliseconds (int)."""
+    return int(time.time() * 1000)
+
+def _filter_kwargs_for(func: Callable, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Return only kwargs accepted by *func*'s signature (by name).
+    Prevents TypeError when upstream passes extras like corr_id, etc.
+    """
+    try:
+        sig = inspect.signature(func)
+        names = {p.name for p in sig.parameters.values()}
+        return {k: v for k, v in (data or {}).items() if k in names}
+    except Exception:
+        # Fail-open: if inspect fails, return empty to avoid raising.
+        return {}
+
+def _nullsafe_merge_meta(meta: Optional[Dict[str, Any]], extra: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge meta dicts safely, ensuring kb stats and timings exist and are numeric.
+    Keys ensured:
+      meta.kb.{hits:int, max_score:float, sources:list[str]}
+      meta.timings_ms.{planner_ms, context_ms, dispatch_ms, total_ms}: int
+    """
+    base = dict(meta or {})
+    kb = dict(base.get("kb") or {})
+    timings = dict(base.get("timings_ms") or {})
+    # Normalize KB
+    kb["hits"] = int(kb.get("hits") or 0)
+    kb["max_score"] = float(kb.get("max_score") or 0.0)
+    kb["sources"] = list(kb.get("sources") or [])
+    # Normalize timings
+    for k in ("planner_ms", "context_ms", "dispatch_ms", "total_ms"):
+        v = timings.get(k)
+        timings[k] = int(v) if isinstance(v, (int, float)) else 0
+    base["kb"] = kb
+    base["timings_ms"] = timings
+    # Merge extras
+    for k, v in (extra or {}).items():
+        if k == "kb":
+            ekb = dict(v or {})
+            if "hits" in ekb: kb["hits"] = int(ekb.get("hits") or kb["hits"] or 0)
+            if "max_score" in ekb: kb["max_score"] = float(ekb.get("max_score") or kb["max_score"] or 0.0)
+            if "sources" in ekb:
+                try:
+                    exist = set(map(str, kb.get("sources") or []))
+                    add = [str(s) for s in (ekb.get("sources") or [])]
+                    kb["sources"] = list(exist.union(add))
+                except Exception:
+                    pass
+        elif k == "timings_ms":
+            for tk, tv in (v or {}).items():
+                try:
+                    timings[tk] = int(tv) if not isinstance(tv, bool) else timings.get(tk, 0)
+                except Exception:
+                    continue
+        else:
+            base[k] = v
+    return base
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
-# ── Logging shim (prefer core.logging; safe fallback) ────────────────────────
-try:
-    from core.logging import log_event  # type: ignore
-except Exception:  # pragma: no cover
-    import logging
-    _LOG = logging.getLogger("relay.mcp_agent")
-    def log_event(event: str, data: Dict[str, Any] | None = None) -> None:
-        _LOG.info("event=%s data=%s", event, (data or {}))
+# ── Local SAFE-MODE synthesizer (no external deps) ─────────────────────────────
+from typing import Optional, Dict, Any
 
-# ── Tunables (env) ───────────────────────────────────────────────────────────
-KB_MIN_SCORE_FLOOR: float = float(os.getenv("KB_MIN_SCORE_FLOOR", "0.0"))  # drop weak retrievals
-KB_TOPK_LIMIT: int = int(os.getenv("KB_TOPK_LIMIT", "10"))                 # surface at most N sources
-MCP_DEFAULT_ROUTE: str = os.getenv("MCP_DEFAULT_ROUTE", "echo")            # fallback route if planner fails
+def _synth_local(query: str, context: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Deterministic, dependency-free fallback used when echo/invoke is unavailable.
+    Mirrors echo_agent's behavior lightly (no model usage, no tokens).
+    """
+    q = (query or "").strip()
+    if not q:
+        q = "No question provided."
+    title = ""
+    if isinstance(context, dict):
+        title = str(context.get("title") or context.get("topic") or "").strip()
+    return f"{q} (context: {title})" if title else q
 
 
-# ── Small utilities (pure, no external imports) ──────────────────────────────
-def _max_score(matches: List[Dict[str, Any]]) -> Optional[float]:
-    """Return max(score) across matches (None if empty/unparseable)."""
-    mx = None
-    for m in matches or []:
-        s = m.get("score")
+# ── Lazy import helpers (avoid cycles) ────────────────────────────────────────
+def _lazy_planner():
+    try:
+        from agents.planner_agent import plan  # type: ignore
+        return plan
+    except Exception:
+        return None
+
+def _lazy_echo():
+    try:
+        from agents.echo_agent import invoke  # type: ignore
+        return invoke
+    except Exception:
+        return None
+
+def _lazy_retriever():
+    try:
+        from services.semantic_retriever import TieredSemanticRetriever  # type: ignore
+        return TieredSemanticRetriever
+    except Exception:
+        return None
+
+def _lazy_ctx_engine():
+    try:
+        from core.context_engine import ContextRequest, EngineConfig, build_context, RetrievalTier  # type: ignore
+        return ContextRequest, EngineConfig, build_context, RetrievalTier
+    except Exception:
+        # RetrievalTier may not exist in older builds; return Nones and we fallback.
+        return None, None, None, None
+
+# ── Public API ────────────────────────────────────────────────────────────────
+def run_mcp(query: str,
+            files: Optional[List[str]] = None,
+            topics: Optional[List[str]] = None,
+            debug: bool = False,
+            corr_id: Optional[str] = None,
+            **kwargs: Any) -> Dict[str, Any]:
+    """End-to-end pipeline. Never raises; returns stable dict consumed by routes/ask.
+    Shape:
+      {
+        "plan": {...},
+        "routed_result": dict|str,
+        "critics": list|None,
+        "context": str,
+        "files_used": list[dict{path, tier, score?}],
+        "meta": { request_id, route, kb{hits,max_score,sources}, timings_ms{...} }
+      }
+    """
+    t0 = _now_ms()
+
+    # 1) PLAN
+    plan_fn = _lazy_planner()
+    planner_start = _now_ms()
+    plan_out: Dict[str, Any] = {}
+    if callable(plan_fn):
+        payload = _filter_kwargs_for(plan_fn, {
+            "query": query, "files": files, "topics": topics,
+            "debug": debug, "timeout_s": 45, "corr_id": corr_id
+        })
         try:
-            f = float(s) if s is not None else None
-        except Exception:
-            f = None
-        if f is None:
-            continue
-        mx = f if mx is None else max(mx, f)
-    return mx
+            plan_out = plan_fn(**payload) or {}
+        except Exception as e:
+            plan_out = {"route": "echo", "_diag": {"planner_error": str(e)}}
+    else:
+        plan_out = {"route": "echo", "_diag": {"planner_missing": True}}
+    planner_ms = _now_ms() - planner_start
+    route = str(plan_out.get("route") or "echo")
 
+    # 2) CONTEXT (ContextEngine preferred; retriever fallback)
+    Retriever = _lazy_retriever()
+    ContextRequest, EngineConfig, build_context, RetrievalTier = _lazy_ctx_engine()
 
-def _filter_matches(matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Normalize grounding matches and apply min-score floor + top-k cap.
-    Ensures each entry is {"path": str, "score": float}.
-    """
-    out: List[Dict[str, Any]] = []
-    for m in matches or []:
-        path = (m.get("path") or "").strip()
+    kb_hits = 0
+    kb_max = 0.0
+    sources: List[str] = []
+    context_md = ""
+    context_ms = 0
+
+    ctx_t0 = _now_ms()
+    try:
+        if ContextRequest and EngineConfig and build_context:
+            # Prefer enum if present; else allow string keys transparently.
+            try:
+                tiers = {
+                    RetrievalTier.GLOBAL:        Retriever("global"),
+                    RetrievalTier.PROJECT_DOCS:  Retriever("project_docs"),
+                } if (Retriever and RetrievalTier) else {}
+            except Exception:
+                tiers = {}
+
+            if not tiers and Retriever:
+                # Fallback to string-tier map for builds w/o RetrievalTier
+                tiers = {"global": Retriever("global"), "project_docs": Retriever("project_docs")}
+
+            if tiers:
+                cfg = EngineConfig(retrievers=tiers)  # type: ignore[arg-type]
+                req = ContextRequest(query=query, corr_id=corr_id)
+                ctx = build_context(req, cfg)  # type: ignore[misc]
+                # Normalize ContextResult
+                context_md = str((ctx or {}).get("context") or "")
+                files_used_list = list((ctx or {}).get("files_used") or [])
+                matches = list((ctx or {}).get("matches") or [])
+                # kb stats
+                kb_hits = len(matches)
+                try:
+                    kb_max = max([float(m.get("score") or 0.0) for m in matches]) if matches else 0.0
+                except Exception:
+                    kb_max = 0.0
+                sources = [str(p) for p in files_used_list]
+        elif Retriever:
+            # Manual context build (two-tier)
+            global_r = Retriever("global")
+            proj_r = Retriever("project_docs")
+            g_hits = global_r.search(query, k=4)
+            p_hits = proj_r.search(query, k=6)
+
+            def consume(rows):
+                nonlocal kb_hits, kb_max, sources, context_md
+                buf = []
+                for path, score, snippet in (rows or []):
+                    sources.append(str(path))
+                    kb_hits += 1
+                    try:
+                        kb_max = max(kb_max, float(score))
+                    except Exception:
+                        pass
+                    buf.append(f"- {path} (score {float(score):.3f})\n\n{str(snippet or '')[:500]}\n")
+                return "\n".join(buf)
+
+            parts = []
+            parts.append(consume(g_hits))
+            parts.append(consume(p_hits))
+            context_md = "\n".join([p for p in parts if p]).strip()
+    except Exception:
+        # Context build failure is non-fatal
+        pass
+    context_ms = _now_ms() - ctx_t0
+
+    # 3) DISPATCH
+    echo_fn = _lazy_echo()
+    dispatch_t0 = _now_ms()
+    routed_result: Dict[str, Any] | str = {}
+    if route == "echo" and callable(echo_fn):
         try:
-            score = float(m.get("score")) if m.get("score") is not None else 0.0
-        except Exception:
-            score = 0.0
-        if not path:
-            continue
-        if score < KB_MIN_SCORE_FLOOR:
-            continue
-        out.append({"path": path, "score": score})
-    return out[:KB_TOPK_LIMIT]
+            payload = _filter_kwargs_for(echo_fn, {
+                "query": query,
+                "context": {"markdown": context_md},
+                "debug": debug,
+                "corr_id": corr_id
+            })
+            routed_result = echo_fn(**payload)
+        except Exception as e:
+            routed_result = {"text": _synth_local(query, {"title": "SAFE MODE"}), "error": str(e)}
+    else:
+        # Unknown/unimplemented route → SAFE echo
+        routed_result = {"text": _synth_local(query, {"title": "SAFE MODE"})}
+    dispatch_ms = _now_ms() - dispatch_t0
 
-
-def _shape_routed_result(raw: Any) -> Dict[str, Any]:
-    """
-    Normalize a routed result to at least:
-      {"response": str|{"text": str}, "route": str, "grounding": optional[list]}
-    """
-    if isinstance(raw, dict):
-        route = raw.get("route") or MCP_DEFAULT_ROUTE
-        response = raw.get("response")
-        if isinstance(response, dict):
-            txt = response.get("text") or raw.get("answer") or ""
-            meta = response.get("meta") or {}
-            return {"response": {"text": txt, "meta": meta}, "route": route}
-        if isinstance(response, str):
-            return {"response": response, "route": route}
-        if isinstance(raw.get("answer"), str):
-            return {"response": raw["answer"], "route": route}
-        return {"response": "", "route": route}
-    elif isinstance(raw, str):
-        return {"response": raw, "route": MCP_DEFAULT_ROUTE}
-    return {"response": "", "route": MCP_DEFAULT_ROUTE}
-
-
-# ── Lazy-imported stage helpers (prevents circular imports) ──────────────────
-def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
-    """
-    Invoke the planner. Imported LAZILY to avoid agent↔agent cycles.
-    Expected to return a dict that may include {"route": "...", "_diag": {...}, "final_answer": "..."}.
-    """
-    try:
-        from agents.planner_agent import plan  # type: ignore  # LAZY
-    except Exception as e:
-        log_event("mcp_plan_import_error", {"corr_id": corr_id, "error": str(e)})
-        return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_import_error": True, "error": str(e)}}
-
-    try:
-        return plan(query=query, files=files, topics=topics, debug=debug, corr_id=corr_id) or {}
-    except Exception as e:
-        log_event("mcp_plan_error", {"corr_id": corr_id, "error": str(e)})
-        return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_error": True, "error": str(e)}}
-
-
-def _build_context(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
-    """
-    Build retrieval context and provide STRUCTURED matches.
-    Returns:
-      {"context": str, "files_used": [...], "matches": [{"path":..., "score":...}, ...]}
-    """
-    try:
-        from core.context_engine import build_context  # type: ignore  # LAZY
-    except Exception as e:
-        log_event("mcp_ctx_import_error", {"corr_id": corr_id, "error": str(e)})
-        return {"context": "", "files_used": [], "matches": []}
-
-    try:
-        ctx = build_context(query=query, files=files, topics=topics, debug=debug, corr_id=corr_id) or {}
-        context = str(ctx.get("context") or "")
-        files_used = ctx.get("files_used") or []
-        matches = _filter_matches(ctx.get("matches") or [])
-        return {"context": context, "files_used": files_used, "matches": matches}
-    except Exception as e:
-        log_event("mcp_context_error", {"corr_id": corr_id, "error": str(e)})
-        return {"context": "", "files_used": [], "matches": []}
-
-
-def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
-    """
-    Dispatch to a concrete agent. Default to echo; never raise.
-    You can later branch on `route` (docs/codex/control/etc).
-    """
-    try:
-        from agents.echo_agent import invoke as echo_invoke  # type: ignore  # LAZY
-        text = echo_invoke(query=query, context=context, user_id=user_id, corr_id=corr_id)
-        return {"response": text, "route": route or MCP_DEFAULT_ROUTE}
-    except Exception as e:
-        log_event("mcp_dispatch_error", {"corr_id": corr_id, "error": str(e), "route": route})
-        return {"response": "", "route": route or MCP_DEFAULT_ROUTE}
-
-
-# ── Public API ───────────────────────────────────────────────────────────────
-async def run_mcp(
-    query: str,
-    role: Optional[str] = "planner",
-    files: Optional[List[str]] = None,
-    topics: Optional[List[str]] = None,
-    user_id: str = "anonymous",
-    debug: bool = False,
-    corr_id: Optional[str] = None,
-) -> Dict[str, Any]:
-    """
-    Orchestrate plan → context → dispatch.
-    - Uses LAZY imports inside helpers to avoid circular imports.
-    - Attaches structured grounding; computes kb stats.
-    - Emits detailed logs for each stage with corr_id.
-    - Returns a stable dict (never raises), so routes can normalize safely.
-    """
-    cid = corr_id or str(uuid4())
-    t0 = time.perf_counter()
-
-    log_event("mcp_start", {"corr_id": cid, "role": role, "user": user_id, "debug": debug})
-
-    # 1) Plan
-    t_pl0 = time.perf_counter()
-    plan = _plan(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=cid)
-    t_pl1 = time.perf_counter()
-
-    route = plan.get("route") or role or MCP_DEFAULT_ROUTE
-
-    # 2) Context
-    t_ctx0 = time.perf_counter()
-    ctx = _build_context(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=cid)
-    context = str(ctx.get("context") or "")
-    files_used = ctx.get("files_used") or []
-    matches = ctx.get("matches") or []  # already normalized + filtered + top-k
-    t_ctx1 = time.perf_counter()
-
-    # 3) Dispatch
-    t_ds0 = time.perf_counter()
-    routed_raw = _dispatch(route=route, query=query, context=context, user_id=user_id, debug=debug, corr_id=cid)
-    t_ds1 = time.perf_counter()
-    routed_result = _shape_routed_result(routed_raw)
-
-    # 4) Attach structured grounding to result (always present as list)
-    if isinstance(routed_result, dict):
-        existing = routed_result.get("grounding")
-        if not isinstance(existing, list) or not existing:
-            routed_result["grounding"] = matches  # may be []
-
-    # 5) Meta (timings + kb stats)
-    meta: Dict[str, Any] = {
-        "request_id": cid,
-        "origin": plan.get("route") or route,
+    total_ms = _now_ms() - t0
+    meta = _nullsafe_merge_meta({
+        "request_id": corr_id,
         "route": route,
+    }, {
+        "kb": {"hits": kb_hits, "max_score": kb_max, "sources": sources},
         "timings_ms": {
-            "planner_ms": int((t_pl1 - t_pl0) * 1000),
-            "context_ms": int((t_ctx1 - t_ctx0) * 1000),
-            "dispatch_ms": int((t_ds1 - t_ds0) * 1000),
-            "total_ms": int((time.perf_counter() - t0) * 1000),
+            "planner_ms": planner_ms,
+            "context_ms": context_ms,
+            "dispatch_ms": dispatch_ms,
+            "total_ms": total_ms
         },
-        "planner_diag": plan.get("_diag") or {},
-        "kb": {
-            "hits": len(matches),
-            "max_score": _max_score(matches),
-            "sources": matches,  # explicit copy for easy inspection/UX
-        },
-    }
-
-    log_event("mcp_done", {
-        "corr_id": cid,
-        "route": route,
-        "kb_hits": meta["kb"]["hits"],
-        "kb_max_score": meta["kb"]["max_score"],
-        "total_ms": meta["timings_ms"]["total_ms"],
     })
 
+    files_used = [{"path": s, "tier": ("global" if "/global/" in s else "project_docs")} for s in sources]
+
     return {
-        "plan": plan,
+        "plan": plan_out,
         "routed_result": routed_result,
-        "critics": None,            # hook up critics when ready
-        "context": context,
+        "critics": None,   # reserved for future critics integration
+        "context": context_md,
         "files_used": files_used,
         "meta": meta,
     }
