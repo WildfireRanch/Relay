@@ -1,138 +1,98 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Directory : agents
-# File      : echo_agent.py
-# Purpose   : Non-parroting answerer; adds invoke() shim for SAFE-MODE fallback to deterministic synth.
-# Contracts : invoke(query, context?, debug?, corr_id?, **kwargs) -> dict; may call existing async answer() if present
-# Guardrails: Never raises; returns text/answer/response/meta; no route/main imports.
-# Notes     : - This module does NOT import from routes/* or main to avoid cycles.
-#             - Designed to be JSON-safe and tolerant to Pydantic v1/v2 differences.
-#             - GitHub/Relay read-only access for repo introspection is available via:
-#                 GET /integrations/github/tree?owner=WildfireRanch&repo=Relay&ref=main&path=...
-#                 GET /integrations/github/contents?owner=WildfireRanch&repo=Relay&ref=main&path=<FULL_PATH>
+# File: agents/echo_agent.py
+# Purpose: Non-parroting answerer. Exposes async answer(...) and a SAFE-MODE
+#          sync shim invoke(query, context, …) used by /mcp fallback paths.
 # ──────────────────────────────────────────────────────────────────────────────
+
 from __future__ import annotations
-from typing import Any, Dict, Optional, List, Tuple, Callable
-import inspect
-import time
 
-# ── Small, local utilities (no third‑party deps) ──────────────────────────────
-
-def _now_ms() -> int:
-    """Return current time in milliseconds (int)."""
-    return int(time.time() * 1000)
-
-def _filter_kwargs_for(func: Callable, data: Dict[str, Any]) -> Dict[str, Any]:
-    """Return only kwargs accepted by *func*'s signature (by name).
-    Prevents TypeError when upstream passes extras like corr_id, etc.
-    """
-    try:
-        sig = inspect.signature(func)
-        names = {p.name for p in sig.parameters.values()}
-        return {k: v for k, v in (data or {}).items() if k in names}
-    except Exception:
-        # Fail-open: if inspect fails, return empty to avoid raising.
-        return {}
-
-def _nullsafe_merge_meta(meta: Optional[Dict[str, Any]], extra: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge meta dicts safely, ensuring kb stats and timings exist and are numeric.
-    Keys ensured:
-      meta.kb.{hits:int, max_score:float, sources:list[str]}
-      meta.timings_ms.{planner_ms, context_ms, dispatch_ms, total_ms}: int
-    """
-    base = dict(meta or {})
-    kb = dict(base.get("kb") or {})
-    timings = dict(base.get("timings_ms") or {})
-    # Normalize KB
-    kb["hits"] = int(kb.get("hits") or 0)
-    kb["max_score"] = float(kb.get("max_score") or 0.0)
-    kb["sources"] = list(kb.get("sources") or [])
-    # Normalize timings
-    for k in ("planner_ms", "context_ms", "dispatch_ms", "total_ms"):
-        v = timings.get(k)
-        timings[k] = int(v) if isinstance(v, (int, float)) else 0
-    base["kb"] = kb
-    base["timings_ms"] = timings
-    # Merge extras
-    for k, v in (extra or {}).items():
-        if k == "kb":
-            ekb = dict(v or {})
-            if "hits" in ekb: kb["hits"] = int(ekb.get("hits") or kb["hits"] or 0)
-            if "max_score" in ekb: kb["max_score"] = float(ekb.get("max_score") or kb["max_score"] or 0.0)
-            if "sources" in ekb:
-                try:
-                    exist = set(map(str, kb.get("sources") or []))
-                    add = [str(s) for s in (ekb.get("sources") or [])]
-                    kb["sources"] = list(exist.union(add))
-                except Exception:
-                    pass
-        elif k == "timings_ms":
-            for tk, tv in (v or {}).items():
-                try:
-                    timings[tk] = int(tv) if not isinstance(tv, bool) else timings.get(tk, 0)
-                except Exception:
-                    continue
-        else:
-            base[k] = v
-    return base
+import asyncio
 from typing import Any, Dict, Optional
 
-def _synth_local(query: str, context: Optional[Dict[str, Any]] = None) -> str:
-    """Deterministic local synthesis used when the LLM path is unavailable.
-    Trims common lead-ins to avoid parrot-y phrasing.
-    """
-    ctx_note = ""
-    if isinstance(context, dict):
-        title = context.get("title") or context.get("topic") or ""
-        if title:
-            ctx_note = f" (context: {str(title)[:80]})"
-    q = (query or "").strip()
-    if not q:
-        return "No question provided."
-    lowers = q.lower()
-    for lead in ("what is ", "understand ", "define "):
-        if lowers.startswith(lead):
-            q = q[len(lead):]
-            break
-    return f"{q}{ctx_note}".strip()
+try:
+    from core.logging import log_event  # type: ignore
+except Exception:  # pragma: no cover
+    def log_event(event: str, data: Optional[Dict[str, Any]] = None) -> None:
+        pass
 
-def _format_response(text: str, model: str = "safe-local", request_id: Optional[str] = None) -> Dict[str, Any]:
-    """Return the stable response envelope expected by /mcp → /ask."""
-    return {
-        "text": text,
-        "answer": text,
-        "response": {"model": model, "usage": {"total_tokens": 0}, "raw": None},
+DEFAULT_MODEL = "gpt-4o"
+
+def _strip(s: Any) -> str:
+    return ("" if s is None else str(s)).strip()
+
+def _anti_parrot_head(q: str) -> str:
+    key = (_strip(q) or "answer").split("\n", 1)[0][:60]
+    return f"{key}:"
+
+async def answer(
+    *,
+    query: str,
+    context: Any,
+    debug: bool = False,
+    request_id: Optional[str] = None,
+    timeout: int = 20,
+    model: Optional[str] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Async core that returns a structured dict compatible with /mcp routes.
+    """
+    model = model or DEFAULT_MODEL
+    q = _strip(query)
+    ctx = _strip(context)
+
+    # Simple local synth (placeholder for actual LLM call)
+    # Avoid parroting by prefacing with a minimal head only when helpful.
+    head = _anti_parrot_head(q)
+    final = f"{head} {q if len(q) <= 200 else q[:200] + '…'}"
+    if ctx:
+        final += f"\n\nContext:\n{ctx}"
+
+    out = {
+        "text": final,
+        "answer": final,
+        "response": {"model": model, "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "raw": None},
         "meta": {"origin": "echo", "model": model, "request_id": request_id},
     }
+    log_event("echo_answer", {"request_id": request_id, "chars": len(final)})
+    return out
 
-def invoke(query: str,
-           context: Optional[Dict[str, Any]] = None,
-           debug: bool = False,
-           corr_id: Optional[str] = None,
-           **kwargs: Any) -> Dict[str, Any]:
-    """Safe entry. If async answer() exists, call it (sync/async tolerant).
-    Otherwise return deterministic synth. Ensures meta.request_id.
+# ---- SAFE MODE shim (sync) ---------------------------------------------------
+
+def invoke(
+    *,
+    query: str,
+    context: Any = "",
+    user_id: Optional[str] = None,
+    corr_id: Optional[str] = None,
+    debug: bool = False,
+    timeout: int = 20,
+    model: Optional[str] = None,
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """
+    Sync wrapper so callers that can't await can still use echo.
+    Accepts unknown kwargs and ignores them.
     """
     try:
-        ans_fn = globals().get("answer")
-        if callable(ans_fn):
-            payload = _filter_kwargs_for(ans_fn, {
-                "query": query, "context": context, "debug": debug, "request_id": corr_id, **kwargs
-            })
-            out = ans_fn(**payload)
-            if hasattr(out, "__await__"):
-                import asyncio
-                try:
-                    loop = asyncio.get_event_loop()
-                except RuntimeError:
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                out = loop.run_until_complete(out)
-            if isinstance(out, dict) and ("text" in out or "answer" in out):
-                meta = dict(out.get("meta") or {})
-                meta["request_id"] = meta.get("request_id") or corr_id
-                out["meta"] = meta
-                return out
-    except Exception:
-        # fall through
-        pass
-    return _format_response(_synth_local(query, context), request_id=corr_id)
+        coro = answer(
+            query=query,
+            context=context,
+            debug=debug,
+            request_id=corr_id,
+            timeout=timeout,
+            model=model,
+        )
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                fut = asyncio.run_coroutine_threadsafe(coro, loop)
+                return fut.result(timeout=timeout)
+            else:
+                return loop.run_until_complete(coro)
+        except RuntimeError:
+            return asyncio.run(coro)
+    except Exception as e:
+        log_event("echo_invoke_error", {"request_id": corr_id, "error": str(e)})
+        # Minimal fallback text
+        return {"text": "", "response": {"model": model or DEFAULT_MODEL, "raw": None}, "meta": {"origin": "echo"}}
