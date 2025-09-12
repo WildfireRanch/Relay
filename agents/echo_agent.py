@@ -59,6 +59,8 @@ async def answer(
 
 # ---- SAFE MODE shim (sync) ---------------------------------------------------
 
+# agents/echo_agent.py
+
 def invoke(
     *,
     query: str,
@@ -71,28 +73,27 @@ def invoke(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     """
-    Sync wrapper so callers that can't await can still use echo.
-    Accepts unknown kwargs and ignores them.
+    PURE SYNC safe-mode path (no asyncio). Mirrors `answer()` logic inline
+    so callers that cannot await never interact with the event loop.
     """
     try:
-        coro = answer(
-            query=query,
-            context=context,
-            debug=debug,
-            request_id=corr_id,
-            timeout=timeout,
-            model=model,
-        )
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                fut = asyncio.run_coroutine_threadsafe(coro, loop)
-                return fut.result(timeout=timeout)
-            else:
-                return loop.run_until_complete(coro)
-        except RuntimeError:
-            return asyncio.run(coro)
+        m = model or DEFAULT_MODEL
+        q = _strip(query)
+        ctx = _strip(context)
+        head = _anti_parrot_head(q)
+
+        final = f"{head} {q if len(q) <= 200 else q[:200] + '…'}"
+        if ctx:
+            final += f"\n\nContext:\n{ctx}"
+
+        out = {
+            "text": final,
+            "answer": final,
+            "response": {"model": m, "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "raw": None},
+            "meta": {"origin": "echo", "model": m, "request_id": corr_id},
+        }
+        log_event("echo_answer", {"request_id": corr_id, "chars": len(final)})
+        return out
     except Exception as e:
-        log_event("echo_invoke_error", {"request_id": corr_id, "error": str(e)})
-        # Minimal fallback text
+        log_event("echo_invoke_error", {"request_id": corr_id, "error": str(e or "")})
         return {"text": "", "response": {"model": model or DEFAULT_MODEL, "raw": None}, "meta": {"origin": "echo"}}
