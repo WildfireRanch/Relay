@@ -30,6 +30,21 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import ClientDisconnect
 
+
+from contextlib import asynccontextmanager
+from typing import AsyncIterator
+from fastapi import FastAPI
+
+@asynccontextmanager
+async def app_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # startup
+    ...
+    yield
+    # shutdown
+    ...
+
+app = FastAPI(lifespan=app_lifespan)
+
 # ------------------------------------------------------------------------------
 # Logging setup
 # ------------------------------------------------------------------------------
@@ -165,49 +180,57 @@ def create_app() -> FastAPI:
 
     app = FastAPI(lifespan=lifespan)
 
-    # --- CORS, GZip, Request ID, Access logs, Timeouts ------------------------
-    origins = _parse_origins(_env("FRONTEND_ORIGINS"))
+# --- CORS, GZip, Request ID, Access logs, Timeouts ------------------------
 
-    # If no explicit origins, default to "*" and disable credentials (browser rule).
-    cors_allow_all = not origins
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=origins or ["*"],
-        allow_credentials=False if cors_allow_all else True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+origins_raw = _env("FRONTEND_ORIGINS")  # e.g. "https://status.wildfireranch.us"
+origins = _parse_origins(origins_raw)
+
+if origins:
+    cors_allow_origins = origins          # ['https://status.wildfireranch.us']
+    cors_allow_credentials = True         # cookies/secure auth allowed
+else:
+    cors_allow_origins = ["*"]            # dev-only fallback
+    cors_allow_credentials = False        # wildcard cannot be used with credentials
 
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(TimeoutMiddleware, timeout_s=float(_env("HTTP_TIMEOUT_S", "35")))
+    
+    CORSMiddleware,
+    allow_origins=cors_allow_origins,
+    allow_credentials=cors_allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
 
-    # --- Health (liveness/readiness) ------------------------------------------
-    @app.get("/Live")
-    def live():
+
+logger.info(f"CORS configured: origins={cors_allow_origins} credentials={cors_allow_credentials}")
+
+
+    # --- Health (liveness/readiness) ------------------------------------------ @app.get("/Live")
+def live():
         return {"ok": True}
 
-    @app.get("/Ready")
-    def ready():
+@app.get("/Ready")
+def ready():
         # If you want deeper checks (e.g., kb index presence), add here conservatively.
         return {"ok": True}
 
     # Helpful: see what the router actually mounted
-    @app.get("/debug/routes")
-    def debug_routes():
+@app.get("/debug/routes")
+def debug_routes():
         return [
             {"path": r.path, "name": getattr(r, "name", None), "methods": sorted(list((r.methods or set())))}
             for r in app.router.routes
         ]
 
     # --- ClientDisconnect is not an error -------------------------------------
-    @app.exception_handler(ClientDisconnect)
-    async def _client_disconnect_handler(_: Request, __: ClientDisconnect):
+@app.exception_handler(ClientDisconnect)
+async def _client_disconnect_handler(_: Request, __: ClientDisconnect):
         # client dropped mid-request; not our fault → 204 keeps logs clean
         return Response(status_code=204)
 
-    return app
+        return app
 
 
 app = create_app()
