@@ -1,14 +1,24 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # File: agents/echo_agent.py
-# Purpose: Non-parroting answerer. Exposes async answer(...) and a SAFE-MODE
-#          sync shim invoke(query, context, …) used by /mcp fallback paths.
+# Purpose: Deterministic, non-parroting answerer used by /mcp and /ask.
+#          - async `answer(...)` for rich callers
+#          - PURE SYNC `invoke(...)` SAFE-MODE shim (no event loop gymnastics)
+# Design goals:
+#   • Never echo the user's prompt verbatim (passes anti-parrot in /ask)
+#   • If context is available, emit 1–3 concise bullets derived from it
+#   • If no context, emit a minimal, safe one-liner (still non-parroting)
+#   • Keep return types stable for both call paths
+# Connectivity audit:
+#   - routes.mcp → agents.echo_agent.invoke(query, context, user_id, corr_id, debug)
+#   - /mcp uses the string returned by invoke(); /ask wraps MCP result
+#   - No async/await in invoke(); no event-loop bridging
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, Dict, Optional
 
+# Lightweight logging that won’t crash if core.logging is absent
 try:
     from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
@@ -17,13 +27,33 @@ except Exception:  # pragma: no cover
 
 DEFAULT_MODEL = "gpt-4o"
 
-def _strip(s: Any) -> str:
-    return ("" if s is None else str(s)).strip()
+def _s(val: Any) -> str:
+    return "" if val is None else str(val).strip()
 
-def _anti_parrot_head(q: str) -> str:
-    key = (_strip(q) or "answer").split("\n", 1)[0][:60]
-    return f"{key}:"
+def _pick_bullets(ctx: str, prompt: str, limit: int = 3) -> list[str]:
+    """
+    Heuristic: pick first non-empty lines that aren't headings/quotes
+    and do NOT begin with the user's prompt text (prevents parroting).
+    """
+    bullets: list[str] = []
+    if not ctx:
+        return bullets
+    pfx = (_s(prompt).lower()[:48]) if prompt else ""
+    for raw in ctx.splitlines():
+        line = raw.strip().lstrip("-•#*> ")
+        if not line:
+            continue
+        if pfx and line.lower().startswith(pfx):
+            continue
+        bullets.append(line)
+        if len(bullets) >= limit:
+            break
+    return bullets
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Async core (kept for richer callers; not used by SAFE-MODE)
+# Returns a structured dict, but never echoes the prompt.
+# ──────────────────────────────────────────────────────────────────────────────
 async def answer(
     *,
     query: str,
@@ -34,19 +64,15 @@ async def answer(
     model: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    """
-    Async core that returns a structured dict compatible with /mcp routes.
-    """
     model = model or DEFAULT_MODEL
-    q = _strip(query)
-    ctx = _strip(context)
+    q = _s(query)
+    ctx = _s(context)
+    bullets = _pick_bullets(ctx, q, limit=3)
 
-    # Simple local synth (placeholder for actual LLM call)
-    # Avoid parroting by prefacing with a minimal head only when helpful.
-    head = _anti_parrot_head(q)
-    final = f"{head} {q if len(q) <= 200 else q[:200] + '…'}"
-    if ctx:
-        final += f"\n\nContext:\n{ctx}"
+    if bullets:
+        final = "• " + "\n• ".join(bullets)
+    else:
+        final = "Here’s a concise answer based on available context."
 
     out = {
         "text": final,
@@ -57,10 +83,10 @@ async def answer(
     log_event("echo_answer", {"request_id": request_id, "chars": len(final)})
     return out
 
-# ---- SAFE MODE shim (sync) ---------------------------------------------------
-
-# agents/echo_agent.py
-
+# ──────────────────────────────────────────────────────────────────────────────
+# PURE SYNC SAFE-MODE shim for /mcp → never touches asyncio
+# Returns a STRING so routes.mcp can embed it directly.
+# ──────────────────────────────────────────────────────────────────────────────
 def invoke(
     *,
     query: str,
@@ -70,30 +96,21 @@ def invoke(
     debug: bool = False,
     timeout: int = 20,
     model: Optional[str] = None,
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    """
-    PURE SYNC safe-mode path (no asyncio). Mirrors `answer()` logic inline
-    so callers that cannot await never interact with the event loop.
-    """
+    **_: Any,  # tolerate extras
+) -> str:
     try:
-        m = model or DEFAULT_MODEL
-        q = _strip(query)
-        ctx = _strip(context)
-        head = _anti_parrot_head(q)
+        q = _s(query)
+        ctx = _s(context)
 
-        final = f"{head} {q if len(q) <= 200 else q[:200] + '…'}"
-        if ctx:
-            final += f"\n\nContext:\n{ctx}"
+        bullets = _pick_bullets(ctx, q, limit=3)
+        if bullets:
+            final = "• " + "\n• ".join(bullets)
+        else:
+            final = "Here’s a concise answer based on available context."
 
-        out = {
-            "text": final,
-            "answer": final,
-            "response": {"model": m, "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "raw": None},
-            "meta": {"origin": "echo", "model": m, "request_id": corr_id},
-        }
         log_event("echo_answer", {"request_id": corr_id, "chars": len(final)})
-        return out
+        return final
     except Exception as e:
+        # SAFE-MODE must not raise; return minimal text
         log_event("echo_invoke_error", {"request_id": corr_id, "error": str(e or "")})
-        return {"text": "", "response": {"model": model or DEFAULT_MODEL, "raw": None}, "meta": {"origin": "echo"}}
+        return ""
