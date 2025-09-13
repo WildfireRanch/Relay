@@ -24,7 +24,7 @@ import logging
 from typing import Iterable, List, Optional
 
 import anyio
-from fastapi import FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -90,6 +90,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         cid = getattr(request.state, "corr_id", "-")
         method = request.method
         path = request.url.path
+        status = "ERR"
         try:
             response = await call_next(request)
             status = response.status_code
@@ -97,7 +98,7 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
         finally:
             dur_ms = int((time.perf_counter() - t0) * 1000)
             logger.info(
-                f"req method={method} path={path} rid={cid} cid={cid} status={locals().get('status', 'ERR')} dur_ms={dur_ms}"
+                f"req method={method} path={path} rid={cid} cid={cid} status={status} dur_ms={dur_ms}"
             )
 
 
@@ -139,7 +140,7 @@ def create_app() -> FastAPI:
 
         # CORS preview
         cors_val = _env("FRONTEND_ORIGINS")
-        logger.info(f"🔒 CORS allow_origins: {cors_val or '[unset]'} (credentials=True)")
+        logger.info(f"🔒 CORS allow_origins: {cors_val or '[unset]'}")
 
         # Optional: KB index validation (no-op if function unavailable)
         try:
@@ -166,13 +167,17 @@ def create_app() -> FastAPI:
 
     # --- CORS, GZip, Request ID, Access logs, Timeouts ------------------------
     origins = _parse_origins(_env("FRONTEND_ORIGINS"))
+
+    # If no explicit origins, default to "*" and disable credentials (browser rule).
+    cors_allow_all = not origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins or ["*"],  # dev-safe default; set FRONTEND_ORIGINS in prod
-        allow_credentials=True,
+        allow_origins=origins or ["*"],
+        allow_credentials=False if cors_allow_all else True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(AccessLogMiddleware)
@@ -187,6 +192,14 @@ def create_app() -> FastAPI:
     def ready():
         # If you want deeper checks (e.g., kb index presence), add here conservatively.
         return {"ok": True}
+
+    # Helpful: see what the router actually mounted
+    @app.get("/debug/routes")
+    def debug_routes():
+        return [
+            {"path": r.path, "name": getattr(r, "name", None), "methods": sorted(list((r.methods or set())))}
+            for r in app.router.routes
+        ]
 
     # --- ClientDisconnect is not an error -------------------------------------
     @app.exception_handler(ClientDisconnect)
@@ -213,7 +226,7 @@ PRIMARY_ROUTERS: Iterable[str] = (
 SECONDARY_ROUTERS: Iterable[str] = (
     "routes.status",
     "routes.github_proxy",
-    "routes.integrations_github",
+    "routes.integrations_github",  # GitHub integration router
     "routes.oauth",
     "routes.debug",
     "routes.codex",
@@ -232,9 +245,12 @@ SECONDARY_ROUTERS: Iterable[str] = (
 # Feature work-in-progress (quietly skipped if import fails)
 OPTIONAL_ROUTERS = {"routes.control", "routes.docs"}
 
+_mounted: set[str] = set()
 
 def _include(router_path: str) -> None:
-    """Import and mount a router; warn-only for optional modules."""
+    """Import and mount a router; warn-only for optional modules; idempotent."""
+    if router_path in _mounted:
+        return
     try:
         module = importlib.import_module(router_path)
     except ImportError as e:
@@ -245,18 +261,13 @@ def _include(router_path: str) -> None:
         raise
 
     router = getattr(module, "router", None)
-    if router is None:
-        logger.warning(f"⏭️  Router skipped ({router_path}): no 'router'")
+    if not isinstance(router, APIRouter):
+        logger.warning(f"⏭️  Router skipped ({router_path}): no/invalid 'router'")
         return
 
-    # Lazy import to avoid optional dependency issues during boot
-    from fastapi import APIRouter  # type: ignore
-
-    if isinstance(router, APIRouter):
-        app.include_router(router)
-        logger.info(f"🔌 Router enabled: {router.__module__.split('.')[-1]} (from {router_path})")
-    else:
-        logger.warning(f"⏭️  Router skipped ({router_path}): invalid router type")
+    app.include_router(router)
+    _mounted.add(router_path)
+    logger.info(f"🔌 Router enabled: {router.__module__.split('.')[-1]} (from {router_path})")
 
 
 # Mount primary (critical) first, then secondary, then optional
@@ -267,7 +278,6 @@ for rp in SECONDARY_ROUTERS:
 for rp in OPTIONAL_ROUTERS:
     _include(rp)
 
-logger.info("📋 Mounted routes: ['/openapi.json', '/docs', '/docs/oauth2-redirect', '/redoc', '/gh/debug/api-key', '…']")
 logger.info("✅ Critical routers present: ['ask', 'mcp']")
 
 # ------------------------------------------------------------------------------
@@ -281,7 +291,6 @@ def debug_api_key() -> dict:
         "openai_key_present": bool(_env("OPENAI_API_KEY")),
         "github_app_id_present": bool(_env("GITHUB_APP_ID")),
     }
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # End of file
