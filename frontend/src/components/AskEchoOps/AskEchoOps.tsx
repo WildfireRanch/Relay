@@ -1,10 +1,14 @@
-/* File: src/components/AskEchoOps/AskEchoOps.tsx
- * Purpose: Unified "Chat + Ops" console wireframe for Ask Echo.
- * Notes: Imports shadcn/ui, ReactFlow, and Recharts. Replace demo data with live hooks later.
- */
 "use client";
 
-import React, { useMemo } from "react";
+/**
+ * File: src/components/AskEchoOps/AskEchoOps.tsx
+ * Purpose: Unified "Chat + Ops" console with live /ask chat wiring.
+ * Notes:
+ *   - Streams tokens into the chat as they arrive.
+ *   - Keeps right-side panels as-is (demo data for now).
+ */
+
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,23 +18,34 @@ import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { CircleDot, Cpu, FileText, Brain, Activity, SendHorizontal, Workflow } from "lucide-react";
-
 import ReactFlow, { Background, Controls, MiniMap, Edge, Node } from "reactflow";
 import "reactflow/dist/style.css";
-
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RTooltip, ResponsiveContainer } from "recharts";
+import { askStream, type AskMessage } from "@/lib/askClient";
 
+/* ---------------------------------------
+ * Types & small presentational
+ * -------------------------------------*/
 type Who = "user" | "echo" | "system";
-interface DemoMsg { who: Who; text: string; time: string; }
 interface TelemetryPoint { t: string; pv: number; load: number; soc: number; }
 
-const DEMO_MESSAGES: DemoMsg[] = [
-  { who: "system", text: "System primed with Ops profile and DocsViewer context.", time: "14:00" },
-  { who: "user", text: "What is the Relay Command Center?", time: "14:01" },
-  { who: "echo", text: "Relay is your AI-powered ops console for solar + mining. Want a diagram?", time: "14:01" },
-  { who: "user", text: "Show me active agents and current PV/Load/SOC.", time: "14:02" },
-];
+const DemoMessage = ({ who, text, time }: { who: Who; text: string; time: string }) => {
+  const align = who === "user" ? "justify-end" : "justify-start";
+  const tone =
+    who === "user" ? "bg-primary text-primary-foreground" : who === "echo" ? "bg-muted" : "bg-secondary";
+  return (
+    <div className={`flex ${align}`}>
+      <div className={`max-w-[80%] rounded-2xl px-3 py-2 shadow-sm ${tone}`}>
+        <div className="text-sm leading-snug whitespace-pre-wrap">{text}</div>
+        <div className="mt-1 text-[10px] opacity-70">{time}</div>
+      </div>
+    </div>
+  );
+};
 
+/* ---------------------------------------
+ * Demo data (right panels only)
+ * -------------------------------------*/
 const DEMO_TELEMETRY: TelemetryPoint[] = [
   { t: "14:00", pv: 2.1, load: 1.3, soc: 78 },
   { t: "14:05", pv: 2.4, load: 1.5, soc: 79 },
@@ -39,21 +54,68 @@ const DEMO_TELEMETRY: TelemetryPoint[] = [
   { t: "14:20", pv: 2.9, load: 1.4, soc: 81 },
 ];
 
-const DemoMessage = ({ who, text, time }: DemoMsg) => {
-  const align = who === "user" ? "justify-end" : "justify-start";
-  const tone =
-    who === "user" ? "bg-primary text-primary-foreground" : who === "echo" ? "bg-muted" : "bg-secondary";
-  return (
-    <div className={`flex ${align}`}>
-      <div className={`max-w-[80%] rounded-2xl px-3 py-2 shadow-sm ${tone}`}>
-        <div className="text-sm leading-snug">{text}</div>
-        <div className="mt-1 text-[10px] opacity-70">{time}</div>
-      </div>
-    </div>
-  );
-};
-
 export default function AskEchoOpsConsole() {
+  /* ---------------------------------------
+   * Chat state
+   * -------------------------------------*/
+  const [messages, setMessages] = useState<AskMessage[]>([
+    { role: "system", content: "System primed with Ops profile and DocsViewer context." },
+  ]);
+  const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll chat on new messages
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Send message -> stream response
+  const onSend = async () => {
+    const prompt = input.trim();
+    if (!prompt || isSending) return;
+
+    // Append user message immediately
+    const ts = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setMessages((m) => [...m, { role: "user", content: prompt }]);
+    setInput("");
+    setIsSending(true);
+
+    // Prepare a draft assistant message to stream into
+    const draftIndex = messages.length + 1; // after push above, assistant will be at this index
+    setMessages((m) => [...m, { role: "assistant", content: "" }]);
+
+    try {
+      // NOTE: add thread_id/context as needed
+      for await (const chunk of askStream({ prompt })) {
+        if (chunk.text) {
+          setMessages((m) =>
+            m.map((msg, i) =>
+              i === draftIndex ? { ...msg, content: msg.content + chunk.text } : msg
+            )
+          );
+        }
+      }
+    } catch (err: unknown) {
+      setMessages((m) =>
+        m.map((msg, i) => (i === draftIndex ? { ...msg, content: (msg.content || "") + "\n[ask failed]" } : msg))
+      );
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Enter to send (simple input)
+  const onKeyDown: React.KeyboardEventHandler<HTMLInputElement> = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      onSend();
+    }
+  };
+
+  /* ---------------------------------------
+   * Flow monitor (demo nodes)
+   * -------------------------------------*/
   const flowNodes: Node[] = useMemo(
     () => [
       { id: "planner", position: { x: 50, y: 60 }, data: { label: "Planner" }, type: "input" },
@@ -64,7 +126,6 @@ export default function AskEchoOpsConsole() {
     ],
     []
   );
-
   const flowEdges: Edge[] = useMemo(
     () => [
       { id: "e1", source: "planner", target: "retriever", label: "ctx" },
@@ -110,25 +171,37 @@ export default function AskEchoOpsConsole() {
             <CardContent className="flex min-h-0 flex-1 flex-col p-0">
               <ScrollArea className="flex-1 p-4">
                 <div className="space-y-3">
-                  {DEMO_MESSAGES.map((m, i) => (
-                    <DemoMessage key={`${m.time}-${i}`} {...m} />
+                  {messages.map((m, i) => (
+                    <DemoMessage
+                      key={i}
+                      who={m.role === "assistant" ? "echo" : (m.role as Who)}
+                      text={m.content}
+                      time={new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    />
                   ))}
+                  <div ref={scrollRef} />
                 </div>
               </ScrollArea>
               <div className="border-t p-3">
                 <div className="flex items-center gap-2">
-                  <Input placeholder='Type a message, "/" to run a tool…' />
-                  <Button aria-label="Send">
-                    <SendHorizontal className="h-4 w-4" />
+                  <Input
+                    placeholder='Type a message, "/" to run a tool…'
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={onKeyDown}
+                    disabled={isSending}
+                  />
+                  <Button onClick={onSend} isLoading={isSending} aria-label="Send">
+                    {!isSending && <SendHorizontal className="h-4 w-4" />}
+                    {isSending ? "Sending…" : null}
                   </Button>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* RIGHT: Flow + Status/Context/Memory */}
+          {/* RIGHT: Flow + Status/Context/Memory (unchanged demo) */}
           <div className="col-span-12 grid h-full grid-rows-2 gap-4 md:col-span-7">
-            {/* Flow Monitor */}
             <Card className="row-span-1 rounded-2xl shadow">
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <div className="flex items-center gap-2">
@@ -152,7 +225,6 @@ export default function AskEchoOpsConsole() {
               </CardContent>
             </Card>
 
-            {/* Status / Context / Memory */}
             <Card className="row-span-1 rounded-2xl shadow">
               <CardHeader className="pb-2">
                 <div className="flex items-center gap-2">
@@ -168,8 +240,6 @@ export default function AskEchoOpsConsole() {
                     <TabsTrigger value="context">Context</TabsTrigger>
                     <TabsTrigger value="memory">Memory</TabsTrigger>
                   </TabsList>
-
-                  {/* Status */}
                   <TabsContent value="status" className="h-[calc(100%-48px)] p-4">
                     <div className="grid h-full grid-cols-1 gap-4 md:grid-cols-3">
                       <Card className="col-span-1">
@@ -194,7 +264,6 @@ export default function AskEchoOpsConsole() {
                           </div>
                         </CardContent>
                       </Card>
-
                       <Card className="col-span-1">
                         <CardHeader className="pb-1">
                           <CardTitle className="text-sm">SOC (%)</CardTitle>
@@ -213,7 +282,6 @@ export default function AskEchoOpsConsole() {
                           </div>
                         </CardContent>
                       </Card>
-
                       <Card className="col-span-1">
                         <CardHeader className="pb-1">
                           <CardTitle className="text-sm">Agents</CardTitle>
@@ -230,7 +298,6 @@ export default function AskEchoOpsConsole() {
                     </div>
                   </TabsContent>
 
-                  {/* Context */}
                   <TabsContent value="context" className="h-[calc(100%-48px)] p-4">
                     <div className="grid h-full grid-cols-1 gap-4 md:grid-cols-2">
                       <Card>
@@ -260,7 +327,6 @@ export default function AskEchoOpsConsole() {
                     </div>
                   </TabsContent>
 
-                  {/* Memory */}
                   <TabsContent value="memory" className="h-[calc(100%-48px)] p-4">
                     <div className="grid h-full grid-cols-1 gap-4 md:grid-cols-2">
                       <Card>
