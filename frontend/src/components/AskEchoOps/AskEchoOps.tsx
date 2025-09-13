@@ -2,6 +2,7 @@
  * Purpose: Unified "Chat + Ops" console wireframe for Ask Echo.
  * Notes: Imports shadcn/ui, ReactFlow, and Recharts. Replace demo data with live hooks later.
  */
+"use client";
 
 import React, { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
