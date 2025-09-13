@@ -44,10 +44,7 @@ def _jsonable(obj: Any) -> Any:
         return "[unserializable]"
 
 def _filter_kwargs(fn, **kw) -> Dict[str, Any]:
-    """
-    Retain only kwargs present in callable's signature (prevents TypeError).
-    Accepts functions or coroutine functions.
-    """
+    """Retain only kwargs present in callable's signature (prevents TypeError)."""
     try:
         sig = inspect.signature(fn)
         out = {}
@@ -115,9 +112,7 @@ def _shape_routed_result(raw: Any) -> Dict[str, Any]:
 # ── Lazy helpers (avoid import cycles) ────────────────────────────────────────
 
 def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
-    """
-    Invoke planner; tolerant to async/sync and unknown kwargs.
-    """
+    """Invoke planner; tolerant to async/sync and unknown kwargs."""
     try:
         from agents import planner_agent  # type: ignore
         plan_fn = getattr(planner_agent, "plan")
@@ -130,21 +125,18 @@ def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id:
         "files": files,
         "topics": topics,
         "debug": debug,
-        # Pass both names; planner can ignore
         "corr_id": corr_id,
         "request_id": corr_id,
     }
     call_kwargs = _filter_kwargs(plan_fn, **call_kwargs)
 
     try:
-        # If coroutine function or returns coroutine, run it
         res = plan_fn(**call_kwargs)
         if inspect.iscoroutine(res):
             import asyncio
-            res = asyncio.get_event_loop().run_until_complete(res)  # routes already run in event loop; safe since planner is now sync. Guard anyway.
+            res = asyncio.get_event_loop().run_until_complete(res)
         return res or {}
     except RuntimeError:
-        # In case we're already in an event loop (FastAPI), use asyncio.create_task workaround
         import asyncio
         async def _co():
             r = plan_fn(**call_kwargs)
@@ -156,6 +148,7 @@ def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id:
         return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_error": True, "error": str(e)}}
 
 def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
+    """Build retrieval context; support both object and dict return shapes."""
     try:
         from core.context_engine import (
             build_context, ContextRequest, EngineConfig, RetrievalTier,
@@ -175,10 +168,9 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
     try:
         ctx = build_context(req=req, cfg=cfg)
 
-        # Support both object and dict shapes
+        # Dict shape
         if isinstance(ctx, dict):
             context_text = str(ctx.get("context") or "")
-            # prefer explicit lists if present; fall back gracefully
             used = ctx.get("used") or ctx.get("files_used") or []
             matches = ctx.get("matches") or ctx.get("grounding") or []
             files_used = []
@@ -198,11 +190,13 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
                     })
             return {"context": context_text, "files_used": files_used, "matches": norm_matches}
 
-        # object shape (preferred)
+        # Object shape (preferred)
         context_text = str(getattr(ctx, "context", "") or "")
         used = getattr(ctx, "used", []) or []
         matches = getattr(ctx, "matches", []) or []
-        files_used = [{"path": getattr(r, "path", ""), "tier": getattr(getattr(r, "tier", None), "value", None) or getattr(r, "tier", None), "score": getattr(r, "score", None)} for r in used if r]
+        files_used = [{"path": getattr(r, "path", ""),
+                       "tier": getattr(getattr(r, "tier", None), "value", None) or getattr(r, "tier", None),
+                       "score": getattr(r, "score", None)} for r in used if r]
         norm_matches = [{"path": getattr(m, "path", ""), "score": getattr(m, "score", None)} for m in matches if m]
         return {"context": context_text, "files_used": files_used, "matches": norm_matches}
 
@@ -210,11 +204,8 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
         log_event("mcp_context_error", {"corr_id": corr_id, "error": str(e)})
         return {"context": "", "files_used": [], "matches": []}
 
-
 def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
-    """
-    Dispatch to a concrete agent. Default to echo.invoke; never raise.
-    """
+    """Dispatch to a concrete agent. Default to echo.invoke; never raise."""
     try:
         from agents.echo_agent import invoke as echo_invoke  # type: ignore
         text = echo_invoke(query=query, context=context, user_id=user_id, corr_id=corr_id, debug=debug)
@@ -236,7 +227,6 @@ async def run_mcp(
     corr_id: Optional[str] = None,
     **_: Any,   # tolerate unexpected kwargs like `context`
 ) -> Dict[str, Any]:
-    
     """
     Orchestrates: plan → context → dispatch. Returns a stable dict; never raises.
     """
@@ -298,6 +288,13 @@ async def run_mcp(
         "total_ms": meta["timings_ms"]["total_ms"],
     })
 
+    # ── NEW: expose top-level kb + grounding for tools/CLIs ───────────────────
+    kb_obj = {
+        "hits": meta["kb"]["hits"],
+        "max_score": meta["kb"]["max_score"],
+        "sources": [m.get("path") for m in matches if isinstance(m, dict) and m.get("path")],
+    }
+
     return {
         "plan": _jsonable(plan),
         "routed_result": _jsonable(routed_result),
@@ -305,4 +302,6 @@ async def run_mcp(
         "context": context,
         "files_used": files_used,
         "meta": meta,
+        "kb": kb_obj,            # NEW: consistent top-level KB summary
+        "grounding": matches,    # NEW: list[{path, score}] for quick consumers
     }
