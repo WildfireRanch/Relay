@@ -1,70 +1,76 @@
-# ──────────────────────────────────────────────────────────────────────────────
-# File: embeddings.py
-# Directory: routes
-# Purpose: # Purpose: Manage the lifecycle and API endpoints for embedding generation and updates in the system.
-#
-# Upstream:
-#   - ENV: —
-#   - Imports: fastapi, fastapi.responses, os, pathlib, pickle, services, time
-#
-# Downstream:
-#   - —
-#
-# Contents:
-#   - embeddings_rebuild()
-#   - embeddings_status()
+# routes/embeddings.py — modernized to use services.kb
 
-# ──────────────────────────────────────────────────────────────────────────────
-
-"""
-Embeddings Debug & Maintenance API for Relay
----------------------------------------------
-- /embeddings/status : Check if embedding index exists, get stats
-- /embeddings/rebuild : (POST) Trigger rebuild of the embedding index
-"""
-
-from fastapi import APIRouter, Response, status
+from __future__ import annotations
+import os, time
+from typing import Any, Dict, Optional
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
-from services import embeddings
-import os
-from pathlib import Path
-import time
+
+import services.kb as kb  # ← real index + embed/search lifecycle
 
 router = APIRouter()
 
-EMBED_INDEX = embeddings.EMBED_INDEX
+def _corr_id(req: Optional[Request]) -> str:
+    try:
+        return getattr(getattr(req, "state", None), "corr_id", "") or ""
+    except Exception:
+        return ""
+
+@router.get("/embeddings/ping")
+def embeddings_ping() -> JSONResponse:
+    return JSONResponse({"ok": True})
 
 @router.get("/embeddings/status")
-def embeddings_status():
-    """
-    Returns basic info about the current embedding index.
-    """
-    info = {
-        "exists": False,
+def embeddings_status(request: Request) -> JSONResponse:
+    rid = _corr_id(request)
+    exists = bool(kb.index_is_valid())  # fast check
+    info: Dict[str, Any] = {
+        "exists": exists,
+        "last_modified": None,
         "num_files": None,
-        "last_modified": None
+        "request_id": rid,
     }
-    if os.path.exists(EMBED_INDEX):
-        stat = os.stat(EMBED_INDEX)
-        info["exists"] = True
-        info["last_modified"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(stat.st_mtime))
+    # Try to infer last_modified from the index dir if available
+    try:
+        from services.config import INDEX_DIR  # kb uses this
+        if os.path.isdir(INDEX_DIR):
+            mt = max((os.path.getmtime(os.path.join(INDEX_DIR, p)) for p in os.listdir(INDEX_DIR)), default=None)
+            if mt:
+                info["last_modified"] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(mt))
+    except Exception:
+        pass
+
+    # Estimate num_files via kb.search() sampling or kb.get_index() if cheap
+    try:
+        # Prefer cheap index metadata if kb exposes it
+        # (If not, we leave num_files=None)
+        idx = kb.get_index()
         try:
-            # Try to get number of files in index
-            import pickle
-            with open(EMBED_INDEX, "rb") as f:
-                idx = pickle.load(f)
-            info["num_files"] = len(idx)
-        except Exception as e:
-            info["num_files"] = f"Error: {e}"
+            # LlamaIndex VectorStoreIndex: number of doc nodes in storage context (best-effort)
+            storage = idx.storage_context  # type: ignore
+            doc = getattr(storage, "docstore", None)
+            if doc and hasattr(doc, "docs"):
+                info["num_files"] = len(getattr(doc, "docs", {}))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     return JSONResponse(info)
 
 @router.post("/embeddings/rebuild")
-def embeddings_rebuild():
-    """
-    Triggers a rebuild of the embedding index.
-    """
-    try:
-        embeddings.build_index()
-        return JSONResponse({"status": "ok", "message": "Embedding index rebuilt."})
-    except Exception as e:
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+def embeddings_rebuild(request: Request, background: BackgroundTasks) -> JSONResponse:
+    rid = _corr_id(request)
+
+    def _do_rebuild():
+        try:
+            kb.embed_all(verbose=False)  # same behavior, calls into OpenAIEmbedding + LlamaIndex
+        except Exception as e:
+            try:
+                from core.logging import log_event  # type: ignore
+                log_event("embeddings_rebuild_error", {"request_id": rid, "error": str(e)})
+            except Exception:
+                pass
+
+    background.add_task(_do_rebuild)
+    return JSONResponse({"status": "queued", "request_id": rid, "message": "KB embedding rebuild started."})

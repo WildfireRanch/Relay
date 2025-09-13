@@ -567,6 +567,17 @@ def _kb_cli():
             print(f"  {i}. {h.get('tier','unknown')}: {ti} (score={sc:.3f})")
             print(f"     {sn}")
 
+def index_count() -> int:
+    try:
+        idx = get_index()
+        storage = getattr(idx, "storage_context", None)
+        doc = getattr(storage, "docstore", None)
+        if doc and hasattr(doc, "docs"):
+            return len(getattr(doc, "docs", {}))
+    except Exception:
+        pass
+    return 0
+
     # --- Command parsing ----------------------------------------------------
 
     args = sys.argv[1:]
