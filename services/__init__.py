@@ -1,5 +1,12 @@
-# File: __init__.py
-# Directory: services/
-# Purpose: Marks this as a package for Python imports.
-# Expose submodules so `from services import embeddings` works
-from . import embeddings as embeddings  # noqa: F401
+# ──────────────────────────────────────────────────────────────────────────────
+# File: services/__init__.py
+# Purpose: Package marker with NO eager submodule imports (prevents circulars).
+# ──────────────────────────────────────────────────────────────────────────────
+__all__: list[str] = []
+
+# Optional: enable lazy submodule loading if you want (kept off by default).
+# import importlib
+# def __getattr__(name: str):
+#     if name in {"kb", "indexer", "config", "embeddings"}:
+#         return importlib.import_module(f"{__name__}.{name}")
+#     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
