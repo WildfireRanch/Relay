@@ -22,7 +22,19 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List, Optional, Callable, Tuple
 
-from core.logging import log_event
+# Safe logging shim (avoid hard dependency during early boot)
+try:
+    from core.logging import log_event  # type: ignore
+except Exception:  # pragma: no cover
+    import logging, json
+    _LOG = logging.getLogger("relay.semantic")
+    def log_event(event: str, data: Dict[str, Any] | None = None) -> None:
+        payload = {"event": event, **(data or {})}
+        try:
+            _LOG.info(json.dumps(payload, default=str))
+        except Exception:
+            _LOG.info("event=%s data=%s", event, (data or {}))
+
 from services.kb import search as kb_search
 
 DEFAULT_K = int(os.getenv("SEMANTIC_DEFAULT_K", "6"))
@@ -58,19 +70,33 @@ def search(
     **kwargs: Any,
 ) -> List[Dict[str, Any]]:
     use_k = int(top_k or k or DEFAULT_K)
-    try:
-        # IMPORTANT: kb.search expects *query=*, not q=
-        results = kb_search(query=q, k=use_k, score_threshold=score_threshold, **kwargs) or []
-    except TypeError:
-        # Older adapters might not accept score_threshold/kwargs; fall back gracefully
+
+    # IMPORTANT: kb.search may accept top_k or k; try both (with/without threshold), then kwargs-free.
+    results: List[Dict[str, Any]] = []
+    try_order = [
+        dict(query=q, top_k=use_k, score_threshold=score_threshold, **kwargs),
+        dict(query=q, k=use_k,     score_threshold=score_threshold, **kwargs),
+        dict(query=q, top_k=use_k),
+        dict(query=q, k=use_k),
+    ]
+    last_err: Optional[Exception] = None
+    for params in try_order:
         try:
-            results = kb_search(query=q, k=use_k) or []
+            out = kb_search(**params) or []
+            results = out if isinstance(out, list) else []
+            if results:
+                break
+        except TypeError as e:
+            # Signature mismatch; try next form
+            last_err = e
+            continue
         except Exception as e:
-            log_event("semantic_search_error", {"q_head": q[:180], "error": str(e)})
-            return []
-    except Exception as e:
-        log_event("semantic_search_error", {"q_head": q[:180], "error": str(e)})
-        return []
+            last_err = e
+            # Break on non-TypeError to avoid masking real backend errors
+            break
+    if last_err and not results:
+        log_event("semantic_search_error", {"q_head": q[:180], "error": str(last_err)})
+        return [] 
 
     rows = [_mk_row(h) for h in results if isinstance(h, dict)]
     log_event("semantic_search_done", {"k": use_k, "rows": len(rows), "thresh": score_threshold})
