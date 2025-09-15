@@ -37,6 +37,7 @@ langchain-core>=0.2
 langchain-openai>=0.1
 
 # === Semantic Search & Embeddings ===
+llama-index-embeddings-openai>=0.2
 llama-index>=0.12.43
 tiktoken==0.7.0
 tree_sitter>=0.20.4
