@@ -186,60 +186,76 @@ app = create_app()
 # Router inclusion (ASK_ECHO priority; optional routers warn-only)
 # ------------------------------------------------------------------------------
 
+from types import SimpleNamespace
+import traceback
+
+# Only the truly critical routes are mandatory.
 PRIMARY_ROUTERS: Iterable[str] = (
     "routes.ask",
     "routes.mcp",
 )
 
+# Start minimal; we’ll re-enable gradually after it boots.
+# Anything here failing to import will be SKIPPED (with stack trace),
+# so the app keeps running and we can query /Live and /mcp/ping.
 SECONDARY_ROUTERS: Iterable[str] = (
-    "routes.status",
-    "routes.github_proxy",
-    "routes.integrations_github",
-    "routes.oauth",
-    "routes.debug",
-    "routes.codex",
-    "routes.logs",
-    "routes.kb",
-    "routes.search",
-    "routes.embeddings",
-    "routes.index",
-    "routes.status_code",
-    "routes.webhooks_github",
-    "routes.admin",
-    "routes.logs_sessions",
-    "routes.context",  # if present
+    # "routes.status",
+    # "routes.index",
+    # "routes.integrations_github",
+    # "routes.kb",
+    # "routes.search",
+    # "routes.embeddings",
+    # "routes.github_proxy",
+    # "routes.oauth",
+    # "routes.debug",
+    # "routes.codex",
+    # "routes.logs",
+    # "routes.status_code",
+    # "routes.webhooks_github",
+    # "routes.admin",
+    # "routes.logs_sessions",
+    # "routes.context",
 )
 
-OPTIONAL_ROUTERS = {"routes.control", "routes.docs"}
+# Feature work-in-progress (quietly skipped if import fails)
+OPTIONAL_ROUTERS = {
+    "routes.control",
+    "routes.docs",
+    # You may add more here while diagnosing
+}
 
-
-def _include(router_path: str) -> None:
-    """Import and mount a router; warn-only for optional modules."""
+def _include(router_path: str, *, required: bool) -> None:
+    """Import and mount a router. Required modules crash on error; others log+skip."""
     try:
         module = importlib.import_module(router_path)
-    except ImportError as e:
-        if router_path in OPTIONAL_ROUTERS:
-            logger.warning("⏭️  Router skipped (%s): %s", router_path.split(".")[-1], e)
+        router = getattr(module, "router", None)
+        if router is None or not isinstance(router, APIRouter):
+            msg = f"no/invalid 'router' in {router_path}"
+            if required:
+                raise ImportError(msg)
+            logger.warning("⏭️  Router skipped (%s): %s", router_path, msg)
             return
-        raise  # Non-optional: fail fast
+        app.include_router(router)
+        logger.info("🔌 Router enabled: %s (from %s)", router.__name__ if hasattr(router, "__name__") else router.__class__.__name__, router_path)
+    except Exception as e:
+        if required:
+            logger.exception("💥 Required router failed: %s", router_path)
+            raise
+        # Log full traceback but keep app alive
+        logger.error("⏭️  Router skipped (%s): %s\n%s", router_path, e, traceback.format_exc())
 
-    router = getattr(module, "router", None)
-    if router is None or not isinstance(router, APIRouter):
-        logger.warning("⏭️  Router skipped (%s): no/invalid 'router'", router_path)
-        return
-
-    app.include_router(router)
-    logger.info("🔌 Router enabled: %s (from %s)", router.__module__.split(".")[-1], router_path)
-
-
+# Mount primary first (must succeed), then tolerant passes for secondary/optional
 for rp in PRIMARY_ROUTERS:
-    _include(rp)
-for rp in SECONDARY_ROUTERS:
-    _include(rp)
-for rp in OPTIONAL_ROUTERS:
-    _include(rp)
+    _include(rp, required=True)
 
-logger.info("✅ Critical routers present: ['ask', 'mcp']")
+for rp in SECONDARY_ROUTERS:
+    _include(rp, required=False)
+
+for rp in OPTIONAL_ROUTERS:
+    _include(rp, required=False)
+
+logger.info("✅ Critical routers present: ['ask','mcp']")
+
 
 # ------------------------------------------------------------------------------
 # Optional: tiny debug endpoint (safe in prod)
