@@ -1,21 +1,10 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # File: routes/ask.py
-# Directory: routes
-# Purpose: FastAPI endpoints for /ask — production-grade:
-#          • Validates input (Pydantic v1/v2 compatible)
-#          • Builds context via core.context_engine (lazy import, no cycles)
-#          • Enforces Retrieval Gate (no-answer on insufficient grounding)
-#          • Anti-Parrot guard (contiguous copy + n-gram Jaccard)
-#          • Calls MCP pipeline lazily (agents.mcp_agent.run_mcp) with timeout
-#          • Normalizes output into stable AskResponse
-#          • Structured errors with corr_id; JSON-safe; streaming shims
-#
-# Design notes:
-# - No module-level imports from agents/* to avoid circular deps.
-# - Corr-ID precedence: X-Corr-Id → X-Request-Id → request.state.corr_id → uuid4
-# - Context is optional; we fallback gracefully if core.context_engine is absent.
-# - Grounding: prefer engine matches; else upstream meta; else parse context text.
-# - Threshold envs support both legacy and new names for compatibility.
+# Purpose: FastAPI endpoints for /ask — production-grade and CORS-tolerant
+#          • Accepts q/query/prompt/question/text (coalesced → payload.query)
+#          • Explicit OPTIONS /ask → 204 to guarantee clean preflight
+#          • Pydantic v1/v2 compatible validators
+#          • Retrieval Gate, Anti-Parrot, Context build, MCP call preserved
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -28,18 +17,20 @@ from collections import Counter
 from inspect import iscoroutinefunction
 from typing import Any, Dict, List, Optional, Annotated, AsyncGenerator, Union
 from uuid import uuid4
+import inspect
 
-from fastapi import APIRouter, HTTPException, Query, Request, Header
+from fastapi import APIRouter, HTTPException, Query, Request, Header, Response, status
 from fastapi.responses import StreamingResponse
 
 # --- Pydantic v1/v2 compatibility ---------------------------------------------
 try:
     from pydantic import BaseModel, Field  # type: ignore
     try:
-        from pydantic import field_validator  # v2
+        from pydantic import field_validator, model_validator  # v2
         _PD_V2 = True
     except Exception:  # pragma: no cover
         from pydantic import validator as field_validator  # v1
+        from pydantic import root_validator as model_validator  # v1
         _PD_V2 = False
 except Exception as _e:  # pragma: no cover
     raise RuntimeError("Pydantic is required") from _e
@@ -99,31 +90,59 @@ ASK_TIMEOUT_S: int = _env_int("ASK_TIMEOUT_S", default=60)
 # ── Models --------------------------------------------------------------------
 
 class AskRequest(BaseModel):
-    """Validated payload for /ask (POST). Supports legacy 'question' alias."""
+    """Validated payload for /ask (POST). Supports multiple aliases for the question."""
     if _PD_V2:
         model_config = {"populate_by_name": True}  # type: ignore[attr-defined]
     else:
         class Config:  # type: ignore[no-redef]
             allow_population_by_field_name = True
 
-    query: Annotated[str, Field(min_length=3, description="User question/prompt.", alias="question")] = ...
+    # Accept several keys; we coalesce them → query via model validator
+    q: Optional[str] = None
+    query: Optional[str] = Field(default=None, description="User question/prompt.", alias="question")
+    prompt: Optional[str] = None
+    question: Optional[str] = None
+    text: Optional[str] = None
+
     role: Optional[str] = Field("planner", description="Planner (default) or a specific route key.")
     files: Optional[List[str]] = Field(default=None, description="Optional file IDs/paths to include.")
     topics: Optional[List[str]] = Field(default=None, description="Optional topical tags/labels.")
     user_id: str = Field("anonymous", description="Caller identity for logging/metrics.")
     debug: bool = Field(False, description="Enable extra debug output where supported.")
 
+    # Coalesce aliases into .query (run BEFORE field validation)
+    if _PD_V2:
+        @model_validator(mode="before")
+        def _coalesce_query(cls, values):
+            if isinstance(values, dict):
+                for key in ("q", "query", "prompt", "question", "text"):
+                    v = values.get(key)
+                    if isinstance(v, str) and v.strip():
+                        values["query"] = v.strip()
+                        break
+            return values
+    else:
+        @model_validator(pre=True)  # type: ignore[no-redef]
+        def _coalesce_query(cls, values):
+            if isinstance(values, dict):
+                for key in ("q", "query", "prompt", "question", "text"):
+                    v = values.get(key)
+                    if isinstance(v, str) and v.strip():
+                        values["query"] = v.strip()
+                        break
+            return values
+
     if _PD_V2:
         @field_validator("query")
         @classmethod
-        def _strip_query(cls, v: str) -> str:
+        def _strip_query(cls, v: Optional[str]) -> str:
             v = (v or "").strip()
             if len(v) < 3:
                 raise ValueError("query must be at least 3 chars")
             return v
     else:  # v1
         @field_validator("query")  # type: ignore[no-redef]
-        def _strip_query(cls, v: str) -> str:
+        def _strip_query(cls, v: Optional[str]) -> str:
             v = (v or "").strip()
             if len(v) < 3:
                 raise ValueError("query must be at least 3 chars")
@@ -159,26 +178,18 @@ class StreamRequest(BaseModel):
 
 # ── Core helpers ---------------------------------------------------------------
 
-import inspect
-
 def _filter_kwargs_for_callable(func, **kwargs):
-    """
-    Return kwargs filtered to only those accepted by `func`'s signature.
-    Prevents TypeError: unexpected keyword argument 'context' (etc).
-    """
+    """Filter kwargs to only those accepted by `func`'s signature."""
     try:
         sig = inspect.signature(func)
         params = sig.parameters
-        # if **kwargs present, just return everything
         if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
             return kwargs
         return {k: v for k, v in kwargs.items() if k in params}
     except Exception:
-        # if we can't inspect, pass nothing (safe) and let upstream handle missing args
         return {}
 
 def _json_safe(obj: Any) -> Any:
-    """Best-effort coercion of arbitrary objects into JSON-serializable structures."""
     try:
         if isinstance(obj, (str, int, float, bool)) or obj is None:
             return obj
@@ -191,10 +202,6 @@ def _json_safe(obj: Any) -> Any:
         return "[unserializable]"
 
 def _normalize_result(result_or_wrapper: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Some callers may wrap results in {"result": {...}, "context": "...", "files_used": [...] }.
-    Normalize into a single dict with the expected top-level keys.
-    """
     if isinstance(result_or_wrapper, dict) and "result" in result_or_wrapper:
         inner = result_or_wrapper.get("result") or {}
         if isinstance(inner, dict):
@@ -205,7 +212,6 @@ def _normalize_result(result_or_wrapper: Dict[str, Any]) -> Dict[str, Any]:
     return result_or_wrapper
 
 def _final_text_from(plan: Any, rr: Any, root_final: Optional[str] = None) -> str:
-    """Canonical extraction of user-facing text."""
     if isinstance(root_final, str) and root_final.strip():
         return root_final
     if isinstance(rr, dict):
@@ -230,7 +236,6 @@ def _truncate(s: str, max_len: int) -> str:
     return s[:max_len] if (max_len and isinstance(s, str) and len(s) > max_len) else s
 
 def _anti_parrot_contiguous(final_text: str, context: str) -> bool:
-    """Detect large verbatim copy by contiguous overlap ≥ threshold."""
     if not final_text or not context:
         return False
     if len(final_text) < ANTI_PARROT_MAX_CONTIGUOUS_MATCH:
@@ -244,7 +249,6 @@ def _anti_parrot_contiguous(final_text: str, context: str) -> bool:
     return False
 
 def _jaccard_ngrams(a: str, b: str, n: int = 5) -> float:
-    """Simple n-gram Jaccard similarity to catch paraphrased pastes."""
     def ngrams(s: str):
         toks = [t for t in re.findall(r"\w+", s.lower()) if t]
         return Counter(tuple(toks[i:i+n]) for i in range(0, max(0, len(toks)-n+1)))
@@ -261,7 +265,6 @@ GROUNDING_LINE_RE = re.compile(
 )
 
 def _extract_grounding_from_context(context: str):
-    """Parse 'Top Matches' style lines in the context block → (hits, max_score, sources[])."""
     hits = 0
     max_score = None
     sources: List[Dict[str, Any]] = []
@@ -280,7 +283,6 @@ def _extract_grounding_from_context(context: str):
     return hits, max_score, sources
 
 async def _maybe_await(func, *args, timeout_s: int, **kwargs):
-    """Call a function that may be sync or async with a timeout."""
     if iscoroutinefunction(func):
         return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
     loop = asyncio.get_running_loop()
@@ -289,16 +291,6 @@ async def _maybe_await(func, *args, timeout_s: int, **kwargs):
 # ── Context building (safe optional) ------------------------------------------
 
 async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
-    """
-    Build grounded context via core.context_engine using services.semantic_retriever.
-    Never raises; always returns:
-      {
-        "context": str,
-        "files_used": [{"path": str}],
-        "kb": {"hits": int, "max_score": float, "sources": [str]},
-        "grounding": [{"path": str, "score": float, "tier": str}]
-      }
-    """
     result: Dict[str, Any] = {
         "context": "",
         "files_used": [],
@@ -316,21 +308,18 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
         if not callable(build_context) or ContextRequest is None or EngineConfig is None or RetrievalTier is None:
             raise RuntimeError("context engine not available")
 
-        # Use your semantic retriever (optional env threshold pass-through)
         from services.semantic_retriever import SemanticRetriever, TieredSemanticRetriever  # type: ignore
 
         score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
         score_thresh = float(score_thresh_env) if score_thresh_env else None
 
         retrievers = {
-            RetrievalTier.GLOBAL:        TieredSemanticRetriever("global",        score_threshold=score_thresh),
-            RetrievalTier.PROJECT_DOCS:  TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
-    }
+            RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",       score_threshold=score_thresh),
+            RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs", score_threshold=score_thresh),
+        }
         cfg = EngineConfig(retrievers=retrievers)  # type: ignore
         ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore
 
-
-        # Normalize into the stable shape
         context_text = str((ctx or {}).get("context") or "")
         files_used = (ctx or {}).get("files_used") or []
         kb = ((ctx or {}).get("meta") or {}).get("kb") or {}
@@ -355,6 +344,11 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
 
 # ── Routes --------------------------------------------------------------------
 
+@router.options("/ask")
+def ask_preflight() -> Response:
+    """Guarantee a clean 204 for CORS preflight; Starlette CORS will attach headers."""
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
 @router.post(
     "/ask",
     response_model=AskResponse,
@@ -371,9 +365,8 @@ async def ask(
     Run the MCP pipeline for a validated query and return a normalized response.
     Enforces:
       - Retrieval Gate (insufficient grounding => 'no answer')
-      - Anti-Parrot (large verbatim or high Jaccard overlap => 'no answer')
+      - Anti-Parrot (contiguous copy + n-gram Jaccard)
     Keeps response shape stable for the frontend (final_text or "").
-    Details surface via `meta`.
     """
     # Lazy agent import to avoid circular imports at module load
     try:
@@ -384,8 +377,10 @@ async def ask(
         raise HTTPException(status_code=500, detail={"error": "mcp_import_failed", "corr_id": corr_id})
 
     q = (payload.query or "").strip()
-    corr_id = (x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex)
+    if not q:
+        raise HTTPException(status_code=422, detail="Missing 'q' (or query/prompt/question/text)")
 
+    corr_id = (x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex)
     try:
         request.state.corr_id = corr_id
     except Exception:
@@ -489,7 +484,6 @@ async def ask(
     context = context_from_agent or context_text
     files_used_out = files_used_agent or files_used
     if isinstance(files_used_out, list) and files_used_out and isinstance(files_used_out[0], str):
-        # normalize to list[dict] for UI consistency
         files_used_out = [{"path": p} for p in files_used_out]  # type: ignore[assignment]
 
     # 5) Grounding: prefer engine matches; else agent; else parse context text
@@ -530,7 +524,6 @@ async def ask(
     meta: Dict[str, Any] = {"role": role, "debug": debug, "corr_id": corr_id}
     if isinstance(upstream_meta, dict):
         meta.update(_json_safe(upstream_meta))
-    # ensure kb stats present
     meta["kb"] = {
         "hits": int(kb_meta.get("hits") or 0),
         "max_score": float(kb_meta.get("max_score") or 0.0),
@@ -644,4 +637,5 @@ async def ask_codex_stream(payload: StreamRequest, request: Request):
             yield f"[stream error] {str(e)}".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/plain")
+
 # ──────────────────────────────────────────────────────────────────────────────
