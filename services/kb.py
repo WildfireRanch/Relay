@@ -369,6 +369,22 @@ def simple_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.exception("[KB] simple_search failed: %s", e)
         return []
+    # Add near the bottom of services/kb.py (below simple_search)
+
+def search(query: str, top_k: int = 5):
+    """
+    Back-compat shim for older callers expecting `services.kb.search`.
+    Returns a list of {score,file_path,tier,preview} dicts.
+    """
+    return simple_search(query, top_k=top_k)
+
+def api_search(query: str, k: int = 5, search_type: str | None = None):
+    """
+    Back-compat shim for routes/kb.search proxy. Ignores `search_type`
+    and delegates to simple_search for now.
+    """
+    return simple_search(query, top_k=k)
+
 
 # ── Module CLI ───────────────────────────────────────────────────────────────
 def _cli(argv: List[str]) -> int:
