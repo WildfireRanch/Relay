@@ -67,6 +67,9 @@ MODEL_NAME = (
     or os.getenv("OPENAI_EMBED_MODEL")
     or "text-embedding-3-large"
 )
+# Optional OpenAI fallback (used only if resolve_embed_model fails)
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small")
 
 # Map common OpenAI embedding models to expected dimensions.
 # You can extend this if you swap providers.
@@ -150,6 +153,29 @@ def _llama_imports():
 
 # ── Persistent dimension sidecar (guards mismatched indices) ─────────────────
 DIM_FILE = INDEX_DIR / "dim.json"
+def _resolve_embed_model():
+    """
+    Try LlamaIndex's resolver first (supports OpenAI strings and many HF names).
+    If that fails (e.g., HF embeddings package missing), fall back to OpenAI
+    explicitly when OPENAI_API_KEY is set.
+    """
+    *_, resolve_embed_model = _llama_imports()
+    try:
+        return resolve_embed_model(MODEL_NAME)
+    except Exception as e_resolve:
+        try:
+            if not OPENAI_API_KEY:
+                raise RuntimeError("OPENAI_API_KEY not set for OpenAI fallback")
+            # Lazy import to avoid import-time failure in slim images
+            from llama_index.embeddings.openai import OpenAIEmbedding
+            emb = OpenAIEmbedding(model=OPENAI_EMBEDDINGS_MODEL, api_key=OPENAI_API_KEY)
+            log_event("kb_embeddings_fallback", {"from_model": MODEL_NAME, "to_model": OPENAI_EMBEDDINGS_MODEL})
+            return emb  # <-- Indented inside the try block
+        except Exception as e_openai:
+            raise RuntimeError(
+                f"Failed to resolve embeddings for MODEL_NAME={MODEL_NAME}; "
+                f"resolver_error={e_resolve}; openai_fallback_error={e_openai}"
+            )
 
 def _write_dim_meta(dim: int) -> None:
     DIM_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -348,35 +374,77 @@ def get_index():
         return load_index_from_storage(ctx, embed_model=_resolve_embed_model())
 
 # ── Simple search helper (for manual testing / CLI) ──────────────────────────
-def simple_search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+def simple_search(
+    query: str,
+    top_k: int = 5,
+    *,
+    score_threshold: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
+    
     index = get_index()
     if index is None:
         return []
     try:
         engine = index.as_query_engine(similarity_top_k=top_k)
         res = engine.query(query)
-        # Normalize result to a friendly list
-        results: List[Dict[str, Any]] = []
-        for n in getattr(res, "source_nodes", []) or []:
-            meta = getattr(n, "node", {}).metadata if hasattr(n, "node") else {}
-            results.append({
-                "score": getattr(n, "score", None),
-                "file_path": (meta or {}).get("file_path"),
-                "tier": (meta or {}).get("tier"),
-                "preview": (getattr(n, "text", "") or "")[:300],
-            })
-        return results
+          # Normalize to schema expected by services.semantic_retriever._mk_row
+        out: List[Dict[str, Any]] = []
+        for sn in getattr(res, "source_nodes", []) or []:
+            try:
+                score = getattr(sn, "score", None)
+                node = getattr(sn, "node", sn)
+                text = getattr(node, "text", "") or (getattr(node, "get_text", lambda: "")() or "")
+                meta = getattr(node, "metadata", {}) or {}
+                path = meta.get("file_path") or meta.get("path") or meta.get("source") or ""
+                tier = meta.get("tier")
+                title = meta.get("title") or (os.path.basename(str(path)) if path else "Untitled")
+
+                # Optional threshold filter (also supports global)
+                thr = score_threshold if score_threshold is not None else os.getenv("SEMANTIC_SCORE_THRESHOLD")
+                thr = float(thr) if thr not in (None, "") else None
+                if thr is not None and (score is not None):
+                    try:
+                        if float(score) < float(thr):
+                            continue
+                    except Exception:
+                        pass
+
+                out.append({
+                    "title": str(title),
+                    "path": str(path),
+                    "tier": (str(tier).lower() if tier else None),
+                    "snippet": str(text)[:1500],
+                    "similarity": float(score) if score is not None else None,
+                    "meta": meta,
+                })
+            except Exception:
+                continue
+        # Sort & clamp
+        try:
+            out.sort(key=lambda r: float(r.get("similarity", 0.0) or 0.0), reverse=True)
+        except Exception:
+            pass
+        return out[: int(top_k or 5)]  
     except Exception as e:
         logger.exception("[KB] simple_search failed: %s", e)
         return []
     # Add near the bottom of services/kb.py (below simple_search)
 
-def search(query: str, top_k: int = 5):
+def search(
+    *,
+    query: str,
+    k: Optional[int] = None,
+    top_k: Optional[int] = None,
+    score_threshold: Optional[float] = None,
+    **kwargs: Any,
+) -> List[Dict[str, Any]]:
     """
-    Back-compat shim for older callers expecting `services.kb.search`.
-    Returns a list of {score,file_path,tier,preview} dicts.
+    Primary search entrypoint compatible with services.semantic_retriever.search(...).
+    Accepts both `k` and `top_k`. Returns rows with keys:
+      {title, path, tier, snippet, similarity, meta}
     """
-    return simple_search(query, top_k=top_k)
+    use_k = int((k if k not in (None, "") else (top_k if top_k not in (None, "") else 5)))
+    return simple_search(query, top_k=use_k, score_threshold=score_threshold)
 
 def api_search(query: str, k: int = 5, search_type: str | None = None):
     """
@@ -384,6 +452,13 @@ def api_search(query: str, k: int = 5, search_type: str | None = None):
     and delegates to simple_search for now.
     """
     return simple_search(query, top_k=k)
+
+# Optional convenience for readiness probes (kept minimal)
+def warmup() -> None:
+    try:
+        _ = get_index()
+    except Exception as e:
+        log_event("kb_warmup_failed", {"error": str(e)})
 
 
 # ── Module CLI ───────────────────────────────────────────────────────────────
