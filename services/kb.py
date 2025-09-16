@@ -142,14 +142,14 @@ def should_index_file(filepath: str, tier: str) -> bool:
     return True
 
 # ── LlamaIndex imports (lazy to keep import-time light) ──────────────────────
-# Use delayed import so unit tests can monkeypatch config easily
+
 def _llama_imports():
-    from llama_index.core import Document, StorageContext, VectorStoreIndex, load_index_from_storage
-    from llama_index.core.ingestion import IngestionPipeline
-    from llama_index.core.node_parser import SentenceSplitter
-    from llama_index.core.extractors import TitleExtractor
-    from llama_index.core.embeddings import resolve_embed_model
-    return Document, StorageContext, VectorStoreIndex, load_index_from_storage, IngestionPipeline, SentenceSplitter, TitleExtractor, resolve_embed_model
+     from llama_index.core import Document, StorageContext, VectorStoreIndex, load_index_from_storage
+     from llama_index.core.ingestion import IngestionPipeline
+     from llama_index.core.node_parser import SentenceSplitter
+     from llama_index.core.extractors import TitleExtractor
+     from llama_index.core.embeddings import resolve_embed_model
+     return Document, StorageContext, VectorStoreIndex, load_index_from_storage, IngestionPipeline, SentenceSplitter, TitleExtractor, resolve_embed_model
 
 # ── Persistent dimension sidecar (guards mismatched indices) ─────────────────
 DIM_FILE = INDEX_DIR / "dim.json"
