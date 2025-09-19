@@ -151,8 +151,15 @@ def create_app() -> FastAPI:
         allow_origin_regex=allow_origin_regex,      # plus *.wildfireranch.us if desired
         allow_credentials=True,                     # safe with explicit origins/regex
         allow_methods=["GET", "POST", "OPTIONS"],
-        # keep header list explicit; '*' can be overbroad with some proxies
-        allow_headers=["content-type", "authorization", "x-corr-id", "x-request-id"],
+        # explicit header allow-list keeps proxy chains honest; include app-specific IDs
+        allow_headers=[
+            "content-type",
+            "authorization",
+            "x-corr-id",
+            "x-request-id",
+            "x-user-id",
+            "x-thread-id",
+        ],
         expose_headers=["x-corr-id"],
         max_age=600,
     )

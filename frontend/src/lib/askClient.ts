@@ -1,5 +1,7 @@
 // File: src/lib/askClient.ts
-// Purpose: Minimal client for the /ask endpoint with streaming + non-stream fallback.
+// Purpose: Hardened client for POST /ask → Chat UI (JSON-first, stream fallback).
+
+import { API_ROOT } from "@/lib/api";
 
 export type AskMessage = { role: "user" | "assistant" | "system"; content: string };
 
@@ -8,6 +10,10 @@ export interface AskRequest {
   prompt: string;
   /** Optional thread id/correlation id if your backend supports it */
   thread_id?: string;
+  /** Optional front-end supplied correlation identifier */
+  corr_id?: string;
+  /** Optional upstream identity for audit/logs */
+  user_id?: string;
   /** Optional future context payload */
   context?: Record<string, unknown>;
 }
@@ -21,8 +27,7 @@ export interface AskResponseChunk {
   meta?: Record<string, unknown>;
 }
 
-const DEFAULT_API_BASE =
-  process.env.NEXT_PUBLIC_RELAY_API?.replace(/\/+$/, "") || "https://relay.wildfireranch.us";
+const API_BASE = (API_ROOT || "https://relay.wildfireranch.us").replace(/\/+$/, "");
 
 type AskSuccessPayload = {
   final_text?: string;
@@ -93,16 +98,33 @@ function extractCorrId(body: AskSuccessPayload): string | undefined {
   return undefined;
 }
 
+function newCorrId(): string {
+  if (typeof window !== "undefined" && window.crypto && "randomUUID" in window.crypto) {
+    return window.crypto.randomUUID();
+  }
+  return Math.random().toString(36).slice(2);
+}
+
 /**
  * Stream text from /ask. Falls back to non-stream JSON if the response isn't a stream.
  * Usage:
  *   for await (const chunk of askStream({ prompt: "Hello" })) { ... }
  */
-export async function* askStream(req: AskRequest, apiBase = DEFAULT_API_BASE): AsyncGenerator<AskResponseChunk> {
+export async function* askStream(req: AskRequest, apiBase = API_BASE): AsyncGenerator<AskResponseChunk> {
   const url = `${apiBase}/ask`;
+
+  const corrId = (req.corr_id && req.corr_id.trim()) || newCorrId();
+  const headers = new Headers({ "content-type": "application/json", "x-corr-id": corrId });
+  if (req.user_id && req.user_id.trim()) {
+    headers.set("x-user-id", req.user_id.trim());
+  }
+  if (req.thread_id && req.thread_id.trim()) {
+    headers.set("x-thread-id", req.thread_id.trim());
+  }
+
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers,
     body: JSON.stringify({
       query: req.prompt,
       thread_id: req.thread_id,
@@ -126,7 +148,7 @@ export async function* askStream(req: AskRequest, apiBase = DEFAULT_API_BASE): A
     const code = err?.code ? `[${err.code}]` : `[${res.status}]`;
     const message = err?.message ?? "ask request failed";
     const suffix = err?.corr_id ? ` (corr_id ${err.corr_id})` : "";
-    const meta = err?.corr_id ? { corr_id: err.corr_id } : undefined;
+    const meta: Record<string, unknown> = { corr_id: err?.corr_id || corrId };
     yield { text: `\n${code} ${message}${suffix}`, done: true, meta };
     return;
   }
@@ -135,9 +157,7 @@ export async function* askStream(req: AskRequest, apiBase = DEFAULT_API_BASE): A
   if (contentType.includes("application/json")) {
     const data = (await res.json()) as AskSuccessPayload;
     const text = extractFinalText(data) || "[no response]";
-    const meta: Record<string, unknown> = {};
-    const corrId = extractCorrId(data);
-    if (corrId) meta.corr_id = corrId;
+    const meta: Record<string, unknown> = { corr_id: extractCorrId(data) || corrId };
     if (typeof data?.meta?.no_answer === "boolean") {
       meta.no_answer = data.meta.no_answer;
     }
