@@ -2,7 +2,7 @@
 # File: main.py
 # Purpose: FastAPI entrypoint for Relay / ASK_ECHO pipeline
 #          • Production-safe defaults (timeouts, request IDs, access logs)
-#          • Clean CORS (explicit origin) + preflight correctness
+#          • Clean CORS (explicit origin + optional regex) + proper preflight
 #          • Quiet optional-router skips; stable /Live & /Ready
 #          • Treat ClientDisconnect as non-error
 # ──────────────────────────────────────────────────────────────────────────────
@@ -14,6 +14,7 @@ import logging
 import os
 import time
 import uuid
+import traceback
 from typing import Iterable, List, Optional
 
 import anyio
@@ -23,14 +24,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import ClientDisconnect
 
-# ------------------------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------------------------
+# ── Logging -------------------------------------------------------------------
 logger = logging.getLogger("relay.main")
 
-# ------------------------------------------------------------------------------
-# Env helpers
-# ------------------------------------------------------------------------------
+# ── Env helpers ---------------------------------------------------------------
 
 def _parse_origins(value: Optional[str]) -> List[str]:
     """
@@ -53,9 +50,7 @@ def _env(name: str, fallback: str = "") -> str:
     return os.getenv(name) or os.getenv(f"$shared.{name}") or fallback
 
 
-# ------------------------------------------------------------------------------
-# Middlewares
-# ------------------------------------------------------------------------------
+# ── Middlewares ---------------------------------------------------------------
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Attach a correlation ID to each request/response."""
@@ -71,17 +66,18 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
     """Lightweight structured access log."""
     async def dispatch(self, request: Request, call_next):
         t0 = time.perf_counter()
-        cid = getattr(request.state, "corr_id", "-")
         method = request.method
         path = request.url.path
-        status = "ERR"
         try:
             response = await call_next(request)
             status = response.status_code
             return response
         finally:
             dur_ms = int((time.perf_counter() - t0) * 1000)
-            logger.info(f"req method={method} path={path} cid={cid} status={status} dur_ms={dur_ms}")
+            # Pull corr id safely at the end so we always have something
+            cid = getattr(getattr(request, "state", None), "corr_id", "-")
+            logger.info("req method=%s path=%s cid=%s status=%s dur_ms=%s",
+                        method, path, cid, locals().get("status", "ERR"), dur_ms)
 
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
@@ -99,9 +95,7 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# ------------------------------------------------------------------------------
-# App factory (installs CORS **before** routers)
-# ------------------------------------------------------------------------------
+# ── App factory (installs CORS **before** routers) ----------------------------
 
 def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
@@ -124,6 +118,7 @@ def create_app() -> FastAPI:
             if hasattr(kb, "index_is_valid"):
                 logger.info("✅ KB index validated (index_is_valid=%s)", kb.index_is_valid())
         except Exception:
+            # Keep startup resilient
             pass
 
         # routes/ inventory (best-effort)
@@ -139,20 +134,26 @@ def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
 
     # ---- CORS HARDENING (must be before include_router) ----------------------
-    # Prefer explicit origin list; fall back to env if provided.
+    # Prefer explicit origin list; allow optional wildcard by regex for *.wildfireranch.us
     explicit_origins = ["https://status.wildfireranch.us"]
     env_origins = _parse_origins(_env("FRONTEND_ORIGINS"))
     allow_origins = env_origins or explicit_origins
 
-    logger.info("🔒 CORS allow_origins=%s credentials=True", allow_origins)
+    # Optional: allow any subdomain of wildfireranch.us (safe even with credentials=True)
+    allow_origin_regex = _env("FRONTEND_ORIGIN_REGEX", r"^https://([a-z0-9-]+\.)?wildfireranch\.us$")
+
+    logger.info("🔒 CORS allow_origins=%s allow_origin_regex=%s credentials=True",
+                allow_origins, allow_origin_regex)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allow_origins,             # explicit origins only
-        allow_credentials=True,                  # safe with explicit origins
+        allow_origins=allow_origins,                # exact prod origin(s)
+        allow_origin_regex=allow_origin_regex,      # plus *.wildfireranch.us if desired
+        allow_credentials=True,                     # safe with explicit origins/regex
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["*"],                     # covers content-type/authorization
-        expose_headers=["*"],
+        # keep header list explicit; '*' can be overbroad with some proxies
+        allow_headers=["content-type", "authorization", "x-corr-id", "x-request-id"],
+        expose_headers=["x-corr-id"],
         max_age=600,
     )
 
@@ -162,7 +163,7 @@ def create_app() -> FastAPI:
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(TimeoutMiddleware, timeout_s=float(_env("HTTP_TIMEOUT_S", "35")))
 
-    # ---- Health (module-scope routes bound to this app instance) ------------
+    # ---- Health --------------------------------------------------------------
     @app.get("/Live")
     def live():
         return {"ok": True}
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     # ---- ClientDisconnect is not an error -----------------------------------
     @app.exception_handler(ClientDisconnect)
     async def _client_disconnect_handler(_: Request, __: ClientDisconnect):
+        # Client dropped mid-request; keep logs clean.
         return Response(status_code=204)
 
     return app
@@ -182,12 +184,7 @@ def create_app() -> FastAPI:
 
 app = create_app()
 
-# ------------------------------------------------------------------------------
-# Router inclusion (ASK_ECHO priority; optional routers warn-only)
-# ------------------------------------------------------------------------------
-
-from types import SimpleNamespace
-import traceback
+# ── Router inclusion (ASK_ECHO priority; optional routers warn-only) ---------
 
 # Only the truly critical routes are mandatory.
 PRIMARY_ROUTERS: Iterable[str] = (
@@ -195,9 +192,7 @@ PRIMARY_ROUTERS: Iterable[str] = (
     "routes.mcp",
 )
 
-# Start minimal; we’ll re-enable gradually after it boots.
-# Anything here failing to import will be SKIPPED (with stack trace),
-# so the app keeps running and we can query /Live and /mcp/ping.
+# Start minimal; re-enable others gradually after it boots. Failures here are logged and skipped.
 SECONDARY_ROUTERS: Iterable[str] = (
     # "routes.status",
     # "routes.index",
@@ -221,7 +216,6 @@ SECONDARY_ROUTERS: Iterable[str] = (
 OPTIONAL_ROUTERS = {
     "routes.control",
     "routes.docs",
-    # You may add more here while diagnosing
 }
 
 def _include(router_path: str, *, required: bool) -> None:
@@ -236,7 +230,8 @@ def _include(router_path: str, *, required: bool) -> None:
             logger.warning("⏭️  Router skipped (%s): %s", router_path, msg)
             return
         app.include_router(router)
-        logger.info("🔌 Router enabled: %s (from %s)", router.__name__ if hasattr(router, "__name__") else router.__class__.__name__, router_path)
+        name = getattr(router, "__module__", router_path).split(".")[-1]
+        logger.info("🔌 Router enabled: %s (from %s)", name, router_path)
     except Exception as e:
         if required:
             logger.exception("💥 Required router failed: %s", router_path)
@@ -247,19 +242,14 @@ def _include(router_path: str, *, required: bool) -> None:
 # Mount primary first (must succeed), then tolerant passes for secondary/optional
 for rp in PRIMARY_ROUTERS:
     _include(rp, required=True)
-
 for rp in SECONDARY_ROUTERS:
     _include(rp, required=False)
-
 for rp in OPTIONAL_ROUTERS:
     _include(rp, required=False)
 
 logger.info("✅ Critical routers present: ['ask','mcp']")
 
-
-# ------------------------------------------------------------------------------
-# Optional: tiny debug endpoint (safe in prod)
-# ------------------------------------------------------------------------------
+# ── Optional: tiny debug endpoint (safe in prod) ------------------------------
 
 @app.get("/gh/debug/api-key")
 def debug_api_key() -> dict:
