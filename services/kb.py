@@ -2,15 +2,16 @@
 # File: services/kb.py
 # Purpose: Deterministic, well-logged knowledge-base ingestion & embedding.
 #
-# Highlights:
+# Highlights
 #   • Single source of truth for file filters (names/exts/folders/size)
 #   • Structured skip/warn logs with optional core.logging.log_event fallback
-#   • Model + dimension normalization and index-dimension guardrail
+#   • Model+dimension normalization and index-dimension guardrail (dim.json)
 #   • Never raises unhandled exceptions during embed/build; returns status dict
-#   • Simple module CLI: `python -m services.kb [embed|health|search "..."]`
+#   • Simple CLI:  python -m services.kb [embed|health|search "..."]
+#   • Embeddings resolver with OpenAI fallback (no HF plugin required)
 #
 # Safe to run locally (Codespaces) or remotely (Railway job).
-# Dependencies: llama-index (VectorStoreIndex, StorageContext), openai (if used).
+# Deps: llama-index (VectorStoreIndex, StorageContext), openai (if used).
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
@@ -24,10 +25,12 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, List, Optional
 
-# ── Config fallbacks (do not import heavy modules at import-time) ─────────────
-# If your project already defines these, we use them; else default under ./.data
+# ──────────────────────────────────────────────────────────────────────────────
+# Paths & Config (lightweight; do not import heavy modules here)
+# ──────────────────────────────────────────────────────────────────────────────
+
 try:
     from services.config import INDEX_DIR as _INDEX_DIR, INDEX_ROOT as _INDEX_ROOT  # type: ignore
 except Exception:
@@ -43,7 +46,10 @@ PROJECT_ROOT = Path(os.getenv("RELAY_PROJECT_ROOT", Path(".").resolve()))
 DEFAULT_DOC_DIRS = [PROJECT_ROOT / "docs", PROJECT_ROOT / "README.md"]
 DEFAULT_CODE_DIRS = [PROJECT_ROOT / "agents", PROJECT_ROOT / "services", PROJECT_ROOT / "routes", PROJECT_ROOT / "core"]
 
-# ── Logging (fallback to stdlib if core.logging unavailable) ──────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Logging (fallback shim if core.logging is unavailable)
+# ──────────────────────────────────────────────────────────────────────────────
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
@@ -52,27 +58,29 @@ logging.basicConfig(
 logger = logging.getLogger("services.kb")
 
 try:
-    # Optional, lightweight structured logger
     from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
     def log_event(event: str, payload: Optional[Dict[str, Any]] = None) -> None:
-        """Fallback no-op structured logger."""
+        # lightweight no-op structured logger
         return
 
 logger.info("🔎 KB module loaded | INDEX_DIR=%s", INDEX_DIR)
 
-# ── Embedding model normalization & dimensions ────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Embedding Model Normalization & Dimensions
+# ──────────────────────────────────────────────────────────────────────────────
+
 MODEL_NAME = (
     os.getenv("KB_EMBED_MODEL")
-    or os.getenv("OPENAI_EMBED_MODEL")
+    or os.getenv("OPENAI_EMBED_MODEL")  # compat with earlier configs
     or "text-embedding-3-large"
 )
-# Optional OpenAI fallback (used only if resolve_embed_model fails)
+
+# Optional OpenAI fallback (used if the general resolver fails)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small")
 
 # Map common OpenAI embedding models to expected dimensions.
-# You can extend this if you swap providers.
 MODEL_DIMS: Dict[str, int] = {
     "text-embedding-3-large": 3072,
     "text-embedding-3-small": 1536,
@@ -80,14 +88,16 @@ MODEL_DIMS: Dict[str, int] = {
     "text-embedding-ada-002": 1536,
 }
 
-# Allow explicit override via env (for custom providers)
 _EXPECTED_DIM_ENV = os.getenv("KB_EMBED_DIM")
 EXPECTED_DIM: Optional[int] = int(_EXPECTED_DIM_ENV) if _EXPECTED_DIM_ENV else MODEL_DIMS.get(MODEL_NAME)
 
 logger.info("[KB] Embedding model=%s dim=%s", MODEL_NAME, EXPECTED_DIM)
 log_event("kb_model_selected", {"model": MODEL_NAME, "dim": EXPECTED_DIM})
 
-# ── Filter rules: single source of truth used by all ingestion paths ─────────
+# ──────────────────────────────────────────────────────────────────────────────
+# File Filter Rules (single source of truth)
+# ──────────────────────────────────────────────────────────────────────────────
+
 IGNORED_FILENAMES: set[str] = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     ".env", ".env.local", ".DS_Store", ".gitignore",
@@ -96,18 +106,20 @@ IGNORED_FILENAMES: set[str] = {
     "tsconfig.json", "jsconfig.json",
     "Thumbs.db", "desktop.ini", "mypy.ini", "pyrightconfig.json",
 }
+
 IGNORED_EXTENSIONS: set[str] = {
     ".lock", ".log", ".exe", ".bin", ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".ico",
     ".tgz", ".zip", ".tar", ".gz", ".mp4", ".mov", ".wav", ".mp3", ".pyc", ".so", ".dll",
 }
+
 IGNORED_FOLDERS: set[str] = {
     "node_modules", ".git", "__pycache__", "dist", "build", ".venv", "env",
     ".mypy_cache", ".pytest_cache",
 }
+
 MAX_FILE_SIZE_MB: int = int(os.getenv("KB_MAX_FILE_SIZE_MB", "2"))
 
 def _log_skip(path: str, tier: str, reason: str) -> None:
-    """Log a structured skip/warn so we never drop files silently."""
     logger.warning("[KB:skip] %s (%s): %s", path, tier, reason)
     log_event("kb_skip_file", {"path": path, "tier": tier, "reason": reason})
 
@@ -124,16 +136,13 @@ def should_index_file(filepath: str, tier: str) -> bool:
     if filename in IGNORED_FILENAMES or ext in IGNORED_EXTENSIONS:
         return False
 
-    # Folder-based exclusions
     parts = filepath.replace("\\", "/").split("/")
     if any(folder in parts for folder in IGNORED_FOLDERS):
         return False
 
-    # Size limit
     try:
-        if os.path.isfile(filepath):
-            if os.path.getsize(filepath) > MAX_FILE_SIZE_MB * 1024 * 1024:
-                return False
+        if os.path.isfile(filepath) and os.path.getsize(filepath) > MAX_FILE_SIZE_MB * 1024 * 1024:
+            return False
     except OSError:
         return False
 
@@ -141,22 +150,35 @@ def should_index_file(filepath: str, tier: str) -> bool:
         return ext in {".py", ".js", ".ts", ".tsx", ".java", ".go", ".cpp", ".json", ".md"}
     return True
 
-# ── LlamaIndex imports (lazy to keep import-time light) ──────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# LlamaIndex Imports (lazy)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _llama_imports():
-     from llama_index.core import Document, StorageContext, VectorStoreIndex, load_index_from_storage
-     from llama_index.core.ingestion import IngestionPipeline
-     from llama_index.core.node_parser import SentenceSplitter
-     from llama_index.core.extractors import TitleExtractor
-     from llama_index.core.embeddings import resolve_embed_model
-     return Document, StorageContext, VectorStoreIndex, load_index_from_storage, IngestionPipeline, SentenceSplitter, TitleExtractor, resolve_embed_model
+    from llama_index.core import Document, StorageContext, VectorStoreIndex, load_index_from_storage
+    from llama_index.core.ingestion import IngestionPipeline
+    from llama_index.core.node_parser import SentenceSplitter
+    from llama_index.core.extractors import TitleExtractor
+    from llama_index.core.embeddings import resolve_embed_model
+    return (
+        Document,
+        StorageContext,
+        VectorStoreIndex,
+        load_index_from_storage,
+        IngestionPipeline,
+        SentenceSplitter,
+        TitleExtractor,
+        resolve_embed_model,
+    )
 
-# ── Persistent dimension sidecar (guards mismatched indices) ─────────────────
-DIM_FILE = INDEX_DIR / "dim.json"
+# ──────────────────────────────────────────────────────────────────────────────
+# Embeddings Resolver (with OpenAI fallback)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def _resolve_embed_model():
     """
-    Try LlamaIndex's resolver first (supports OpenAI strings and many HF names).
-    If that fails (e.g., HF embeddings package missing), fall back to OpenAI
+    Try LlamaIndex's resolver first (supports OpenAI & HF strings).
+    If that fails (e.g., HF plugin not installed), fall back to OpenAI
     explicitly when OPENAI_API_KEY is set.
     """
     *_, resolve_embed_model = _llama_imports()
@@ -166,20 +188,29 @@ def _resolve_embed_model():
         try:
             if not OPENAI_API_KEY:
                 raise RuntimeError("OPENAI_API_KEY not set for OpenAI fallback")
-            # Lazy import to avoid import-time failure in slim images
+            # Lazy import to avoid import-time failures on slim images
             from llama_index.embeddings.openai import OpenAIEmbedding
             emb = OpenAIEmbedding(model=OPENAI_EMBEDDINGS_MODEL, api_key=OPENAI_API_KEY)
             log_event("kb_embeddings_fallback", {"from_model": MODEL_NAME, "to_model": OPENAI_EMBEDDINGS_MODEL})
-            return emb  # <-- Indented inside the try block
+            return emb
         except Exception as e_openai:
             raise RuntimeError(
                 f"Failed to resolve embeddings for MODEL_NAME={MODEL_NAME}; "
                 f"resolver_error={e_resolve}; openai_fallback_error={e_openai}"
             )
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Persistent dimension sidecar (guards mismatched indices)
+# ──────────────────────────────────────────────────────────────────────────────
+
+DIM_FILE = INDEX_DIR / "dim.json"
+
 def _write_dim_meta(dim: int) -> None:
     DIM_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DIM_FILE.write_text(json.dumps({"dim": dim, "model": MODEL_NAME, "ts": int(time.time())}, indent=2), encoding="utf-8")
+    DIM_FILE.write_text(
+        json.dumps({"dim": dim, "model": MODEL_NAME, "ts": int(time.time())}, indent=2),
+        encoding="utf-8",
+    )
 
 def _read_dim_meta() -> Optional[Dict[str, Any]]:
     if not DIM_FILE.exists():
@@ -193,20 +224,28 @@ def _index_dim_matches_expected() -> bool:
     meta = _read_dim_meta()
     if meta is None:
         logger.info("[KB] No dim.json present")
-        return EXPECTED_DIM is None  # if unknown expected, allow pass-through
+        # If unknown expected, allow pass-through (custom model scenario)
+        return EXPECTED_DIM is None
     stored = meta.get("dim")
     if EXPECTED_DIM is None:
-        # We don't know expected (custom model). Assume compatible.
         logger.warning("[KB] EXPECTED_DIM not set; accepting stored dim=%s (model=%s)", stored, meta.get("model"))
         return True
     ok = int(stored or -1) == int(EXPECTED_DIM)
     if not ok:
-        logger.error("[KB] Index dim mismatch: stored=%s current=%s model_now=%s model_then=%s",
-                     stored, EXPECTED_DIM, MODEL_NAME, meta.get("model"))
-        log_event("kb_dim_mismatch", {"stored": stored, "expected": EXPECTED_DIM, "model_now": MODEL_NAME, "model_then": meta.get("model")})
+        logger.error(
+            "[KB] Index dim mismatch: stored=%s current=%s model_now=%s model_then=%s",
+            stored, EXPECTED_DIM, MODEL_NAME, meta.get("model")
+        )
+        log_event(
+            "kb_dim_mismatch",
+            {"stored": stored, "expected": EXPECTED_DIM, "model_now": MODEL_NAME, "model_then": meta.get("model")},
+        )
     return ok
 
-# ── Ingestion inputs (docs + code) ───────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Ingestion (docs + code) → Documents
+# ──────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class TierSpec:
     name: str
@@ -214,20 +253,13 @@ class TierSpec:
 
 def _discover_default_tiers() -> List[TierSpec]:
     code = [p for p in DEFAULT_CODE_DIRS if p.exists()]
-    docs = []
-    for p in DEFAULT_DOC_DIRS:
-        if Path(p).exists():
-            docs.append(Path(p))
-    return [
-        TierSpec("code", code),
-        TierSpec("project_docs", docs),
-    ]
+    docs = [Path(p) for p in DEFAULT_DOC_DIRS if Path(p).exists()]
+    return [TierSpec("code", code), TierSpec("project_docs", docs)]
 
 def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
     """
-    Walk targets and return Document objects with proper metadata:
-      • Never throw; log structured reasons for skips
-      • Only include files that pass should_index_file
+    Walk targets and return Document objects with proper metadata.
+    Never throws; logs structured reasons for skips.
     """
     Document, *_ = _llama_imports()
     docs: List[Any] = []
@@ -239,17 +271,18 @@ def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
             try:
                 if path.is_dir():
                     for f in path.rglob("*"):
-                        if f.is_file():
-                            fpath = str(f)
-                            if should_index_file(fpath, tier):
-                                try:
-                                    text = f.read_text(encoding="utf-8")
-                                except Exception as e:
-                                    _log_skip(fpath, tier, f"unreadable: {e.__class__.__name__}")
-                                    continue
-                                docs.append(Document(text=text, metadata={"tier": tier, "file_path": fpath}))
-                            else:
-                                _log_skip(fpath, tier, "filtered by rules")
+                        if not f.is_file():
+                            continue
+                        fpath = str(f)
+                        if should_index_file(fpath, tier):
+                            try:
+                                text = f.read_text(encoding="utf-8")
+                            except Exception as e:
+                                _log_skip(fpath, tier, f"unreadable: {e.__class__.__name__}")
+                                continue
+                            docs.append(Document(text=text, metadata={"tier": tier, "file_path": fpath}))
+                        else:
+                            _log_skip(fpath, tier, "filtered by rules")
                 elif path.is_file():
                     fpath = str(path)
                     if should_index_file(fpath, tier):
@@ -268,12 +301,9 @@ def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
                 continue
     return docs
 
-# ── Index building & loading (exception-safe) ────────────────────────────────
-def _resolve_embed_model():
-    *_, resolve_embed_model = _llama_imports()
-    # LlamaIndex will choose OpenAI embedder based on model string.
-    # Ensure OPENAI_API_KEY is present when using OpenAI models.
-    return resolve_embed_model(MODEL_NAME)
+# ──────────────────────────────────────────────────────────────────────────────
+# Index building & loading (exception-safe)
+# ──────────────────────────────────────────────────────────────────────────────
 
 def _pipeline():
     from llama_index.core.ingestion import IngestionPipeline
@@ -295,8 +325,7 @@ def _maybe_wipe_index() -> None:
 def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> Dict[str, Any]:
     """
     Rebuild the full KB index.
-    • Never raises to caller; returns status dict {ok, error, model, indexed}
-    • Logs dimension metadata to sidecar for future guardrails
+    Returns: {"ok": bool, "error": str|None, "model": str, "indexed": int}
     """
     try:
         _maybe_wipe_index()
@@ -317,11 +346,10 @@ def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> 
             return {"ok": False, "error": msg, "model": MODEL_NAME, "indexed": 0}
 
         t0 = time.time()
-        nodes = _pipeline().run(documents=docs)
+        nodes = INGEST_PIPELINE.run(documents=docs)
         logger.info("[KB] Nodes generated: %s", len(nodes))
 
-        # Build & persist
-        from llama_index.core import VectorStoreIndex, StorageContext
+        from llama_index.core import VectorStoreIndex
         index = VectorStoreIndex(nodes=nodes, embed_model=EMBED_MODEL)
         index.storage_context.persist(persist_dir=str(INDEX_DIR))
         _write_dim_meta(int(EXPECTED_DIM or 0))
@@ -336,8 +364,9 @@ def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> 
         return {"ok": False, "error": str(e), "model": MODEL_NAME, "indexed": 0}
 
 def index_is_valid() -> bool:
-    """Return True if an on-disk index exists and dimension matches expectation."""
-    # quick existence check
+    """
+    Return True if an on-disk index exists and dimension matches expectation.
+    """
     if not INDEX_DIR.exists() or not any(INDEX_DIR.glob("*")):
         logger.info("[KB] index_is_valid → missing storage")
         return False
@@ -367,27 +396,32 @@ def get_index():
         if not status.get("ok"):
             logger.error("[KB] embed_all() after wipe returned error: %s", status.get("error"))
             log_event("kb_load_rebuild_fail", {"error": status.get("error")})
-            # return a sentinel None rather than throwing
             return None
-        from llama_index.core import StorageContext, load_index_from_storage
         ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
         return load_index_from_storage(ctx, embed_model=_resolve_embed_model())
 
-# ── Simple search helper (for manual testing / CLI) ──────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# Search (CLI helper + public API used by services.semantic_retriever)
+# ──────────────────────────────────────────────────────────────────────────────
+
 def simple_search(
     query: str,
     top_k: int = 5,
     *,
     score_threshold: Optional[float] = None,
-    ) -> List[Dict[str, Any]]:
-    
+) -> List[Dict[str, Any]]:
+    """
+    Run a quick similarity search and normalize results to:
+      {title, path, tier, snippet, similarity, meta}
+    """
     index = get_index()
     if index is None:
         return []
     try:
         engine = index.as_query_engine(similarity_top_k=top_k)
         res = engine.query(query)
-          # Normalize to schema expected by services.semantic_retriever._mk_row
+
+        # Normalize to schema expected by services.semantic_retriever._mk_row
         out: List[Dict[str, Any]] = []
         for sn in getattr(res, "source_nodes", []) or []:
             try:
@@ -399,9 +433,9 @@ def simple_search(
                 tier = meta.get("tier")
                 title = meta.get("title") or (os.path.basename(str(path)) if path else "Untitled")
 
-                # Optional threshold filter (also supports global)
-                thr = score_threshold if score_threshold is not None else os.getenv("SEMANTIC_SCORE_THRESHOLD")
-                thr = float(thr) if thr not in (None, "") else None
+                # Optional threshold filter (supports global env too)
+                thr_env = os.getenv("SEMANTIC_SCORE_THRESHOLD")
+                thr = score_threshold if score_threshold is not None else (float(thr_env) if thr_env not in (None, "") else None)
                 if thr is not None and (score is not None):
                     try:
                         if float(score) < float(thr):
@@ -409,26 +443,27 @@ def simple_search(
                     except Exception:
                         pass
 
-                out.append({
-                    "title": str(title),
-                    "path": str(path),
-                    "tier": (str(tier).lower() if tier else None),
-                    "snippet": str(text)[:1500],
-                    "similarity": float(score) if score is not None else None,
-                    "meta": meta,
-                })
+                out.append(
+                    {
+                        "title": str(title),
+                        "path": str(path),
+                        "tier": (str(tier).lower() if tier else None),
+                        "snippet": str(text)[:1500],
+                        "similarity": float(score) if score is not None else None,
+                        "meta": meta,
+                    }
+                )
             except Exception:
                 continue
-        # Sort & clamp
+
         try:
             out.sort(key=lambda r: float(r.get("similarity", 0.0) or 0.0), reverse=True)
         except Exception:
             pass
-        return out[: int(top_k or 5)]  
+        return out[: int(top_k or 5)]
     except Exception as e:
         logger.exception("[KB] simple_search failed: %s", e)
         return []
-    # Add near the bottom of services/kb.py (below simple_search)
 
 def search(
     *,
@@ -448,20 +483,21 @@ def search(
 
 def api_search(query: str, k: int = 5, search_type: str | None = None):
     """
-    Back-compat shim for routes/kb.search proxy. Ignores `search_type`
-    and delegates to simple_search for now.
+    Back-compat shim for routes/kb.search proxy. Ignores `search_type`.
     """
     return simple_search(query, top_k=k)
 
-# Optional convenience for readiness probes (kept minimal)
 def warmup() -> None:
+    """Optional convenience for readiness probes (kept minimal)."""
     try:
         _ = get_index()
     except Exception as e:
         log_event("kb_warmup_failed", {"error": str(e)})
 
+# ──────────────────────────────────────────────────────────────────────────────
+# CLI
+# ──────────────────────────────────────────────────────────────────────────────
 
-# ── Module CLI ───────────────────────────────────────────────────────────────
 def _cli(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Relay KB ingestion")
     sub = parser.add_subparsers(dest="cmd", required=False)
