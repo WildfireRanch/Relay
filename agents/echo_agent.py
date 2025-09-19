@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, Optional
 
 # Lightweight logging that won’t crash if core.logging is absent
@@ -65,6 +66,7 @@ async def answer(
     **kwargs: Any,
 ) -> Dict[str, Any]:
     model = model or DEFAULT_MODEL
+    t0 = time.perf_counter()
     q = _s(query)
     ctx = _s(context)
     bullets = _pick_bullets(ctx, q, limit=3)
@@ -80,7 +82,11 @@ async def answer(
         "response": {"model": model, "usage": {"prompt_tokens": 0, "completion_tokens": 0}, "raw": None},
         "meta": {"origin": "echo", "model": model, "request_id": request_id},
     }
-    log_event("echo_answer", {"request_id": request_id, "chars": len(final)})
+    elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    log_event(
+        "echo_answer",
+        {"request_id": request_id, "chars": len(final), "elapsed_ms": elapsed_ms},
+    )
     return out
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -98,6 +104,7 @@ def invoke(
     model: Optional[str] = None,
     **_: Any,  # tolerate extras
 ) -> str:
+    t0 = time.perf_counter()
     try:
         q = _s(query)
         ctx = _s(context)
@@ -108,9 +115,23 @@ def invoke(
         else:
             final = "Here’s a concise answer based on available context."
 
-        log_event("echo_answer", {"request_id": corr_id, "chars": len(final)})
+        log_event(
+            "echo_answer",
+            {
+                "request_id": corr_id,
+                "chars": len(final),
+                "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+            },
+        )
         return final
     except Exception as e:
         # SAFE-MODE must not raise; return minimal text
-        log_event("echo_invoke_error", {"request_id": corr_id, "error": str(e or "")})
+        log_event(
+            "echo_invoke_error",
+            {
+                "request_id": corr_id,
+                "error": str(e or ""),
+                "elapsed_ms": int((time.perf_counter() - t0) * 1000),
+            },
+        )
         return ""

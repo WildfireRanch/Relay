@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import time
 import traceback
 from collections import Counter
 from inspect import iscoroutinefunction
@@ -21,6 +22,7 @@ import inspect
 
 from fastapi import APIRouter, HTTPException, Query, Request, Header, Response, status
 from fastapi.responses import StreamingResponse
+from services.errors import error_payload
 
 # --- Pydantic v1/v2 compatibility ---------------------------------------------
 try:
@@ -175,6 +177,45 @@ class StreamRequest(BaseModel):
     query: Annotated[str, Field(min_length=3, alias="question")] = ...
     context: Optional[str] = Field(default="", description="Optional prebuilt context")
     user_id: str = Field("anonymous")
+
+
+def _elapsed_ms(start: float) -> int:
+    return int((time.perf_counter() - start) * 1000)
+
+
+def _error_code_from(detail: Any) -> str:
+    if isinstance(detail, dict):
+        for key in ("code", "error"):
+            val = detail.get(key)
+            if isinstance(val, str) and val:
+                return val
+    return "ask_http_exception"
+
+
+def _validate_payload(payload: AskRequest, corr_id: str) -> None:
+    invalid_files = [f for f in (payload.files or []) if not isinstance(f, str) or not f.strip()]
+    if invalid_files:
+        raise HTTPException(
+            status_code=400,
+            detail=error_payload(
+                "invalid_files",
+                "files entries must be non-empty strings.",
+                corr_id=corr_id,
+                hint="Strip whitespace and resend filenames.",
+            ),
+        )
+
+    invalid_topics = [t for t in (payload.topics or []) if not isinstance(t, str) or not t.strip()]
+    if invalid_topics:
+        raise HTTPException(
+            status_code=400,
+            detail=error_payload(
+                "invalid_topics",
+                "topics entries must be non-empty strings.",
+                corr_id=corr_id,
+                hint="Strip whitespace and resend topic values.",
+            ),
+        )
 
 # ── Core helpers ---------------------------------------------------------------
 
@@ -368,210 +409,291 @@ async def ask(
       - Anti-Parrot (contiguous copy + n-gram Jaccard)
     Keeps response shape stable for the frontend (final_text or "").
     """
-    # Lazy agent import to avoid circular imports at module load
-    try:
-        from agents.mcp_agent import run_mcp  # type: ignore
-    except Exception as e:
-        corr_id = (x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex)
-        log_event("ask_import_error", {"corr_id": corr_id, "error": str(e)})
-        raise HTTPException(status_code=500, detail={"error": "mcp_import_failed", "corr_id": corr_id})
-
-    q = (payload.query or "").strip()
-    if not q:
-        raise HTTPException(status_code=422, detail="Missing 'q' (or query/prompt/question/text)")
-
     corr_id = (x_corr_id or x_request_id or getattr(request.state, "corr_id", None) or uuid4().hex)
     try:
         request.state.corr_id = corr_id
     except Exception:
         pass
 
-    role = (payload.role or "planner").strip() or "planner"
-    files = payload.files or []
-    topics = payload.topics or []
-    user_id = payload.user_id
-    debug = bool(payload.debug)
+    pipeline_t0 = time.perf_counter()
 
-    log_event(
-        "ask_received",
-        {
-            "corr_id": corr_id,
-            "user": user_id,
-            "role": role,
-            "files_count": len(files),
-            "topics_count": len(topics),
-            "debug": debug,
-        },
-    )
+    try:
+        try:
+            from agents.mcp_agent import run_mcp  # type: ignore
+        except Exception as e:
+            log_event("ask_import_error", {"corr_id": corr_id, "error": str(e)})
+            raise HTTPException(
+                status_code=500,
+                detail=error_payload(
+                    "mcp_import_failed",
+                    "Agent pipeline unavailable.",
+                    corr_id=corr_id,
+                ),
+            ) from e
 
-    # 1) Build context (optional; never errors)
-    ctx = await _build_context_safe(q, corr_id)
-    context_text = ctx["context"]
-    files_used = ctx["files_used"]
-    kb_meta = ctx["kb"]
-    grounding_from_ctx = ctx["grounding"]
+        q = (payload.query or "").strip()
+        if not q:
+            raise HTTPException(
+                status_code=400,
+                detail=error_payload(
+                    "invalid_query",
+                    "query must be provided.",
+                    corr_id=corr_id,
+                    hint="Provide 'query' with at least 3 characters.",
+                ),
+            )
 
-    # 2) Retrieval Gate (require evidence before answering)
-    has_hits = int(kb_meta["hits"]) >= KB_MIN_HITS
-    score_ok = float(kb_meta["max_score"]) >= KB_SCORE_THRESHOLD
-    has_attr = len(grounding_from_ctx) > 0
-    gated_no_answer_reason = None
-    if not (has_hits and score_ok and has_attr):
-        gated_no_answer_reason = "Insufficient grounding"
+        _validate_payload(payload, corr_id)
+
+        role = (payload.role or "planner").strip() or "planner"
+        files_raw = payload.files or []
+        topics_raw = payload.topics or []
+        files = [f.strip() for f in files_raw if isinstance(f, str)]
+        topics = [t.strip() for t in topics_raw if isinstance(t, str)]
+        user_id = payload.user_id
+        debug = bool(payload.debug)
+
         log_event(
-            "ask_gate_blocked",
+            "ask_pipeline_start",
             {
                 "corr_id": corr_id,
                 "user": user_id,
-                "hits": kb_meta["hits"],
-                "max_score": kb_meta["max_score"],
-                "has_attribution": has_attr,
-                "threshold": KB_SCORE_THRESHOLD,
+                "role": role,
+                "files_count": len(files),
+                "topics_count": len(topics),
             },
         )
 
-    # 3) If not gated yet, call MCP with timeout; pass context for reuse
-    mcp_raw: Dict[str, Any] | Any = {}
-    if gated_no_answer_reason is None:
-        try:
-            mcp_raw = await _maybe_await(
-                run_mcp,
-                query=q,
-                role=role,
-                files=files,
-                topics=topics,
-                user_id=user_id,
-                debug=debug,
-                corr_id=corr_id,
-                context=context_text,
-                timeout_s=ASK_TIMEOUT_S,
+        log_event(
+            "ask_received",
+            {
+                "corr_id": corr_id,
+                "user": user_id,
+                "role": role,
+                "files_count": len(files),
+                "topics_count": len(topics),
+                "debug": debug,
+            },
+        )
+
+        ctx = await _build_context_safe(q, corr_id)
+        context_text = ctx["context"]
+        files_used = ctx["files_used"]
+        kb_meta = ctx["kb"]
+        grounding_from_ctx = ctx["grounding"]
+
+        has_hits = int(kb_meta["hits"]) >= KB_MIN_HITS
+        score_ok = float(kb_meta["max_score"]) >= KB_SCORE_THRESHOLD
+        has_attr = len(grounding_from_ctx) > 0
+        gated_no_answer_reason = None
+        if not (has_hits and score_ok and has_attr):
+            gated_no_answer_reason = "Insufficient grounding"
+            log_event(
+                "ask_gate_blocked",
+                {
+                    "corr_id": corr_id,
+                    "user": user_id,
+                    "hits": kb_meta["hits"],
+                    "max_score": kb_meta["max_score"],
+                    "has_attribution": has_attr,
+                    "threshold": KB_SCORE_THRESHOLD,
+                },
             )
-        except asyncio.TimeoutError:
-            log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
-            raise HTTPException(status_code=504, detail={"error": "ask_timeout", "message": "Agent exceeded timeout", "corr_id": corr_id})
+
+        mcp_raw: Dict[str, Any] | Any = {}
+        if gated_no_answer_reason is None:
+            try:
+                mcp_raw = await _maybe_await(
+                    run_mcp,
+                    query=q,
+                    role=role,
+                    files=files,
+                    topics=topics,
+                    user_id=user_id,
+                    debug=debug,
+                    corr_id=corr_id,
+                    context=context_text,
+                    timeout_s=ASK_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
+                raise HTTPException(
+                    status_code=408,
+                    detail=error_payload(
+                        "ask_timeout",
+                        "Agent execution exceeded timeout.",
+                        corr_id=corr_id,
+                        extra={"timeout_s": ASK_TIMEOUT_S},
+                    ),
+                )
+            except Exception as e:
+                log_event(
+                    "ask_mcp_exception",
+                    {"corr_id": corr_id, "user": user_id, "error": str(e), "trace": traceback.format_exc()},
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=error_payload("mcp_failed", "Failed to run MCP.", corr_id=corr_id),
+                )
+
+        normalized = {}
+        try:
+            normalized = _normalize_result(mcp_raw if isinstance(mcp_raw, dict) else {})
+            plan = _json_safe(normalized.get("plan"))
+            routed_result = normalized.get("routed_result", {})
+            critics = _json_safe(normalized.get("critics"))
+            context_from_agent = str(normalized.get("context") or "")
+            files_used_agent = _json_safe(normalized.get("files_used") or [])
+            upstream_meta = normalized.get("meta") or {}
+            final_text_raw = _final_text_from(plan, routed_result, root_final=normalized.get("final_text"))
         except Exception as e:
             log_event(
-                "ask_mcp_exception",
+                "ask_normalize_exception",
                 {"corr_id": corr_id, "user": user_id, "error": str(e), "trace": traceback.format_exc()},
             )
             raise HTTPException(
                 status_code=500,
-                detail={"error": "mcp_failed", "message": "Failed to run MCP.", "corr_id": corr_id},
+                detail=error_payload(
+                    "normalize_failed",
+                    "Failed to normalize MCP result.",
+                    corr_id=corr_id,
+                ),
             )
 
-    # 4) Normalize agent result (or empty if gated earlier)
-    normalized = {}
-    try:
-        normalized = _normalize_result(mcp_raw if isinstance(mcp_raw, dict) else {})
-        plan = _json_safe(normalized.get("plan"))
-        routed_result = normalized.get("routed_result", {})
-        critics = _json_safe(normalized.get("critics"))
-        context_from_agent = str(normalized.get("context") or "")
-        files_used_agent = _json_safe(normalized.get("files_used") or [])
-        upstream_meta = normalized.get("meta") or {}
-        final_text_raw = _final_text_from(plan, routed_result, root_final=normalized.get("final_text"))
-    except Exception as e:
+        context = context_from_agent or context_text
+        files_used_out = files_used_agent or files_used
+        if isinstance(files_used_out, list) and files_used_out and isinstance(files_used_out[0], str):
+            files_used_out = [{"path": p} for p in files_used_out]  # type: ignore[assignment]
+
+        grounding = grounding_from_ctx[:]
+        if isinstance(routed_result, dict):
+            grounding_agent = routed_result.get("grounding") or []
+            if grounding_agent:
+                grounding = grounding_agent
+        if not grounding:
+            hits_ctx, max_score_ctx, sources_ctx = _extract_grounding_from_context(context)
+            if hits_ctx > 0:
+                grounding = sources_ctx
+                if kb_meta["hits"] == 0:
+                    kb_meta["hits"] = hits_ctx
+                if (kb_meta["max_score"] or 0.0) == 0.0 and (max_score_ctx is not None):
+                    kb_meta["max_score"] = max_score_ctx
+
+        if gated_no_answer_reason is None:
+            final_text_candidate = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
+            contiguous_hit = _anti_parrot_contiguous(final_text_candidate, context)
+            jaccard = _jaccard_ngrams(final_text_candidate, context, n=5)
+            if contiguous_hit or jaccard >= ANTI_PARROT_JACCARD:
+                gated_no_answer_reason = "Anti-parrot guard: output mirrors source context"
+                log_event(
+                    "ask_anti_parrot_blocked",
+                    {
+                        "corr_id": corr_id,
+                        "user": user_id,
+                        "contiguous_hit": contiguous_hit,
+                        "jaccard": jaccard,
+                        "final_len": len(final_text_candidate),
+                        "context_len": len(context),
+                    },
+                )
+
+        meta: Dict[str, Any] = {"role": role, "debug": debug, "corr_id": corr_id}
+        if isinstance(upstream_meta, dict):
+            meta.update(_json_safe(upstream_meta))
+        meta["kb"] = {
+            "hits": int(kb_meta.get("hits") or 0),
+            "max_score": float(kb_meta.get("max_score") or 0.0),
+            "sources": kb_meta.get("sources")
+            or [s.get("path") for s in grounding if isinstance(s, dict) and s.get("path")],
+        }
+
+        if gated_no_answer_reason:
+            meta.update(
+                {
+                    "no_answer": True,
+                    "reason": gated_no_answer_reason,
+                    "kb_threshold": KB_SCORE_THRESHOLD,
+                    "kb_min_hits": KB_MIN_HITS,
+                    "anti_parrot_threshold": ANTI_PARROT_MAX_CONTIGUOUS_MATCH,
+                    "anti_parrot_jaccard": ANTI_PARROT_JACCARD,
+                }
+            )
+            final_text_out = ""
+            routed_result_out = {"grounding": grounding}
+        else:
+            final_text_out = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
+            meta.update({"no_answer": False, "anti_parrot_triggered": False})
+            routed_result_out = normalized.get("routed_result") or {}
+            if isinstance(routed_result_out, dict) and not routed_result_out.get("grounding"):
+                routed_result_out["grounding"] = grounding
+
         log_event(
-            "ask_normalize_exception",
-            {"corr_id": corr_id, "user": user_id, "error": str(e), "trace": traceback.format_exc()},
+            "ask_response_summary",
+            {
+                "corr_id": corr_id,
+                "user": user_id,
+                "final_text_head": (final_text_out or "")[:200],
+                "no_answer": meta.get("no_answer"),
+                "kb_hits": meta["kb"]["hits"],
+                "kb_max_score": meta["kb"]["max_score"],
+                "has_grounding": bool(grounding),
+            },
+        )
+
+        response = AskResponse(
+            plan=plan if isinstance(plan, dict) else None,
+            routed_result=_json_safe(routed_result_out) if isinstance(routed_result_out, (dict, str)) else {},
+            critics=critics if critics is not None else None,
+            context=context,
+            files_used=files_used_out if isinstance(files_used_out, list) else [],
+            meta=_json_safe(meta),
+            final_text=final_text_out,
+        )
+    except HTTPException as exc:
+        elapsed_ms = _elapsed_ms(pipeline_t0)
+        detail = exc.detail if isinstance(exc.detail, dict) else {}
+        log_event(
+            "ask_pipeline_failure",
+            {
+                "corr_id": corr_id,
+                "status": exc.status_code,
+                "code": _error_code_from(detail),
+                "elapsed_ms": elapsed_ms,
+            },
+        )
+        raise
+    except Exception as exc:
+        elapsed_ms = _elapsed_ms(pipeline_t0)
+        log_event(
+            "ask_pipeline_failure",
+            {
+                "corr_id": corr_id,
+                "status": 500,
+                "code": "ask_unexpected_error",
+                "error": str(exc),
+                "elapsed_ms": elapsed_ms,
+            },
         )
         raise HTTPException(
             status_code=500,
-            detail={"error": "normalize_failed", "message": "Failed to normalize MCP result.", "corr_id": corr_id},
-        )
-
-    # Prefer agent context/files if provided, else our own
-    context = context_from_agent or context_text
-    files_used_out = files_used_agent or files_used
-    if isinstance(files_used_out, list) and files_used_out and isinstance(files_used_out[0], str):
-        files_used_out = [{"path": p} for p in files_used_out]  # type: ignore[assignment]
-
-    # 5) Grounding: prefer engine matches; else agent; else parse context text
-    grounding = grounding_from_ctx[:]
-    if isinstance(routed_result, dict):
-        grounding_agent = routed_result.get("grounding") or []
-        if grounding_agent:
-            grounding = grounding_agent
-    if not grounding:
-        hits_ctx, max_score_ctx, sources_ctx = _extract_grounding_from_context(context)
-        if hits_ctx > 0:
-            grounding = sources_ctx
-            if kb_meta["hits"] == 0:
-                kb_meta["hits"] = hits_ctx
-            if (kb_meta["max_score"] or 0.0) == 0.0 and (max_score_ctx is not None):
-                kb_meta["max_score"] = max_score_ctx
-
-    # 6) Anti-parrot (only if not already gated)
-    if gated_no_answer_reason is None:
-        final_text_candidate = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
-        contiguous_hit = _anti_parrot_contiguous(final_text_candidate, context)
-        jaccard = _jaccard_ngrams(final_text_candidate, context, n=5)
-        if contiguous_hit or jaccard >= ANTI_PARROT_JACCARD:
-            gated_no_answer_reason = "Anti-parrot guard: output mirrors source context"
-            log_event(
-                "ask_anti_parrot_blocked",
-                {
-                    "corr_id": corr_id,
-                    "user": user_id,
-                    "contiguous_hit": contiguous_hit,
-                    "jaccard": jaccard,
-                    "final_len": len(final_text_candidate),
-                    "context_len": len(context),
-                },
-            )
-
-    # 7) Shape meta + final_text
-    meta: Dict[str, Any] = {"role": role, "debug": debug, "corr_id": corr_id}
-    if isinstance(upstream_meta, dict):
-        meta.update(_json_safe(upstream_meta))
-    meta["kb"] = {
-        "hits": int(kb_meta.get("hits") or 0),
-        "max_score": float(kb_meta.get("max_score") or 0.0),
-        "sources": kb_meta.get("sources") or [s.get("path") for s in grounding if isinstance(s, dict) and s.get("path")],
-    }
-
-    if gated_no_answer_reason:
-        meta.update(
-            {
-                "no_answer": True,
-                "reason": gated_no_answer_reason,
-                "kb_threshold": KB_SCORE_THRESHOLD,
-                "kb_min_hits": KB_MIN_HITS,
-                "anti_parrot_threshold": ANTI_PARROT_MAX_CONTIGUOUS_MATCH,
-                "anti_parrot_jaccard": ANTI_PARROT_JACCARD,
-            }
-        )
-        final_text_out = ""
-        routed_result_out = {"grounding": grounding}
+            detail=error_payload(
+                "ask_unexpected_error",
+                "Unexpected failure handling /ask request.",
+                corr_id=corr_id,
+            ),
+        ) from exc
     else:
-        final_text_out = _truncate(final_text_raw or "", FINAL_TEXT_MAX_LEN)
-        meta.update({"no_answer": False, "anti_parrot_triggered": False})
-        routed_result_out = normalized.get("routed_result") or {}
-        if isinstance(routed_result_out, dict) and not routed_result_out.get("grounding"):
-            routed_result_out["grounding"] = grounding
-
-    log_event(
-        "ask_response_summary",
-        {
-            "corr_id": corr_id,
-            "user": user_id,
-            "final_text_head": (final_text_out or "")[:200],
-            "no_answer": meta.get("no_answer"),
-            "kb_hits": meta["kb"]["hits"],
-            "kb_max_score": meta["kb"]["max_score"],
-            "has_grounding": bool(grounding),
-        },
-    )
-
-    return AskResponse(
-        plan=plan if isinstance(plan, dict) else None,
-        routed_result=_json_safe(routed_result_out) if isinstance(routed_result_out, (dict, str)) else {},
-        critics=critics if critics is not None else None,
-        context=context,
-        files_used=files_used_out if isinstance(files_used_out, list) else [],
-        meta=_json_safe(meta),
-        final_text=final_text_out,
-    )
+        elapsed_ms = _elapsed_ms(pipeline_t0)
+        success_meta = response.meta if isinstance(response.meta, dict) else {}
+        log_event(
+            "ask_pipeline_success",
+            {
+                "corr_id": corr_id,
+                "elapsed_ms": elapsed_ms,
+                "no_answer": success_meta.get("no_answer"),
+            },
+        )
+        return response
 
 @router.get("/ask")
 async def ask_get(
@@ -587,19 +709,33 @@ async def ask_get(
 @router.post("/ask/stream")
 async def ask_stream(payload: StreamRequest, request: Request):
     """Streamed answer via Echo (lazy-imported)."""
+    corr_id = request.headers.get("X-Corr-Id") or uuid4().hex
+
     try:
         from agents.echo_agent import stream as echo_stream  # type: ignore
     except Exception:
         echo_stream = None  # type: ignore
 
     if echo_stream is None:
-        raise HTTPException(status_code=501, detail={"error": "not_implemented", "message": "Echo streaming not available."})
+        raise HTTPException(
+            status_code=501,
+            detail=error_payload(
+                "not_implemented",
+                "Echo streaming not available.",
+                corr_id=corr_id,
+            ),
+        )
 
     q = (payload.query or "").strip()
     if not q:
-        raise HTTPException(status_code=400, detail={"error": "bad_request", "hint": "query must be non-empty"})
-
-    corr_id = request.headers.get("X-Corr-Id") or uuid4().hex
+        raise HTTPException(
+            status_code=400,
+            detail=error_payload(
+                "invalid_query",
+                "query must be non-empty.",
+                corr_id=corr_id,
+            ),
+        )
 
     async def gen() -> AsyncGenerator[bytes, None]:
         try:
@@ -614,19 +750,33 @@ async def ask_stream(payload: StreamRequest, request: Request):
 @router.post("/ask/codex_stream")
 async def ask_codex_stream(payload: StreamRequest, request: Request):
     """Streamed code/patch output via Codex (lazy-imported)."""
+    corr_id = request.headers.get("X-Corr-Id") or uuid4().hex
+
     try:
         from agents.codex_agent import stream as codex_stream  # type: ignore
     except Exception:
         codex_stream = None  # type: ignore
 
     if codex_stream is None:
-        raise HTTPException(status_code=501, detail={"error": "not_implemented", "message": "Codex streaming not available."})
+        raise HTTPException(
+            status_code=501,
+            detail=error_payload(
+                "not_implemented",
+                "Codex streaming not available.",
+                corr_id=corr_id,
+            ),
+        )
 
     q = (payload.query or "").strip()
     if not q:
-        raise HTTPException(status_code=400, detail={"error": "bad_request", "hint": "query must be non-empty"})
-
-    corr_id = request.headers.get("X-Corr-Id") or uuid4().hex
+        raise HTTPException(
+            status_code=400,
+            detail=error_payload(
+                "invalid_query",
+                "query must be non-empty.",
+                corr_id=corr_id,
+            ),
+        )
 
     async def gen() -> AsyncGenerator[bytes, None]:
         try:
