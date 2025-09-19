@@ -5,7 +5,7 @@
 
 ## Upstream
 - ENV: —
-- Imports: os, pathlib, typing, services.semantic_retriever, services.kb, services.graph, services.summarize_memory
+- Imports: os, pathlib, typing, services.semantic_retriever, services.kb, services.summarize_memory
 
 ## Downstream
 - agents.mcp_agent

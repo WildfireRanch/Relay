@@ -18,10 +18,7 @@
 - agents.metaplanner_agent
 - agents.planner_agent
 - agents.simulation_agent
-- agents.trainer_agent
 - routes.codex
-- services.graph
-- services.neo4j_driver
 - utils.logger
 
 ## Contents

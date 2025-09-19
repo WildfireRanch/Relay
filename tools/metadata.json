@@ -1,18 +1,5 @@
 [
   {
-    "file": "test_graph_neoagent.py",
-    "directory": ".",
-    "contents": [
-      "test"
-    ],
-    "imports": [
-      "services.neo4j_driver",
-      "asyncio"
-    ],
-    "env_vars": [],
-    "header_block": "# File: test_graph_neoagent.py\n# Directory: .\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: asyncio, services.neo4j_driver\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - test()\n\n"
-  },
-  {
     "file": "main.py",
     "directory": ".",
     "contents": [
@@ -84,8 +71,6 @@
     "file": "graph_store.py",
     "directory": "memory",
     "contents": [
-      "GraphMemoryStore",
-      "Neo4jGraphMemoryStore",
       "add_node",
       "add_edge",
       "get_connected",
@@ -100,11 +85,9 @@
       "get_all"
     ],
     "imports": [
-      "neo4j",
       "typing"
     ],
-    "env_vars": [],
-    "header_block": "# File: graph_store.py\n# Directory: memory\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: neo4j, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - GraphMemoryStore()\n#   - Neo4jGraphMemoryStore()\n#   - __init__()\n#   - add_edge()\n#   - add_node()\n#   - close()\n#   - get_all()\n#   - get_connected()\n#   - query()\n\n"
+    "env_vars": []
   },
   {
     "file": "patch_utils.py",
@@ -264,7 +247,6 @@
     "header_block": "# File: memory_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, datetime, json, os, pathlib, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - MemoryAgent()\n#   - __init__()\n#   - _load_entries()\n#   - _summarize_entries()\n#   - run()\n\n"
   },
   {
-    "file": "trainer_agent.py",
     "directory": "agents",
     "contents": [
       "TrainerAgent",
@@ -275,11 +257,9 @@
     "imports": [
       "typing",
       "datetime",
-      "core.logging",
-      "services.neo4j_driver"
+      "core.logging"
     ],
-    "env_vars": [],
-    "header_block": "# File: trainer_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, datetime, services.neo4j_driver, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - TrainerAgent()\n#   - __init__()\n#   - ingest_results()\n#   - run()\n\n"
+    "env_vars": []
   },
   {
     "file": "mcp_agent.py",
@@ -297,7 +277,6 @@
       "agents.codex_agent",
       "agents.echo_agent",
       "agents.simulation_agent",
-      "agents.trainer_agent",
       "agents.metaplanner_agent",
       "agents.critic_agent.run",
       "agents.memory_agent",
@@ -306,8 +285,7 @@
       "services.queue",
       "core.logging"
     ],
-    "env_vars": [],
-    "header_block": "# File: mcp_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.codex_agent, agents.control_agent, agents.critic_agent.run, agents.docs_agent, agents.echo_agent, agents.janitor_agent, agents.memory_agent, agents.metaplanner_agent, agents.planner_agent, agents.simulation_agent, agents.trainer_agent, core.logging, services.context_injector, services.queue, traceback, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - extract_plan_for_critics()\n#   - run_mcp()\n\n"
+    "env_vars": []
   },
   {
     "file": "janitor_agent.py",
@@ -353,11 +331,9 @@
       "run"
     ],
     "imports": [
-      "core.logging",
-      "services.graph"
+      "core.logging"
     ],
-    "env_vars": [],
-    "header_block": "# File: metaplanner_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, services.graph\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n#   - suggest_route()\n\n"
+    "env_vars": []
   },
   {
     "file": "reflection_critic.py",
@@ -1467,11 +1443,9 @@
       "summarize_recent_context"
     ],
     "imports": [
-      "services.neo4j_driver",
       "core.logging"
     ],
-    "env_vars": [],
-    "header_block": "# File: graph.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, services.neo4j_driver\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - query_similar_routes()\n#   - summarize_recent_context()\n\n"
+    "env_vars": []
   },
   {
     "file": "summarize_memory.py",
@@ -1579,7 +1553,6 @@
     "header_block": "# File: env_checker.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: dotenv, os, pathlib, pprint, re\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - check_env_keys()\n#   - find_env_keys_in_code()\n\n"
   },
   {
-    "file": "neo4j_driver.py",
     "directory": "services",
     "contents": [
       "get_session",
@@ -1588,7 +1561,6 @@
     ],
     "imports": [
       "os",
-      "neo4j",
       "contextlib",
       "core.logging"
     ],
@@ -1596,8 +1568,7 @@
       "NEO4J_URI",
       "NEO4J_USER",
       "NEO4J_PASSWORD"
-    ],
-    "header_block": "# File: neo4j_driver.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER\n#   - Imports: contextlib, core.logging, neo4j, os\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - execute_read()\n#   - execute_write()\n#   - get_session()\n\n"
+    ]
   },
   {
     "file": "context_injector.py",
@@ -1616,11 +1587,9 @@
       "typing",
       "services.semantic_retriever",
       "services.kb",
-      "services.graph",
       "services.summarize_memory"
     ],
-    "env_vars": [],
-    "header_block": "# File: context_injector.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, pathlib, services.graph, services.kb, services.semantic_retriever, services.summarize_memory, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - build_context()\n#   - build_recent_memory_summaries()\n#   - load_context()\n#   - load_global_context()\n#   - load_summary()\n#   - safe_truncate()\n\n"
+    "env_vars": []
   },
   {
     "file": "docs_utils.py",

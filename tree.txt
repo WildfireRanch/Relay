@@ -35,7 +35,6 @@
 │   ├── metaplanner_agent.py
 │   ├── planner_agent.py
 │   ├── simulation_agent.py
-│   └── trainer_agent.py
 ├── app
 │   └── gmail-ops
 │       └── page.tsx
@@ -287,7 +286,6 @@
 │   ├── logs.py
 │   ├── memory.py
 │   ├── mqtt_client.py
-│   ├── neo4j_driver.py
 │   ├── queue.py
 │   ├── semantic_retriever.py
 │   ├── settings.py

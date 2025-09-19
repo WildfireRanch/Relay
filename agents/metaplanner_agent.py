@@ -1,10 +1,10 @@
 # File: metaplanner_agent.py
 # Directory: agents
-# Purpose: # Purpose: Provides functionality for planning and suggesting optimal routes using graph-based algorithms.
+# Purpose: # Purpose: Provides lightweight heuristics to suggest optimal routes for queries.
 #
 # Upstream:
 #   - ENV: —
-#   - Imports: core.logging, services.graph
+#   - Imports: core.logging
 #
 # Downstream:
 #   - agents.mcp_agent
@@ -22,37 +22,17 @@
 
 
 from core.logging import log_event
-from services.graph import query_similar_routes  # Optional: replace with your Neo4j utility
 
 # === Suggest a route override based on prior performance or fallback ===
 async def suggest_route(query: str, plan: dict, user_id: str = "anonymous") -> str:
     """
-    Suggests the most effective route for a query based on:
-    - Similar past queries stored in the graph
-    - Critic results from previous outcomes
-    Falls back to hard-coded heuristics if no graph available.
+    Suggests the most effective route for a query using lightweight
+    keyword heuristics. Historical graph lookups were removed, so all
+    decisions come from these fallbacks.
     """
     original_route = plan.get("route", "echo")
     objective = plan.get("objective", "").lower()
     raw = f"{query} {objective}"
-
-    try:
-        # === Graph-based similarity lookup (optional future support) ===
-        similar = await query_similar_routes(query)
-        if similar:
-            # Sort by best past performance (e.g. highest critic pass rate)
-            best = max(similar, key=lambda r: r.get("confidence", 0))
-            if best and best["route"] != original_route:
-                log_event("metaplanner_override", {
-                    "query": query,
-                    "from": original_route,
-                    "to": best["route"],
-                    "confidence": best["confidence"]
-                })
-                return best["route"]
-
-    except Exception as e:
-        log_event("metaplanner_graph_fail", {"error": str(e)})
 
     # === Heuristic fallback suggestions ===
     if "doc" in raw or "kb" in raw or "summary" in raw:

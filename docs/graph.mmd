@@ -40,10 +40,8 @@ graph TD
   logging --> agents_metaplanner_agent
   logging --> agents_planner_agent
   logging --> agents_simulation_agent
-  logging --> agents_trainer_agent
   logging --> routes_codex
   logging --> services_graph
-  logging --> services_neo4j_driver
   logging --> utils_logger
   logs --> main
   logs --> routes_context
@@ -55,9 +53,6 @@ graph TD
   memory --> agents_janitor_agent
   memory_agent --> agents_mcp_agent
   metaplanner_agent --> agents_mcp_agent
-  neo4j_driver --> agents_trainer_agent
-  neo4j_driver --> services_graph
-  neo4j_driver --> test_graph_neoagent
   oauth --> main
   openai_client --> agents_codex_agent
   openai_client --> agents_docs_agent
@@ -76,5 +71,4 @@ graph TD
   simulation_agent --> agents_mcp_agent
   status --> main
   summarize_memory --> services_context_injector
-  trainer_agent --> agents_mcp_agent
 ```

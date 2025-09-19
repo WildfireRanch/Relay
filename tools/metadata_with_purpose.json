@@ -1,19 +1,5 @@
 [
   {
-    "file": "test_graph_neoagent.py",
-    "directory": ".",
-    "contents": [
-      "test"
-    ],
-    "imports": [
-      "services.neo4j_driver",
-      "asyncio"
-    ],
-    "env_vars": [],
-    "header_block": "# File: test_graph_neoagent.py\n# Directory: .\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: asyncio, services.neo4j_driver\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - test()\n\n",
-    "purpose": "# Purpose: Provides unit tests for the Neo4j graph database interactions within the NeoAgent service."
-  },
-  {
     "file": "main.py",
     "directory": ".",
     "contents": [
@@ -87,8 +73,6 @@
     "file": "graph_store.py",
     "directory": "memory",
     "contents": [
-      "GraphMemoryStore",
-      "Neo4jGraphMemoryStore",
       "add_node",
       "add_edge",
       "get_connected",
@@ -103,11 +87,9 @@
       "get_all"
     ],
     "imports": [
-      "neo4j",
       "typing"
     ],
     "env_vars": [],
-    "header_block": "# File: graph_store.py\n# Directory: memory\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: neo4j, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - GraphMemoryStore()\n#   - Neo4jGraphMemoryStore()\n#   - __init__()\n#   - add_edge()\n#   - add_node()\n#   - close()\n#   - get_all()\n#   - get_connected()\n#   - query()\n\n",
     "purpose": "# Purpose: Provides an interface and implementations for storing and managing graph data structures, supporting operations like node and edge manipulation, and querying."
   },
   {
@@ -276,7 +258,6 @@
     "purpose": "# Purpose: Manages the storage, retrieval, and summarization of memory entries within the application."
   },
   {
-    "file": "trainer_agent.py",
     "directory": "agents",
     "contents": [
       "TrainerAgent",
@@ -287,11 +268,9 @@
     "imports": [
       "typing",
       "datetime",
-      "core.logging",
-      "services.neo4j_driver"
+      "core.logging"
     ],
     "env_vars": [],
-    "header_block": "# File: trainer_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, datetime, services.neo4j_driver, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - TrainerAgent()\n#   - __init__()\n#   - ingest_results()\n#   - run()\n\n",
     "purpose": "# Purpose: Manages the training process of agents, including initialization, execution, and result ingestion."
   },
   {
@@ -310,7 +289,6 @@
       "agents.codex_agent",
       "agents.echo_agent",
       "agents.simulation_agent",
-      "agents.trainer_agent",
       "agents.metaplanner_agent",
       "agents.critic_agent.run",
       "agents.memory_agent",
@@ -320,7 +298,6 @@
       "core.logging"
     ],
     "env_vars": [],
-    "header_block": "# File: mcp_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: agents.codex_agent, agents.control_agent, agents.critic_agent.run, agents.docs_agent, agents.echo_agent, agents.janitor_agent, agents.memory_agent, agents.metaplanner_agent, agents.planner_agent, agents.simulation_agent, agents.trainer_agent, core.logging, services.context_injector, services.queue, traceback, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - extract_plan_for_critics()\n#   - run_mcp()\n\n",
     "purpose": "# Purpose: Coordinates the execution and interaction of various agent modules to manage complex planning and control tasks within the system."
   },
   {
@@ -369,11 +346,9 @@
       "run"
     ],
     "imports": [
-      "core.logging",
-      "services.graph"
+      "core.logging"
     ],
     "env_vars": [],
-    "header_block": "# File: metaplanner_agent.py\n# Directory: agents\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, services.graph\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - run()\n#   - suggest_route()\n\n",
     "purpose": "# Purpose: Provides functionality for planning and suggesting optimal routes using graph-based algorithms."
   },
   {
@@ -1545,11 +1520,9 @@
       "summarize_recent_context"
     ],
     "imports": [
-      "services.neo4j_driver",
       "core.logging"
     ],
     "env_vars": [],
-    "header_block": "# File: graph.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: core.logging, services.neo4j_driver\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - query_similar_routes()\n#   - summarize_recent_context()\n\n",
     "purpose": "# Purpose: Provides functionalities to interact with graph databases for querying and summarizing route data."
   },
   {
@@ -1663,7 +1636,6 @@
     "purpose": "# Purpose: Verify that all required environment variables are defined and correctly set up in the system."
   },
   {
-    "file": "neo4j_driver.py",
     "directory": "services",
     "contents": [
       "get_session",
@@ -1672,7 +1644,6 @@
     ],
     "imports": [
       "os",
-      "neo4j",
       "contextlib",
       "core.logging"
     ],
@@ -1681,7 +1652,6 @@
       "NEO4J_USER",
       "NEO4J_PASSWORD"
     ],
-    "header_block": "# File: neo4j_driver.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER\n#   - Imports: contextlib, core.logging, neo4j, os\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - execute_read()\n#   - execute_write()\n#   - get_session()\n\n",
     "purpose": "# Purpose: Provides an interface for managing Neo4j database sessions and executing read/write operations."
   },
   {
@@ -1701,11 +1671,9 @@
       "typing",
       "services.semantic_retriever",
       "services.kb",
-      "services.graph",
       "services.summarize_memory"
     ],
     "env_vars": [],
-    "header_block": "# File: context_injector.py\n# Directory: services\n# Purpose: <ADD PURPOSE>\n#\n# Upstream:\n#   - ENV: \u2014\n#   - Imports: os, pathlib, services.graph, services.kb, services.semantic_retriever, services.summarize_memory, typing\n#\n# Downstream:\n#   - <ADD downstream effects or modules called>\n#\n# Contents:\n#   - build_context()\n#   - build_recent_memory_summaries()\n#   - load_context()\n#   - load_global_context()\n#   - load_summary()\n#   - safe_truncate()\n\n",
     "purpose": "# Purpose: Manages the aggregation and injection of contextual data from various services into the application's processing flow."
   },
   {

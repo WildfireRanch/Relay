@@ -1,11 +1,11 @@
 # `metaplanner_agent.py`
 
 **Directory**: `agents`
-**Purpose**: # Purpose: Provides functionality for planning and suggesting optimal routes using graph-based algorithms.
+**Purpose**: # Purpose: Provides lightweight heuristics to suggest the best downstream agent for a query.
 
 ## Upstream
 - ENV: —
-- Imports: core.logging, services.graph
+- Imports: core.logging
 
 ## Downstream
 - agents.mcp_agent

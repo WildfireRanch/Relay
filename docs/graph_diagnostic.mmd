@@ -40,10 +40,8 @@ graph TD
   logging --> agents_metaplanner_agent
   logging --> agents_planner_agent
   logging --> agents_simulation_agent
-  logging --> agents_trainer_agent
   logging --> routes_codex
   logging --> services_graph
-  logging --> services_neo4j_driver
   logging --> utils_logger
   logs --> main
   logs --> routes_context
@@ -55,9 +53,6 @@ graph TD
   memory --> agents_janitor_agent
   memory_agent --> agents_mcp_agent
   metaplanner_agent --> agents_mcp_agent
-  neo4j_driver --> agents_trainer_agent
-  neo4j_driver --> services_graph
-  neo4j_driver --> test_graph_neoagent
   oauth --> main
   openai_client --> agents_codex_agent
   openai_client --> agents_docs_agent
@@ -76,7 +71,6 @@ graph TD
   simulation_agent --> agents_mcp_agent
   status --> main
   summarize_memory --> services_context_injector
-  trainer_agent --> agents_mcp_agent
   style test_graph_neoagent fill:#fcdcdc
   style main fill:#e5e7eb
   style cron_generate_auto_context fill:#e5e7eb
@@ -89,7 +83,6 @@ graph TD
   style echo_agent fill:#e5e7eb
   style docs_agent fill:#e5e7eb
   style memory_agent fill:#ede9fe
-  style trainer_agent fill:#e5e7eb
   style mcp_agent fill:#e5e7eb
   style janitor_agent fill:#e5e7eb
   style control_agent fill:#e5e7eb
@@ -159,7 +152,6 @@ graph TD
   style delete_embeddings fill:#e5e7eb
   style indexer fill:#e5e7eb
   style env_checker fill:#e5e7eb
-  style neo4j_driver fill:#e5e7eb
   style context_injector fill:#e5e7eb
   style docs_utils fill:#e5e7eb
   style memory fill:#ede9fe
@@ -219,7 +211,6 @@ graph TD
   class memory orphan
   class memory_agent orphan
   class metaplanner_agent orphan
-  class neo4j_driver orphan
   class oauth orphan
   class openai_client orphan
   class parse_file_metadata orphan
@@ -252,7 +243,6 @@ graph TD
   class test_graph_neoagent orphan
   class test_mcp_route orphan
   class test_planner_agent orphan
-  class trainer_agent orphan
   classDef orphan stroke:#f87171,stroke-width:2px;
   subgraph Agent
     agent
@@ -334,7 +324,6 @@ graph TD
     mcp
     mcp_agent
     metaplanner_agent
-    neo4j_driver
     oauth
     openai_client
     parse_file_metadata
@@ -351,6 +340,5 @@ graph TD
     summarize_memory
     sync_context_docs
     sync_google_docs
-    trainer_agent
   end
 ```
