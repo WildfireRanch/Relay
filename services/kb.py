@@ -2,20 +2,27 @@
 # File: services/kb.py
 # Purpose: Deterministic, well-logged knowledge-base ingestion & embedding.
 #
-# Highlights
-#   • Single source of truth for file filters (names/exts/folders/size)
-#   • Structured skip/warn logs with optional core.logging.log_event fallback
-#   • Model+dimension normalization and index-dimension guardrail (dim.json)
-#   • Never raises unhandled exceptions during embed/build; returns status dict
-#   • Simple CLI:  python -m services.kb [embed|health|search "..."]
-#   • Embeddings resolver with OpenAI fallback (no HF plugin required)
+# Guarantees
+#   • api_reindex() returns a stable JSON shape and never raises.
+#   • Index dimension guardrail via dim.json; logs and tolerates mismatches.
+#   • Avoids heavy imports at module import time (lazy LlamaIndex imports).
+#   • Works with/without a concrete semantic indexer (graceful fallback).
+#   • CLI: python -m services.kb [embed|health|search "..."]
 #
-# Safe to run locally (Codespaces) or remotely (Railway job).
-# Deps: llama-index (VectorStoreIndex, StorageContext), openai (if used).
+# Public API (kept stable for routes and services):
+#   - api_reindex(*, tiers=None, verbose=False) -> Dict[str, Any]
+#   - embed_all(verbose=False, tiers=None) -> Dict[str, Any]
+#   - index_is_valid() -> bool
+#   - get_index() -> VectorStoreIndex|None
+#   - simple_search(query, top_k=5, score_threshold=None) -> List[Dict]
+#   - search(query=..., k/top_k=..., score_threshold=None, **kwargs) -> List[Dict]
+#   - api_search(query, k=5, search_type=None) -> List[Dict]
+#   - warmup() -> None
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
+# ── Stdlib --------------------------------------------------------------------
 import argparse
 import json
 import logging
@@ -25,31 +32,9 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Paths & Config (lightweight; do not import heavy modules here)
-# ──────────────────────────────────────────────────────────────────────────────
-
-try:
-    from services.config import INDEX_DIR as _INDEX_DIR, INDEX_ROOT as _INDEX_ROOT  # type: ignore
-except Exception:
-    _INDEX_ROOT = Path(".data/index").resolve()
-    _INDEX_DIR = _INDEX_ROOT
-
-INDEX_ROOT: Path = Path(os.getenv("INDEX_ROOT", str(_INDEX_ROOT))).resolve()
-INDEX_DIR: Path = Path(os.getenv("INDEX_DIR", str(_INDEX_DIR))).resolve()
-INDEX_DIR.mkdir(parents=True, exist_ok=True)
-
-# Where your docs and code live (adjust if your repo uses different paths)
-PROJECT_ROOT = Path(os.getenv("RELAY_PROJECT_ROOT", Path(".").resolve()))
-DEFAULT_DOC_DIRS = [PROJECT_ROOT / "docs", PROJECT_ROOT / "README.md"]
-DEFAULT_CODE_DIRS = [PROJECT_ROOT / "agents", PROJECT_ROOT / "services", PROJECT_ROOT / "routes", PROJECT_ROOT / "core"]
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Logging (fallback shim if core.logging is unavailable)
-# ──────────────────────────────────────────────────────────────────────────────
-
+# ── Logging -------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)-7s %(name)s  %(message)s",
@@ -57,47 +42,65 @@ logging.basicConfig(
 )
 logger = logging.getLogger("services.kb")
 
+# Optional structured logger shim
 try:
     from core.logging import log_event  # type: ignore
 except Exception:  # pragma: no cover
     def log_event(event: str, payload: Optional[Dict[str, Any]] = None) -> None:
-        # lightweight no-op structured logger
         return
 
-logger.info("🔎 KB module loaded | INDEX_DIR=%s", INDEX_DIR)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Embedding Model Normalization & Dimensions
-# ──────────────────────────────────────────────────────────────────────────────
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Paths & Config (lightweight; no heavy imports here)                      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
+# Correct default is ./data/index (NOT .data/index)
+ENV_INDEX_ROOT = os.getenv("INDEX_ROOT")
+_INDEX_ROOT_FALLBACK = Path("./data/index").resolve()
+
+try:
+    from services.config import INDEX_DIR as _CFG_INDEX_DIR, INDEX_ROOT as _CFG_INDEX_ROOT  # type: ignore
+except Exception:
+    _CFG_INDEX_ROOT = _INDEX_ROOT_FALLBACK
+    _CFG_INDEX_DIR = _CFG_INDEX_ROOT
+
+INDEX_ROOT: Path = Path(ENV_INDEX_ROOT or str(_CFG_INDEX_ROOT)).resolve()
+INDEX_DIR: Path = Path(os.getenv("INDEX_DIR", str(_CFG_INDEX_DIR))).resolve()
+INDEX_DIR.mkdir(parents=True, exist_ok=True)
+
+PROJECT_ROOT = Path(os.getenv("RELAY_PROJECT_ROOT") or Path(".").resolve())
+DEFAULT_DOC_DIRS = [PROJECT_ROOT / "docs", PROJECT_ROOT / "README.md"]
+DEFAULT_CODE_DIRS = [
+    PROJECT_ROOT / "agents",
+    PROJECT_ROOT / "services",
+    PROJECT_ROOT / "routes",
+    PROJECT_ROOT / "core",
+]
+
+logger.info("🔎 KB module loaded | INDEX_DIR=%s INDEX_ROOT=%s", INDEX_DIR, INDEX_ROOT)
+
+# Embedding model and dimensions
 MODEL_NAME = (
     os.getenv("KB_EMBED_MODEL")
-    or os.getenv("OPENAI_EMBED_MODEL")  # compat with earlier configs
+    or os.getenv("OPENAI_EMBED_MODEL")  # back-compat
     or "text-embedding-3-large"
 )
-
-# Optional OpenAI fallback (used if the general resolver fails)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_EMBEDDINGS_MODEL = os.getenv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-small")
 
-# Map common OpenAI embedding models to expected dimensions.
 MODEL_DIMS: Dict[str, int] = {
     "text-embedding-3-large": 3072,
     "text-embedding-3-small": 1536,
     # legacy:
     "text-embedding-ada-002": 1536,
 }
-
 _EXPECTED_DIM_ENV = os.getenv("KB_EMBED_DIM")
 EXPECTED_DIM: Optional[int] = int(_EXPECTED_DIM_ENV) if _EXPECTED_DIM_ENV else MODEL_DIMS.get(MODEL_NAME)
 
 logger.info("[KB] Embedding model=%s dim=%s", MODEL_NAME, EXPECTED_DIM)
 log_event("kb_model_selected", {"model": MODEL_NAME, "dim": EXPECTED_DIM})
 
-# ──────────────────────────────────────────────────────────────────────────────
-# File Filter Rules (single source of truth)
-# ──────────────────────────────────────────────────────────────────────────────
-
+# File filters (single source of truth)
 IGNORED_FILENAMES: set[str] = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     ".env", ".env.local", ".DS_Store", ".gitignore",
@@ -106,29 +109,22 @@ IGNORED_FILENAMES: set[str] = {
     "tsconfig.json", "jsconfig.json",
     "Thumbs.db", "desktop.ini", "mypy.ini", "pyrightconfig.json",
 }
-
 IGNORED_EXTENSIONS: set[str] = {
     ".lock", ".log", ".exe", ".bin", ".jpg", ".jpeg", ".png", ".gif", ".pdf", ".ico",
     ".tgz", ".zip", ".tar", ".gz", ".mp4", ".mov", ".wav", ".mp3", ".pyc", ".so", ".dll",
 }
-
 IGNORED_FOLDERS: set[str] = {
     "node_modules", ".git", "__pycache__", "dist", "build", ".venv", "env",
     ".mypy_cache", ".pytest_cache",
 }
-
 MAX_FILE_SIZE_MB: int = int(os.getenv("KB_MAX_FILE_SIZE_MB", "2"))
 
-def _log_skip(path: str, tier: str, reason: str) -> None:
-    logger.warning("[KB:skip] %s (%s): %s", path, tier, reason)
-    log_event("kb_skip_file", {"path": path, "tier": tier, "reason": reason})
-
-def should_index_file(filepath: str, tier: str) -> bool:
+def _should_index_file(filepath: str, tier: str) -> bool:
     """
     Canonical file gating:
       • skip ignored filenames, extensions, and folders
       • skip files larger than MAX_FILE_SIZE_MB
-      • for tier='code' restrict to code-y extensions
+      • for tier='code' restrict to code-centric extensions
     """
     filename = os.path.basename(filepath)
     ext = os.path.splitext(filename)[1].lower()
@@ -150,11 +146,19 @@ def should_index_file(filepath: str, tier: str) -> bool:
         return ext in {".py", ".js", ".ts", ".tsx", ".java", ".go", ".cpp", ".json", ".md"}
     return True
 
-# ──────────────────────────────────────────────────────────────────────────────
-# LlamaIndex Imports (lazy)
-# ──────────────────────────────────────────────────────────────────────────────
+def _log_skip(path: str, tier: str, reason: str) -> None:
+    logger.warning("[KB:skip] %s (%s): %s", path, tier, reason)
+    log_event("kb_skip_file", {"path": path, "tier": tier, "reason": reason})
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Lazy LlamaIndex imports                                                  ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 def _llama_imports():
+    """
+    Import LlamaIndex lazily to keep module import cheap.
+    """
     from llama_index.core import Document, StorageContext, VectorStoreIndex, load_index_from_storage
     from llama_index.core.ingestion import IngestionPipeline
     from llama_index.core.node_parser import SentenceSplitter
@@ -171,15 +175,10 @@ def _llama_imports():
         resolve_embed_model,
     )
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Embeddings Resolver (with OpenAI fallback)
-# ──────────────────────────────────────────────────────────────────────────────
-
 def _resolve_embed_model():
     """
-    Try LlamaIndex's resolver first (supports OpenAI & HF strings).
-    If that fails (e.g., HF plugin not installed), fall back to OpenAI
-    explicitly when OPENAI_API_KEY is set.
+    Try LlamaIndex resolver first. If it fails and OPENAI_API_KEY is set,
+    fall back to OpenAIEmbedding.
     """
     *_, resolve_embed_model = _llama_imports()
     try:
@@ -188,8 +187,7 @@ def _resolve_embed_model():
         try:
             if not OPENAI_API_KEY:
                 raise RuntimeError("OPENAI_API_KEY not set for OpenAI fallback")
-            # Lazy import to avoid import-time failures on slim images
-            from llama_index.embeddings.openai import OpenAIEmbedding
+            from llama_index.embeddings.openai import OpenAIEmbedding  # lazy
             emb = OpenAIEmbedding(model=OPENAI_EMBEDDINGS_MODEL, api_key=OPENAI_API_KEY)
             log_event("kb_embeddings_fallback", {"from_model": MODEL_NAME, "to_model": OPENAI_EMBEDDINGS_MODEL})
             return emb
@@ -199,9 +197,10 @@ def _resolve_embed_model():
                 f"resolver_error={e_resolve}; openai_fallback_error={e_openai}"
             )
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Persistent dimension sidecar (guards mismatched indices)
-# ──────────────────────────────────────────────────────────────────────────────
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Dimension sidecar (dim.json)                                             ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 DIM_FILE = INDEX_DIR / "dim.json"
 
@@ -224,8 +223,7 @@ def _index_dim_matches_expected() -> bool:
     meta = _read_dim_meta()
     if meta is None:
         logger.info("[KB] No dim.json present")
-        # If unknown expected, allow pass-through (custom model scenario)
-        return EXPECTED_DIM is None
+        return EXPECTED_DIM is None  # if unknown expected, allow pass-through
     stored = meta.get("dim")
     if EXPECTED_DIM is None:
         logger.warning("[KB] EXPECTED_DIM not set; accepting stored dim=%s (model=%s)", stored, meta.get("model"))
@@ -234,7 +232,7 @@ def _index_dim_matches_expected() -> bool:
     if not ok:
         logger.error(
             "[KB] Index dim mismatch: stored=%s current=%s model_now=%s model_then=%s",
-            stored, EXPECTED_DIM, MODEL_NAME, meta.get("model")
+            stored, EXPECTED_DIM, MODEL_NAME, meta.get("model"),
         )
         log_event(
             "kb_dim_mismatch",
@@ -242,9 +240,10 @@ def _index_dim_matches_expected() -> bool:
         )
     return ok
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Ingestion (docs + code) → Documents
-# ──────────────────────────────────────────────────────────────────────────────
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Ingestion (discover → read → Document[])                                 ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 @dataclass
 class TierSpec:
@@ -259,7 +258,7 @@ def _discover_default_tiers() -> List[TierSpec]:
 def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
     """
     Walk targets and return Document objects with proper metadata.
-    Never throws; logs structured reasons for skips.
+    Never raises; logs structured reasons for skips.
     """
     Document, *_ = _llama_imports()
     docs: List[Any] = []
@@ -274,7 +273,7 @@ def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
                         if not f.is_file():
                             continue
                         fpath = str(f)
-                        if should_index_file(fpath, tier):
+                        if _should_index_file(fpath, tier):
                             try:
                                 text = f.read_text(encoding="utf-8")
                             except Exception as e:
@@ -285,7 +284,7 @@ def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
                             _log_skip(fpath, tier, "filtered by rules")
                 elif path.is_file():
                     fpath = str(path)
-                    if should_index_file(fpath, tier):
+                    if _should_index_file(fpath, tier):
                         try:
                             text = path.read_text(encoding="utf-8")
                         except Exception as e:
@@ -301,9 +300,10 @@ def _iter_docs(tiers: Optional[List[TierSpec]] = None) -> List[Any]:
                 continue
     return docs
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Index building & loading (exception-safe)
-# ──────────────────────────────────────────────────────────────────────────────
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Index persistence (build/load)                                           ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 def _pipeline():
     from llama_index.core.ingestion import IngestionPipeline
@@ -325,7 +325,8 @@ def _maybe_wipe_index() -> None:
 def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> Dict[str, Any]:
     """
     Rebuild the full KB index.
-    Returns: {"ok": bool, "error": str|None, "model": str, "indexed": int}
+    Returns a normalized dict:
+      {"ok": bool, "error": str|None, "model": str, "indexed": int}
     """
     try:
         _maybe_wipe_index()
@@ -335,9 +336,10 @@ def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> 
         logger.info("📚 Re-indexing KB | model=%s dim=%s", MODEL_NAME, EXPECTED_DIM)
         docs = _iter_docs(tiers=tiers)
         logger.info("[KB] Docs loaded: %s", len(docs))
-        for d in docs[:5]:
-            fp = (d.metadata or {}).get("file_path")
-            logger.info("[KB] sample → %s", fp)
+        if verbose:
+            for d in docs[:5]:
+                fp = (d.metadata or {}).get("file_path")
+                logger.info("[KB] sample → %s", fp)
 
         if len(docs) == 0:
             msg = "No valid docs for KB index. Populate docs/code directories."
@@ -369,79 +371,81 @@ def api_reindex(
     tiers: Optional[List[TierSpec]] = None,
     verbose: bool = False,
 ) -> Dict[str, Any]:
-    """API-friendly wrapper around :func:`embed_all`.
-
-    Ensures a stable response contract for HTTP handlers by adding
-    human-readable status messaging while preserving the raw embed result.
     """
+    API-friendly wrapper around embed_all() with a stable response shape.
+    Never raises.
+    Returns:
+      {
+        "ok": true|false,
+        "status": "done"|"error",
+        "indexed": <int>,
+        "model": "<name>",
+        "took_ms": <int>,
+        "error": "<str>"? ,
+        "note": "<str>"?     # present when indexer is absent or no-op
+      }
+    """
+    t0 = time.perf_counter()
 
+    # Prefer a concrete semantic indexer if you have one wired
+    # (kept for compatibility; we normalize its output below).
+    indexer_result = None
+    indexer_error: Optional[Exception] = None
+    try:  # pragma: no cover
+        from services.semantic_retriever import reindex_all as _reindex_all  # type: ignore
+        indexer_result = _reindex_all(root=str(INDEX_DIR))  # kwarg helps clarity
+    except Exception as e:  # noqa: E722 - intentional broad catch; normalize below
+        indexer_error = e
+        # Fall back to embed_all below.
+
+    if indexer_result is not None and indexer_error is None:
+        # Best-effort normalization for custom indexers
+        took_ms = int((time.perf_counter() - t0) * 1000)
+        counts = {}
+        if isinstance(indexer_result, dict):
+            docs = indexer_result.get("documents") or indexer_result.get("doc_count") or indexer_result.get("files")
+            chks = indexer_result.get("chunks") or indexer_result.get("chunk_count")
+            if isinstance(docs, int):
+                counts["documents"] = docs
+            if isinstance(chks, int):
+                counts["chunks"] = chks
+        return {
+            "ok": True,
+            "status": "done",
+            "indexed": int(counts.get("documents", 0)),
+            "model": MODEL_NAME,
+            "took_ms": took_ms,
+            **({"counts": counts} if counts else {}),
+        }
+
+    # Fall back to our embed_all flow
     status = embed_all(verbose=verbose, tiers=tiers)
+    took_ms = int((time.perf_counter() - t0) * 1000)
     ok = bool(status.get("ok"))
     indexed = int(status.get("indexed") or 0)
-    model = status.get("model")
     error = status.get("error")
-
-    message = (
-        f"KB index rebuilt ({indexed} docs, model={model})"
-        if ok
-        else f"KB reindex failed: {error or 'unknown error'}"
-    )
 
     response = {
         "ok": ok,
-        "status": "ok" if ok else "error",
+        "status": "done" if ok else "error",
         "indexed": indexed,
-        "model": model,
-        "error": error,
-        "message": message,
+        "model": status.get("model"),
+        "took_ms": took_ms,
     }
-    logger.info("[KB] api_reindex → ok=%s indexed=%s model=%s", ok, indexed, model)
+    if indexer_error:
+        response["note"] = f"semantic_retriever reindex_all unavailable: {indexer_error}"
+    if error:
+        response["error"] = error
+
+    logger.info("[KB] api_reindex → ok=%s indexed=%s model=%s took_ms=%s", ok, indexed, MODEL_NAME, took_ms)
     if not ok and error:
         logger.error("[KB] api_reindex error: %s", error)
     return response
 
 
-def get_recent_summaries(
-    user_id: Optional[str] = None,
-    limit: int = 10,
-) -> List[str]:
-    """Return up to ``limit`` recent context summaries.
-
-    The implementation is deliberately tolerant: it inspects a handful of
-    common docs/ generated files and falls back to an empty list when no
-    summaries are present. This keeps legacy callers working without forcing a
-    strict storage backend.
-    """
-
-    summaries: List[str] = []
-    generated_dir = PROJECT_ROOT / "docs" / "generated"
-    candidate_files: List[Path] = []
-
-    if user_id:
-        candidate_files.append(generated_dir / f"{user_id}_context.md")
-        candidate_files.append(generated_dir / f"{user_id}_context.auto.md")
-    candidate_files.extend(
-        [
-            generated_dir / "relay_context.md",
-            generated_dir / "relay_context.auto.md",
-            generated_dir / "global_context.md",
-            PROJECT_ROOT / "docs" / "PROJECT_SUMMARY.md",
-        ]
-    )
-
-    for path in candidate_files:
-        try:
-            if path.exists() and path.is_file():
-                text = path.read_text(encoding="utf-8").strip()
-                if text:
-                    summaries.append(text)
-        except Exception as exc:  # pragma: no cover - filesystem issues
-            logger.debug("[KB] get_recent_summaries skip %s: %s", path, exc)
-            continue
-        if len(summaries) >= limit:
-            break
-
-    return summaries[:limit]
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Health & Load                                                            ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 def index_is_valid() -> bool:
     """
@@ -457,7 +461,7 @@ def get_index():
     Load (or rebuild once) and return a VectorStoreIndex.
     Never leaves the index unusable; performs one rebuild attempt on errors.
     """
-    from llama_index.core import StorageContext, load_index_from_storage
+    from llama_index.core import StorageContext, load_index_from_storage  # lazy
     EMBED_MODEL = _resolve_embed_model()
 
     try:
@@ -480,9 +484,17 @@ def get_index():
         ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
         return load_index_from_storage(ctx, embed_model=_resolve_embed_model())
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Search (CLI helper + public API used by services.semantic_retriever)
-# ──────────────────────────────────────────────────────────────────────────────
+def warmup() -> None:
+    """Optional convenience for readiness probes."""
+    try:
+        _ = get_index()
+    except Exception as e:
+        log_event("kb_warmup_failed", {"error": str(e)})
+
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Search (public API)                                                      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 def simple_search(
     query: str,
@@ -491,7 +503,7 @@ def simple_search(
     score_threshold: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Run a quick similarity search and normalize results to:
+    Quick similarity search with normalized rows:
       {title, path, tier, snippet, similarity, meta}
     """
     index = get_index()
@@ -501,8 +513,7 @@ def simple_search(
         engine = index.as_query_engine(similarity_top_k=top_k)
         res = engine.query(query)
 
-        # Normalize to schema expected by services.semantic_retriever._mk_row
-        out: List[Dict[str, Any]] = []
+        rows: List[Dict[str, Any]] = []
         for sn in getattr(res, "source_nodes", []) or []:
             try:
                 score = getattr(sn, "score", None)
@@ -513,7 +524,6 @@ def simple_search(
                 tier = meta.get("tier")
                 title = meta.get("title") or (os.path.basename(str(path)) if path else "Untitled")
 
-                # Optional threshold filter (supports global env too)
                 thr_env = os.getenv("SEMANTIC_SCORE_THRESHOLD")
                 thr = score_threshold if score_threshold is not None else (float(thr_env) if thr_env not in (None, "") else None)
                 if thr is not None and (score is not None):
@@ -523,7 +533,7 @@ def simple_search(
                     except Exception:
                         pass
 
-                out.append(
+                rows.append(
                     {
                         "title": str(title),
                         "path": str(path),
@@ -537,10 +547,10 @@ def simple_search(
                 continue
 
         try:
-            out.sort(key=lambda r: float(r.get("similarity", 0.0) or 0.0), reverse=True)
+            rows.sort(key=lambda r: float(r.get("similarity", 0.0) or 0.0), reverse=True)
         except Exception:
             pass
-        return out[: int(top_k or 5)]
+        return rows[: int(top_k or 5)]
     except Exception as e:
         logger.exception("[KB] simple_search failed: %s", e)
         return []
@@ -554,29 +564,20 @@ def search(
     **kwargs: Any,
 ) -> List[Dict[str, Any]]:
     """
-    Primary search entrypoint compatible with services.semantic_retriever.search(...).
-    Accepts both `k` and `top_k`. Returns rows with keys:
-      {title, path, tier, snippet, similarity, meta}
+    Primary entrypoint compatible with services.semantic_retriever.search(...).
+    Accepts both `k` and `top_k`. Returns normalized rows.
     """
     use_k = int((k if k not in (None, "") else (top_k if top_k not in (None, "") else 5)))
     return simple_search(query, top_k=use_k, score_threshold=score_threshold)
 
 def api_search(query: str, k: int = 5, search_type: str | None = None):
-    """
-    Back-compat shim for routes/kb.search proxy. Ignores `search_type`.
-    """
+    """Back-compat shim for routes/kb.search proxy. Ignores `search_type`."""
     return simple_search(query, top_k=k)
 
-def warmup() -> None:
-    """Optional convenience for readiness probes (kept minimal)."""
-    try:
-        _ = get_index()
-    except Exception as e:
-        log_event("kb_warmup_failed", {"error": str(e)})
 
-# ──────────────────────────────────────────────────────────────────────────────
-# CLI
-# ──────────────────────────────────────────────────────────────────────────────
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ CLI                                                                      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 def _cli(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Relay KB ingestion")
