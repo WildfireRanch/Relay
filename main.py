@@ -16,6 +16,7 @@ import time
 import uuid
 import traceback
 from typing import Iterable, List, Optional
+from pathlib import Path
 
 import anyio
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -102,6 +103,46 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # Prepare required directories early and validate writability.
+        def _prepare_paths() -> None:
+            project_root = Path(__file__).resolve().parents[1]
+            docs_imported = project_root / "docs" / "imported"
+            docs_generated = project_root / "docs" / "generated"
+            index_root = Path(os.getenv("INDEX_ROOT") or ".data/index").resolve()
+
+            # Create if missing (no-op when present)
+            for p in (docs_imported, docs_generated, index_root):
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    # Defer to writability check error handling
+                    pass
+
+            # Check writability of index_root
+            writable = False
+            test_file = index_root / ".writecheck.tmp"
+            try:
+                with open(test_file, "w", encoding="utf-8") as fh:
+                    fh.write("ok")
+                test_file.unlink(missing_ok=True)
+                writable = True
+            except Exception:
+                writable = False
+
+            app_env = (_env("ENV") or _env("APP_ENV") or "dev").strip().lower()
+            if not writable and app_env in {"prod", "production"}:
+                msg = f"startup failure: index_root_not_writable path={index_root} env={app_env}"
+                logger.error(msg)
+                raise RuntimeError(msg)
+
+            # Single structured info line (predictable)
+            logger.info(
+                "paths_ready imported=%s generated=%s index_root=%s writable=%s",
+                str(docs_imported), str(docs_generated), str(index_root), writable,
+            )
+
+        _prepare_paths()
+
         logger.info(
             "🚦 main.py LOADED file=/app/main.py commit=%s env=%s",
             _env("GIT_COMMIT", "unknown"),
@@ -206,7 +247,7 @@ SECONDARY_ROUTERS: Iterable[str] = (
     # "routes.status",
     # "routes.index",
     # "routes.integrations_github",
-    # "routes.kb",
+    "routes.kb",
     # "routes.search",
     # "routes.embeddings",
     # "routes.github_proxy",
@@ -225,6 +266,7 @@ SECONDARY_ROUTERS: Iterable[str] = (
 OPTIONAL_ROUTERS = {
     "routes.control",
     "routes.docs",
+    "routes.health",
     "routes.x_mirror",
 }
 
