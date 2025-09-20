@@ -1,23 +1,33 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # File: main.py
 # Purpose: FastAPI entrypoint for Relay / ASK_ECHO pipeline
-#          • Production-safe defaults (timeouts, request IDs, access logs)
-#          • Clean CORS (explicit origin + optional regex) + proper preflight
-#          • Quiet optional-router skips; stable /Live & /Ready
-#          • Treat ClientDisconnect as non-error
+#
+# Guarantees
+#   • Production-safe defaults: request IDs, gzip, access logs, timeouts.
+#   • Single-source CORS (FRONTEND_ORIGINS) with solid preflight behavior.
+#   • Health endpoints mounted EARLY and ALWAYS available (/livez, /readyz).
+#   • Required routers fail-fast; optional routers fail-soft (log + continue).
+#   • ClientDisconnect is not treated as an application error.
+#
+# Notes
+#   • INDEX_ROOT defaults to ./data/index (created & probed for writability).
+#   • FRONTEND_ORIGINS must be set in prod; dev falls back to localhost:3000.
+#   • Keep this file small and boring; complex logic belongs in services/.
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
+# ── Stdlib --------------------------------------------------------------------
 import importlib
 import logging
 import os
 import time
-import uuid
 import traceback
-from typing import Iterable, List, Optional
+import uuid
 from pathlib import Path
+from typing import Iterable, List, Optional
 
+# ── Third-party ---------------------------------------------------------------
 import anyio
 from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,12 +38,25 @@ from starlette.requests import ClientDisconnect
 # ── Logging -------------------------------------------------------------------
 logger = logging.getLogger("relay.main")
 
-# ── Env helpers ---------------------------------------------------------------
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Environment Helpers                                                      ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+def _env(name: str, fallback: str = "") -> str:
+    """
+    Read an environment variable with optional legacy "$shared.NAME" fallback.
+
+    Avoid casting here—keep values as strings; cast in the consumer.
+    """
+    return os.getenv(name) or os.getenv(f"$shared.{name}") or fallback
+
 
 def _parse_origins(value: Optional[str]) -> List[str]:
     """
-    Parse comma/space-separated CORS origins. Returns [] if unset.
-    Accepts FRONTEND_ORIGINS or $shared.FRONTEND_ORIGINS.
+    Parse FRONTEND_ORIGINS into a unique, ordered list.
+
+    Accepts comma or whitespace separation. Returns [] if unset.
     """
     v = (value or "").strip()
     if not v:
@@ -42,19 +65,21 @@ def _parse_origins(value: Optional[str]) -> List[str]:
     seen, out = set(), []
     for p in parts:
         if p not in seen:
-            seen.add(p); out.append(p)
+            seen.add(p)
+            out.append(p)
     return out
 
 
-def _env(name: str, fallback: str = "") -> str:
-    """Env helper with $shared.NAME fallback for legacy deployment configs."""
-    return os.getenv(name) or os.getenv(f"$shared.{name}") or fallback
-
-
-# ── Middlewares ---------------------------------------------------------------
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Middlewares                                                              ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Attach a correlation ID to each request/response."""
+    """
+    Attach a correlation ID to each request and echo it in the response headers.
+
+    Header: X-Corr-Id (in/out)
+    """
     async def dispatch(self, request: Request, call_next):
         cid = request.headers.get("x-corr-id") or f"{uuid.uuid4().hex[:8]}{int(time.time())%1000:03d}"
         request.state.corr_id = cid
@@ -64,25 +89,35 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 
 class AccessLogMiddleware(BaseHTTPMiddleware):
-    """Lightweight structured access log."""
+    """
+    Minimal structured access log. Always logs a line, even on exceptions.
+
+    Fields: method, path, cid, status, dur_ms
+    """
     async def dispatch(self, request: Request, call_next):
         t0 = time.perf_counter()
         method = request.method
         path = request.url.path
+        status = None
         try:
             response = await call_next(request)
             status = response.status_code
             return response
         finally:
             dur_ms = int((time.perf_counter() - t0) * 1000)
-            # Pull corr id safely at the end so we always have something
             cid = getattr(getattr(request, "state", None), "corr_id", "-")
-            logger.info("req method=%s path=%s cid=%s status=%s dur_ms=%s",
-                        method, path, cid, locals().get("status", "ERR"), dur_ms)
+            logger.info(
+                "req method=%s path=%s cid=%s status=%s dur_ms=%s",
+                method, path, cid, status if status is not None else "ERR", dur_ms
+            )
 
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
-    """Per-request timeout → 504 on stall (prevents worker starvation)."""
+    """
+    Per-request timeout to prevent worker starvation.
+
+    Returns 504 when the handler exceeds timeout_s.
+    """
     def __init__(self, app, timeout_s: float = 35.0):
         super().__init__(app)
         self.timeout_s = timeout_s
@@ -96,34 +131,38 @@ class TimeoutMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# ── App factory (installs CORS **before** routers) ----------------------------
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ App Factory (Lifespan, CORS, Health, Middlewares)                        ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 def create_app() -> FastAPI:
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Prepare required directories early and validate writability.
+        """
+        Startup: prepare directories, validate writability, print minimal inventory.
+        Shutdown: quiet.
+        """
         def _prepare_paths() -> None:
             project_root = Path(__file__).resolve().parents[1]
             docs_imported = project_root / "docs" / "imported"
             docs_generated = project_root / "docs" / "generated"
-            index_root = Path(os.getenv("INDEX_ROOT") or ".data/index").resolve()
+            index_root = Path(_env("INDEX_ROOT") or "./data/index").resolve()
 
             # Create if missing (no-op when present)
             for p in (docs_imported, docs_generated, index_root):
                 try:
                     p.mkdir(parents=True, exist_ok=True)
                 except Exception:
-                    # Defer to writability check error handling
+                    # Defer to writability probe
                     pass
 
-            # Check writability of index_root
+            # Writability probe for index_root (touch + remove)
             writable = False
-            test_file = index_root / ".writecheck.tmp"
             try:
-                with open(test_file, "w", encoding="utf-8") as fh:
-                    fh.write("ok")
+                test_file = index_root / ".writecheck.tmp"
+                test_file.write_text("ok", encoding="utf-8")
                 test_file.unlink(missing_ok=True)
                 writable = True
             except Exception:
@@ -135,7 +174,6 @@ def create_app() -> FastAPI:
                 logger.error(msg)
                 raise RuntimeError(msg)
 
-            # Single structured info line (predictable)
             logger.info(
                 "paths_ready imported=%s generated=%s index_root=%s writable=%s",
                 str(docs_imported), str(docs_generated), str(index_root), writable,
@@ -146,20 +184,20 @@ def create_app() -> FastAPI:
         logger.info(
             "🚦 main.py LOADED file=/app/main.py commit=%s env=%s",
             _env("GIT_COMMIT", "unknown"),
-            _env("APP_ENV", "main"),
+            _env("APP_ENV", "dev"),
         )
 
+        # Optional telemetry hint
         otel = _env("OTEL_EXPORTER_OTLP_ENDPOINT")
         if not otel or otel.startswith("$shared"):
             logger.warning("🟣 OpenTelemetry disabled (endpoint not configured)")
 
         # Best-effort KB index probe (non-fatal)
         try:
-            import services.kb as kb
+            import services.kb as kb  # type: ignore
             if hasattr(kb, "index_is_valid"):
                 logger.info("✅ KB index validated (index_is_valid=%s)", kb.index_is_valid())
         except Exception:
-            # Keep startup resilient
             pass
 
         # routes/ inventory (best-effort)
@@ -170,11 +208,12 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
-        yield  # shutdown: stay quiet
+        yield
 
+    # FastAPI app with lifespan manager
     app = FastAPI(lifespan=lifespan)
 
-    # ---- CORS HARDENING (must be before include_router) ----------------------
+    # ── CORS (MUST be before include_router) ----------------------------------
     env_origins = _parse_origins(_env("FRONTEND_ORIGINS"))
     single_origin = (_env("FRONTEND_ORIGIN") or "").strip()
     allow_origins = env_origins or ([single_origin] if single_origin else [])
@@ -192,12 +231,12 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins,
-        allow_credentials=True,                     # safe with explicit origins/regex
-        allow_methods=["GET", "POST", "OPTIONS"],
-        # explicit header allow-list keeps proxy chains honest; include app-specific IDs
+        allow_credentials=True,  # safe with explicit origins
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=[
             "content-type",
             "authorization",
+            "x-api-key",   # allow API key for browser preflight success
             "x-corr-id",
             "x-request-id",
             "x-user-id",
@@ -207,23 +246,22 @@ def create_app() -> FastAPI:
         max_age=600,
     )
 
-    # ---- Core middlewares ----------------------------------------------------
+    # ── Core Middlewares -------------------------------------------------------
     app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(AccessLogMiddleware)
     app.add_middleware(TimeoutMiddleware, timeout_s=float(_env("HTTP_TIMEOUT_S", "35")))
 
-    # ---- Health --------------------------------------------------------------
-    @app.get("/Live")
-    def live():
-        return {"ok": True}
+    # ── Health (mount EARLY and ALWAYS) ---------------------------------------
+    try:
+        from routes.health import router as health_router  # /livez, /readyz
+        app.include_router(health_router)
+        logger.info("🔌 Router enabled early: health (/livez, /readyz)")
+    except Exception as e:
+        logger.exception("💥 Failed to mount health router: %s", e)
+        raise
 
-    @app.get("/Ready")
-    def ready():
-        # Extend with conservative checks if needed (e.g., KB index presence).
-        return {"ok": True}
-
-    # ---- ClientDisconnect is not an error -----------------------------------
+    # ── ClientDisconnect is not an error --------------------------------------
     @app.exception_handler(ClientDisconnect)
     async def _client_disconnect_handler(_: Request, __: ClientDisconnect):
         # Client dropped mid-request; keep logs clean.
@@ -232,46 +270,41 @@ def create_app() -> FastAPI:
     return app
 
 
+# Instantiate the app (used by ASGI server)
 app = create_app()
 
-# ── Router inclusion (ASK_ECHO priority; optional routers warn-only) ---------
 
-# Only the truly critical routes are mandatory.
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Router Inclusion                                                         ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+# Strategy:
+#   • PRIMARY_ROUTERS must succeed; raise on failure (fail-fast).
+#   • SECONDARY_ROUTERS are recommended; log + continue on failure.
+#   • OPTIONAL_ROUTERS are experimental/nice-to-have; log + continue on failure.
+
 PRIMARY_ROUTERS: Iterable[str] = (
     "routes.ask",
     "routes.mcp",
 )
 
-# Start minimal; re-enable others gradually after it boots. Failures here are logged and skipped.
 SECONDARY_ROUTERS: Iterable[str] = (
-    # "routes.status",
-    # "routes.index",
-    # "routes.integrations_github",
     "routes.kb",
-    # "routes.search",
-    # "routes.embeddings",
-    # "routes.github_proxy",
-    # "routes.oauth",
-    # "routes.debug",
-    # "routes.codex",
-    # "routes.logs",
-    # "routes.status_code",
-    # "routes.webhooks_github",
-    # "routes.admin",
-    # "routes.logs_sessions",
-    # "routes.context",
 )
 
-# Feature work-in-progress (quietly skipped if import fails)
 OPTIONAL_ROUTERS = {
     "routes.control",
-    "routes.docs",
-    "routes.health",
+    "routes.docs",      # docs UI + sync endpoints
     "routes.x_mirror",
+    # NOTE: routes.health is mounted early above; do not mount it again.
 }
 
 def _include(router_path: str, *, required: bool) -> None:
-    """Import and mount a router. Required modules crash on error; others log+skip."""
+    """
+    Import and mount a router by module path.
+
+    • required=True → raises on any error (service should not run without it)
+    • required=False → logs full traceback and continues
+    """
     try:
         module = importlib.import_module(router_path)
         router = getattr(module, "router", None)
@@ -288,8 +321,8 @@ def _include(router_path: str, *, required: bool) -> None:
         if required:
             logger.exception("💥 Required router failed: %s", router_path)
             raise
-        # Log full traceback but keep app alive
         logger.error("⏭️  Router skipped (%s): %s\n%s", router_path, e, traceback.format_exc())
+
 
 # Mount primary first (must succeed), then tolerant passes for secondary/optional
 for rp in PRIMARY_ROUTERS:
@@ -301,15 +334,22 @@ for rp in OPTIONAL_ROUTERS:
 
 logger.info("✅ Critical routers present: ['ask','mcp']")
 
-# ── Optional: tiny debug endpoint (safe in prod) ------------------------------
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Tiny Debug Endpoint (Safe)                                               ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
 
 @app.get("/gh/debug/api-key")
 def debug_api_key() -> dict:
-    """Minimal, non-sensitive sanity check for GitHub/OpenAI wiring."""
+    """
+    Minimal, non-sensitive sanity check for GitHub/OpenAI wiring.
+    (Helps verify env var presence without leaking secrets.)
+    """
     return {
         "openai_key_present": bool(_env("OPENAI_API_KEY")),
         "github_app_id_present": bool(_env("GITHUB_APP_ID")),
     }
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # End of file
