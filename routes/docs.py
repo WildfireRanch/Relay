@@ -38,7 +38,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Dict, List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Header
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from services import kb
@@ -65,38 +65,19 @@ except Exception as exc:  # pragma: no cover - optional dependency may be absent
 sync_google_docs = _sync_google_docs
 
 # ─── Router Setup ──────────────────────────────────────────────────────────
-router = APIRouter(prefix="/docs", tags=["docs"])
+from services.auth import require_api_key  # shared API key validator
 
-# ─── Auth ‐ enforce X-Api-Key ------------------------------------------------
-_AUTH_ENV_NAMES = ("API_KEY", "RELAY_API_KEY", "ADMIN_API_KEY")
-_AUTH_BYPASS_LOGGED = False
+# ──────────────────────────────────────────────────────────────────────────────
+# Enforce X-Api-Key (or Bearer) on ALL /docs/* endpoints (GET and POST)
+# This matches the golden path that /docs/list & /docs/view "work with auth".
+# ──────────────────────────────────────────────────────────────────────────────
+router = APIRouter(
+    prefix="/docs",
+    tags=["docs"],
+    dependencies=[Depends(require_api_key)],
+)
 
-
-def _load_admin_keys() -> List[str]:
-    keys = []
-    for name in _AUTH_ENV_NAMES:
-        value = (os.getenv(name) or "").strip()
-        if value:
-            keys.append(value)
-    return keys
-
-
-def require_api_key(x_api_key: str | None = Header(None, alias="X-Api-Key")) -> bool:
-    global _AUTH_BYPASS_LOGGED
-    keys = _load_admin_keys()
-    if not keys:
-        if not _AUTH_BYPASS_LOGGED:
-            logger.warning("X-Api-Key check bypassed (no key envs present)")
-            _AUTH_BYPASS_LOGGED = True
-        return True
-
-    if not x_api_key or x_api_key not in keys:
-        raise HTTPException(
-            status_code=401,
-            detail={"error": True, "detail": "Missing or invalid X-Api-Key"},
-        )
-
-    return True
+# (Local per-route auth dependency removed in favor of shared services.auth)
 
 # ─── Constants ────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
