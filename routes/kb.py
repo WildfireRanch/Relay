@@ -23,15 +23,42 @@
 
 from fastapi import APIRouter, HTTPException, Header, Depends, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from services import kb
 import os
+import logging
 
-# === Security Dependency: Require X-API-Key header for all admin ops ===
-def require_api_key(x_api_key: str = Header(..., alias="X-API-Key")):
-    api_key = os.environ.get("API_KEY")
-    if not api_key or x_api_key != api_key:
-        raise HTTPException(status_code=403, detail="Invalid or missing API key.")
+# Align auth with routes/docs.py (same header and behavior)
+logger = logging.getLogger(__name__)
+_AUTH_ENV_NAMES = ("API_KEY", "RELAY_API_KEY", "ADMIN_API_KEY")
+_AUTH_BYPASS_LOGGED = False
+
+
+def _load_admin_keys() -> List[str]:
+    keys: List[str] = []
+    for name in _AUTH_ENV_NAMES:
+        value = (os.getenv(name) or "").strip()
+        if value:
+            keys.append(value)
+    return keys
+
+
+def require_api_key(x_api_key: str | None = Header(None, alias="X-Api-Key")) -> bool:
+    global _AUTH_BYPASS_LOGGED
+    keys = _load_admin_keys()
+    if not keys:
+        if not _AUTH_BYPASS_LOGGED:
+            logger.warning("X-Api-Key check bypassed (no key envs present)")
+            _AUTH_BYPASS_LOGGED = True
+        return True
+
+    if not x_api_key or x_api_key not in keys:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": True, "detail": "Missing or invalid X-Api-Key"},
+        )
+
+    return True
 
 router = APIRouter(prefix="/kb", tags=["knowledge-base"])
 
@@ -40,7 +67,7 @@ class SearchQuery(BaseModel):
     k: int = 4
     search_type: Optional[str] = "all"  # "code", "doc", or "all"
 
-@router.post("/search")
+@router.post("/search", dependencies=[Depends(require_api_key)])
 async def search_kb(
     q: SearchQuery,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id")
@@ -61,7 +88,7 @@ async def search_kb(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"KB search failed: {e}")
 
-@router.get("/search")
+@router.get("/search", dependencies=[Depends(require_api_key)])
 async def search_kb_get(
     query: str,
     k: int = 4,

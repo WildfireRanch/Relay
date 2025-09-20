@@ -151,3 +151,212 @@ curl -X POST http://127.0.0.1:8000/ask \
 
 ## License
 No license file is present; treat as proprietary until clarified.
+
+## Operations
+
+### Docs → KB Operations (Runbook Excerpt)
+
+Paste this section into your repo’s README.md under “Operations”. It documents how the Docs → KB pipeline works end-to-end, what to configure, and how to operate it safely in prod.
+
+── Overview
+
+The Docs pipeline ingests Markdown from docs/ (and Google Docs via optional sync), refreshes the KB index, and exposes read/search endpoints. It’s production-hardened with auth, CORS normalization, concurrency locks, async wait=, cache invalidation, and a /readyz health probe.
+
+[Google Docs] ──(optional sync)──> docs/imported/*.md
+[Generated]  ────────────────────> docs/generated/*.md
+                                            │
+                                            ├─> /docs/refresh_kb → services/kb.api_reindex() → INDEX_ROOT
+                                            └─> ContextEngine.clear_cache()  (real, tolerant)
+
+── Environment & Config
+Required (prod)
+
+FRONTEND_ORIGINS — comma list of exact origins (e.g., https://relay.wildfireranch.us,https://status.wildfireranch.us)
+
+One of API_KEY | RELAY_API_KEY | ADMIN_API_KEY — used as X-Api-Key
+
+INDEX_ROOT — persistent, writable path for KB index
+
+OPENAI_API_KEY — embedding/runtime (per your KB implementation)
+
+KB_EMBED_MODEL — e.g., text-embedding-3-small
+
+Google Docs (optional)
+
+GOOGLE_CREDS_JSON — file path or base64 JSON to OAuth client
+
+GOOGLE_TOKEN_JSON — file path or base64 JSON to user token (parent dir must be writable)
+
+OAUTH_REDIRECT_URI — backend callback (recommended)
+
+POST_AUTH_REDIRECT_URI — frontend landing page after auth (e.g., /docs)
+
+Sensible defaults
+
+ENV=prod in production; dev permits missing auth and uses http://localhost:3000 for CORS fallback.
+
+Required directories are created on boot:
+
+<PROJECT_ROOT>/docs/imported
+
+<PROJECT_ROOT>/docs/generated
+
+INDEX_ROOT
+
+── Authentication & CORS
+
+All mutating Docs/KB routes require X-Api-Key ∈ { API_KEY, RELAY_API_KEY, ADMIN_API_KEY }.
+
+CORS is list-only: FRONTEND_ORIGINS (no regex in prod). Logged once at startup and hard-fails if missing in prod.
+
+── Concurrency & Async Behavior
+
+Long-running ops are protected by inter-process locks under var/locks/:
+
+Locks: docs_sync, docs_full_sync, kb_reindex, docs_prune
+
+Query param wait=true|false (default true)
+
+wait=true → do work inline; returns final payload (200 or 503/409/500)
+
+wait=false → queued via BackgroundTasks; returns 202 {"accepted": true}
+
+HTTP 409 is returned if a competing operation holds the lock.
+
+── Endpoints (Backend)
+Route	Method	Auth	Notes
+/docs/list	GET	✅	List docs with basic metadata
+/docs/view?path=…	GET	✅	Return raw Markdown (path traversal safe)
+/docs/sync?wait=	POST	✅	Optional Google sync → files; 503 when stack disabled
+/docs/refresh_kb?wait=	POST	✅	Reindex KB via services/kb.api_reindex()
+/docs/full_sync?wait=	POST	✅	Google sync + KB reindex (composed)
+/docs/promote	POST	✅	Promote variant to canonical id path + reindex
+/docs/prune_duplicates?wait=	POST	✅	Remove dupes + reindex
+/docs/mark_priority	POST	✅	Update metadata (tier/pinned) + reindex
+/kb/search	GET/POST	✅	KB query (payload vs querystring)
+/kb/reindex	POST	✅	Optional direct KB refresh (same semantics)
+/kb/summary	GET	⚠️	Consider guarding if it reveals sensitive data
+/readyz	GET	❌	Readiness probe (read-only, safe for unauthenticated use)
+
+Auth note: “✅” → requires X-Api-Key. /readyz is intentionally public (non-mutating).
+
+── Frontend Proxies (Next.js)
+
+The UI calls server-side proxies under /api/docs/* which inject X-Api-Key from server env (no secret in browser). Typical files:
+
+frontend/src/app/api/docs/list/route.ts
+frontend/src/app/api/docs/view/route.ts
+frontend/src/app/api/docs/sync/route.ts
+frontend/src/app/api/docs/refresh_kb/route.ts
+frontend/src/app/api/docs/full_sync/route.ts
+
+
+On non-OK, proxies forward exact status/body so the UI displays actionable errors like:
+
+409 … — docs_sync already in progress
+
+503 … — Google client stack unavailable: No module named 'google'
+
+── Readiness Probe
+
+GET /readyz returns 200 when acceptable for current ENV, else 503 with reasons.
+
+Example (prod, Google disabled intentionally):
+
+{
+  "ok": true,
+  "env": "prod",
+  "api_auth": "configured",
+  "index_root": { "path": "/data/index", "writable": true },
+  "google_stack": "disabled",
+  "details": { "google": { "reason": "ModuleNotFoundError('No module named ...')" } },
+  "problems": []
+}
+
+
+Failure (prod, auth missing or index unwritable) adds "problems": ["auth_missing","index_root_not_writable"].
+
+── Smoke Tests (Copy/Paste)
+API="${API_ROOT:-http://localhost:1455}"
+KEY="$API_KEY"   # or RELAY_API_KEY / ADMIN_API_KEY
+
+# List & view
+curl -sS -H "X-Api-Key: $KEY" "$API/docs/list?category=all&limit=5" | jq .
+curl -sS -H "X-Api-Key: $KEY" "$API/docs/view?path=generated/readme.md" | jq -r .content | head -n 20
+
+# KB reindex (should return structured status)
+curl -sS -X POST -H "X-Api-Key: $KEY" "$API/docs/refresh_kb" | jq .
+
+# Sync (503 if Google stack disabled)
+curl -sS -i -X POST -H "X-Api-Key: $KEY" "$API/docs/sync?wait=true"
+
+# Background full sync
+curl -sS -i -X POST -H "X-Api-Key: $KEY" "$API/docs/full_sync?wait=false"
+
+# Prune duplicates (background)
+curl -sS -i -X POST -H "X-Api-Key: $KEY" "$API/docs/prune_duplicates?wait=false"
+
+# KB search
+curl -sS -H "X-Api-Key: $KEY" "$API/kb/search?query=tarana&k=8" | jq .
+
+# Readiness
+curl -sS "$API/readyz" | jq .
+
+── Troubleshooting (Fast Picks)
+
+401 Unauthorized
+Ensure the proxy sends X-Api-Key (server env has one of: ADMIN_API_KEY, RELAY_API_KEY, API_KEY).
+
+503 Google stack unavailable
+Install google-api-python-client, google-auth, google-auth-oauthlib, markdownify.
+Set GOOGLE_CREDS_JSON & GOOGLE_TOKEN_JSON to file path or base64 JSON.
+Confirm GOOGLE_TOKEN_JSON parent dir is writable (/data/secrets/... recommended).
+
+409 already in progress
+Another op holds the lock. Either call with wait=false or retry after it finishes.
+
+KB reindex returns {ok:false}
+Check OPENAI_API_KEY, KB_EMBED_MODEL, and INDEX_ROOT writability. See logs for the error class.
+
+CORS errors in browser
+Verify FRONTEND_ORIGINS includes the exact origin(s) of your frontend; no regex in prod.
+
+── Observability
+
+You should see structured logs like:
+
+docs_sync / docs_full_sync / kb_reindex with duration_ms and counts
+
+context_engine.clear_cache {cleared, version}
+
+cors.origins [...]
+
+paths_ready imported=… generated=… index_root=… writable=…
+
+Consider exporting Prometheus counters later (e.g., ops success/failure by route and HTTP code).
+
+── Rollback Notes
+
+Feature-wise rollback is simple:
+
+Revert the last deployment.
+
+To disable Google sync only: leave routes mounted; the guarded import yields 503 (safe).
+
+To disable KB writes temporarily: set the API to read-only in your ops UI and avoid calling /docs/* mutators.
+
+── Appendix: Operator Checklist (Prod)
+
+ FRONTEND_ORIGINS set to exact domains
+
+ One of API_KEY|RELAY_API_KEY|ADMIN_API_KEY configured
+
+ INDEX_ROOT mounted & writable (volume)
+
+ OPENAI_API_KEY set; KB_EMBED_MODEL sensible
+
+ (Optional) Google stack installed + creds/token envs wired
+
+ /readyz returns 200 (or 200 with google_stack=disabled if sync is intentionally off)
+
+ Smoke tests pass (above)

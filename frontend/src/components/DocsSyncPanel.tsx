@@ -32,11 +32,13 @@ export default function DocsSyncPanel() {
     setFiles([]);
     setLoading(true);
     try {
-      const res = await fetch(`${API_ROOT}/docs/${endpoint}`, { method: "POST" });
+      const res = await fetch(`/api/docs/${endpoint}`, { method: "POST" });
+      const text = await res.text();
       if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`);
+        setStatus(toMDString(`❌ HTTP ${res.status} ${res.statusText} — ${text.slice(0, 800)}`));
+        return;
       }
-      const data = await res.json();
+      const data = (() => { try { return JSON.parse(text); } catch { return {}; } })() as any;
       if (Array.isArray(data.synced_docs)) {
         setFiles(data.synced_docs);
         setStatus(toMDString(`✅ Synced ${data.synced_docs.length} docs.`));
@@ -46,8 +48,8 @@ export default function DocsSyncPanel() {
         setStatus(toMDString("✅ Operation completed."));
       }
     } catch (err) {
-      console.error("DocsSync error:", err);
-      setStatus(toMDString("❌ Failed to sync. See console for details."));
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(toMDString(`❌ Network error: ${msg}`));
     } finally {
       setLoading(false);
     }

@@ -125,21 +125,34 @@ export default function DocsViewer() {
 
   async function loadDocs() {
     try {
-      const res = await fetch(`${apiUrl}/docs/list`);
+      const res = await fetch(`/api/docs/list`);
+      if (!res.ok) {
+        // Silent list failure: still surface in console for ops
+        console.error(await extractHttpError(res));
+        setDocs([]);
+        return;
+      }
       const data = (await res.json()) as { files?: KBMeta[] };
       setDocs(Array.isArray(data.files) ? data.files : []);
-    } catch {
+    } catch (e) {
+      console.error("docs/list error:", e);
       setDocs([]);
     }
   }
 
   async function loadContent(path: string) {
     try {
-      const res = await fetch(`${apiUrl}/docs/view?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`/api/docs/view?path=${encodeURIComponent(path)}`);
+      if (!res.ok) {
+        const err = await extractHttpError(res);
+        setContent(`❌ ${err}`);
+        return;
+      }
       const data = (await res.json()) as { content?: string };
       setContent(typeof data.content === "string" ? data.content : "");
-    } catch {
-      setContent("Failed to load doc.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setContent(`❌ Network error: ${msg}`);
     }
   }
 
