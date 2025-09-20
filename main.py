@@ -285,15 +285,17 @@ app = create_app()
 PRIMARY_ROUTERS: Iterable[str] = (
     "routes.ask",
     "routes.mcp",
+    # 🔒 Golden paths: require these to be present (fail-fast in prod)
+    "routes.docs",
+    "routes.kb",
 )
 
 SECONDARY_ROUTERS: Iterable[str] = (
-    "routes.kb",
+    # keep this empty for now; add others as you stabilize
 )
 
 OPTIONAL_ROUTERS = {
     "routes.control",
-    "routes.docs",      # docs UI + sync endpoints
     "routes.x_mirror",
     # NOTE: routes.health is mounted early above; do not mount it again.
 }
@@ -334,6 +336,28 @@ for rp in OPTIONAL_ROUTERS:
 
 logger.info("✅ Critical routers present: ['ask','mcp']")
 
+
+# ╔══════════════════════════════════════════════════════════════════════════╗
+# ║ Router map (read-only; safe for ops)                                     ║
+# ╚══════════════════════════════════════════════════════════════════════════╝
+
+@app.get("/__router_map")
+def router_map():
+    """
+    Read-only list of mounted routes (paths + methods).
+    Helps diagnose 404s from missing or failed router imports.
+    """
+    try:
+        from fastapi.routing import APIRoute
+        table = [
+            {"path": r.path, "methods": sorted(list(r.methods or []))}
+            for r in app.router.routes
+            if isinstance(r, APIRoute)
+        ]
+        table.sort(key=lambda x: (x["path"], ",".join(x["methods"])))
+        return {"routes": table, "count": len(table)}
+    except Exception as e:
+        return {"error": str(e)}
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Tiny Debug Endpoint (Safe)                                               ║
