@@ -42,6 +42,7 @@ async def _plan_core(
     timeout_s: int = 20,
     max_context_tokens: Optional[int] = 120_000,
     request_id: Optional[str] = None,
+    **_: Any,
 ) -> Dict[str, Any]:
     """Original async core. Keep logic deterministic and local."""
     files = files or []
@@ -101,6 +102,7 @@ def plan(
     files = files or []
     topics = topics or []
     rid = request_id or corr_id
+    cid = corr_id or request_id
 
     try:
         if _looks_definitional(query):
@@ -128,7 +130,10 @@ def plan(
         }
 
     except Exception as e:
-        log_event("planner_error", {"error": str(e or ""), "request_id": rid})
+        log_event(
+            "planner_error",
+            {"error": str(e or ""), "request_id": rid, "corr_id": cid},
+        )
         return {
             "route": "echo",
             "plan_id": _plan_id(),
@@ -138,4 +143,3 @@ def plan(
             "context": {"files": [], "topics": []},
             "_diag": {"error": True, "msg": str(e or "")},
         }
-

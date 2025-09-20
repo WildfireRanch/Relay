@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import os
 import time
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -88,6 +89,22 @@ def _filter_kwargs(fn, **kw) -> Dict[str, Any]:
     except Exception:
         return kw
 
+
+def _merge_kwargs(base: Dict[str, Any], extras: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a new dict with extras appended when keys are absent."""
+    merged = dict(base)
+    for key, value in extras.items():
+        if key not in merged:
+            merged[key] = value
+    return merged
+
+
+def _ensure_mapping(obj: Any) -> Dict[str, Any]:
+    """Best-effort conversion to a plain dict; fallback to {}."""
+    if isinstance(obj, Mapping):
+        return dict(obj)
+    return {}
+
 def _max_score(matches: List[Dict[str, Any]]) -> Optional[float]:
     """Return max(score) across matches; None if none parseable."""
     mx: Optional[float] = None
@@ -144,7 +161,14 @@ def _shape_routed_result(raw: Any) -> Dict[str, Any]:
 
 # ── Lazy helpers (avoid import cycles) ────────────────────────────────────────
 
-def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id: str) -> Dict[str, Any]:
+def _plan(
+    query: str,
+    files: List[str],
+    topics: List[str],
+    debug: bool,
+    corr_id: str,
+    **kwargs: Any,
+) -> Dict[str, Any]:
     """Invoke planner; tolerant to async/sync and unknown kwargs."""
     try:
         from agents import planner_agent  # type: ignore
@@ -161,6 +185,7 @@ def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id:
         "corr_id": corr_id,
         "request_id": corr_id,
     }
+    call_kwargs = _merge_kwargs(call_kwargs, kwargs)
     call_kwargs = _filter_kwargs(plan_fn, **call_kwargs)
 
     try:
@@ -168,14 +193,14 @@ def _plan(query: str, files: List[str], topics: List[str], debug: bool, corr_id:
         if inspect.iscoroutine(res):
             import asyncio
             res = asyncio.get_event_loop().run_until_complete(res)
-        return res or {}
+        return _ensure_mapping(res)
     except RuntimeError:
         import asyncio
         async def _co():
             r = plan_fn(**call_kwargs)
             return await r if inspect.iscoroutine(r) else r
         res = asyncio.get_event_loop().run_until_complete(_co())
-        return res or {}
+        return _ensure_mapping(res)
     except Exception as e:
         log_event("mcp_plan_error", {"corr_id": corr_id, "error": str(e)})
         return {"route": MCP_DEFAULT_ROUTE, "_diag": {"plan_error": True, "error": str(e)}}
@@ -261,11 +286,30 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
         log_event("mcp_context_error", {"corr_id": corr_id, "error": str(e)})
         return {"context": "", "files_used": [], "matches": []}
 
-def _dispatch(route: str, query: str, context: str, user_id: str, debug: bool, corr_id: str) -> Dict[str, Any]:
+def _dispatch(
+    route: str,
+    query: str,
+    context: str,
+    user_id: str,
+    debug: bool,
+    corr_id: str,
+    **kwargs: Any,
+) -> Dict[str, Any]:
     """Dispatch to a concrete agent. Default to echo.invoke; never raise."""
     try:
         from agents.echo_agent import invoke as echo_invoke  # type: ignore
-        text = echo_invoke(query=query, context=context, user_id=user_id, corr_id=corr_id, debug=debug)
+        call_kwargs = _merge_kwargs(
+            {
+                "query": query,
+                "context": context,
+                "user_id": user_id,
+                "corr_id": corr_id,
+                "debug": debug,
+            },
+            kwargs,
+        )
+        call_kwargs = _filter_kwargs(echo_invoke, **call_kwargs)
+        text = echo_invoke(**call_kwargs)
         return {"response": text, "route": route or MCP_DEFAULT_ROUTE}
     except Exception as e:
         log_event("mcp_dispatch_error", {"corr_id": corr_id, "error": str(e), "route": route})
@@ -282,24 +326,45 @@ async def run_mcp(
     user_id: str = "anonymous",
     debug: bool = False,
     corr_id: Optional[str] = None,
-    **_: Any,   # tolerate unexpected kwargs like `context`
+    **kwargs: Any,
 ) -> Dict[str, Any]:
     """
     Orchestrates: plan → context → dispatch. Returns a stable dict; never raises.
     """
     cid = corr_id or str(uuid4())
+    extra_kwargs = dict(kwargs)
     t0 = time.perf_counter()
     log_event("mcp_start", {"corr_id": cid, "role": role, "user": user_id, "debug": debug})
 
     # 1) Plan
     t_pl0 = time.perf_counter()
-    plan = _plan(query=query, files=files or [], topics=topics or [], debug=debug, corr_id=cid)
+    plan_kwargs = _merge_kwargs(
+        {
+            "query": query,
+            "files": files or [],
+            "topics": topics or [],
+            "debug": debug,
+            "corr_id": cid,
+        },
+        extra_kwargs,
+    )
+    plan_kwargs = _filter_kwargs(_plan, **plan_kwargs)
+    plan = _plan(**plan_kwargs)
     t_pl1 = time.perf_counter()
     route = (plan.get("route") or role or MCP_DEFAULT_ROUTE).strip() or MCP_DEFAULT_ROUTE
 
     # 2) Context (GLOBAL + PROJECT_DOCS)
     t_ctx0 = time.perf_counter()
-    ctx = _build_context(query=query, debug=debug, corr_id=cid)
+    ctx_kwargs = _merge_kwargs(
+        {
+            "query": query,
+            "debug": debug,
+            "corr_id": cid,
+        },
+        extra_kwargs,
+    )
+    ctx_kwargs = _filter_kwargs(_build_context, **ctx_kwargs)
+    ctx = _build_context(**ctx_kwargs)
     context = str(ctx.get("context") or "")
     files_used = ctx.get("files_used") or []
     matches = _filter_matches(ctx.get("matches") or [])
@@ -307,7 +372,19 @@ async def run_mcp(
 
     # 3) Dispatch
     t_ds0 = time.perf_counter()
-    routed_raw = _dispatch(route=route, query=query, context=context, user_id=user_id, debug=debug, corr_id=cid)
+    dispatch_kwargs = _merge_kwargs(
+        {
+            "route": route,
+            "query": query,
+            "context": context,
+            "user_id": user_id,
+            "debug": debug,
+            "corr_id": cid,
+        },
+        extra_kwargs,
+    )
+    dispatch_kwargs = _filter_kwargs(_dispatch, **dispatch_kwargs)
+    routed_raw = _dispatch(**dispatch_kwargs)
     t_ds1 = time.perf_counter()
     routed_result = _shape_routed_result(routed_raw)
 

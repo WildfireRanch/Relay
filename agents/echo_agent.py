@@ -61,6 +61,7 @@ async def answer(
     context: Any,
     debug: bool = False,
     request_id: Optional[str] = None,
+    corr_id: Optional[str] = None,
     timeout: int = 20,
     model: Optional[str] = None,
     **kwargs: Any,
@@ -85,7 +86,12 @@ async def answer(
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     log_event(
         "echo_answer",
-        {"request_id": request_id, "chars": len(final), "elapsed_ms": elapsed_ms},
+        {
+            "request_id": request_id,
+            "corr_id": corr_id or request_id,
+            "chars": len(final),
+            "elapsed_ms": elapsed_ms,
+        },
     )
     return out
 
@@ -119,6 +125,7 @@ def invoke(
             "echo_answer",
             {
                 "request_id": corr_id,
+                "corr_id": corr_id,
                 "chars": len(final),
                 "elapsed_ms": int((time.perf_counter() - t0) * 1000),
             },
@@ -130,6 +137,7 @@ def invoke(
             "echo_invoke_error",
             {
                 "request_id": corr_id,
+                "corr_id": corr_id,
                 "error": str(e or ""),
                 "elapsed_ms": int((time.perf_counter() - t0) * 1000),
             },
