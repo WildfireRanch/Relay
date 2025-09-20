@@ -389,7 +389,7 @@ curl -i -H "Authorization: Bearer $TOKEN" "$FRONTEND/admin/ask" | head -n2    # 
 # Proxy check (server adds X-Api-Key)
 curl -i -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  "$FRONTEND/api/ask/run" --data '{"prompt":"ping"}'      # mirrors upstream status/body
+  "$FRONTEND/api/ask/run" --data '{"question":"ping"}'    # mirrors upstream status/body
 ```
 
 Rollback:

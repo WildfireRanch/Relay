@@ -13,18 +13,18 @@ export default function AskConsole() {
   const [controller, setController] = useState<AbortController | null>(null)
 
   // ── Helpers ---------------------------------------------------------------
-  const getPrompt = () => (promptRef.current?.value || "").trim()
+  const getQuestion = () => (promptRef.current?.value || "").trim()
 
   // ── Run (non-stream) -----------------------------------------------------
   async function runAsk(e: React.FormEvent) {
     e.preventDefault()
-    const prompt = getPrompt()
+    const question = getQuestion()
     setResult("Running…")
     try {
       const res = await fetch("/api/ask/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ question }),
       })
       const text = await res.text()
       const prefix = res.ok ? "✅" : "❌"
@@ -38,7 +38,7 @@ export default function AskConsole() {
   // ── Stream (SSE-like via fetch + reader) ---------------------------------
   async function streamAsk() {
     if (streaming) return
-    const prompt = getPrompt()
+    const question = getQuestion()
     const ctrl = new AbortController()
     setController(ctrl)
     setStreaming(true)
@@ -47,7 +47,7 @@ export default function AskConsole() {
       const res = await fetch("/api/ask/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ question }),
         signal: ctrl.signal,
       })
       const prefix = res.ok ? "✅" : "❌"
@@ -88,8 +88,8 @@ export default function AskConsole() {
 
       {/* ── Form */}
       <form className="space-y-3" onSubmit={runAsk}>
-        <label htmlFor="prompt" className="block text-sm font-medium">Prompt</label>
-        <textarea ref={promptRef} id="prompt" className="w-full border rounded p-2 min-h-[120px]" placeholder="Ping Ask-Echo…" />
+        <label htmlFor="question" className="block text-sm font-medium">Question</label>
+        <textarea ref={promptRef} id="question" className="w-full border rounded p-2 min-h-[120px]" placeholder="Ask a question…" />
         <div className="flex gap-2">
           <button type="submit" className="px-4 py-2 rounded bg-black text-white">Run Ask</button>
           <button type="button" onClick={streamAsk} disabled={streaming} className="px-4 py-2 rounded bg-blue-600 text-white disabled:opacity-50">Stream Ask</button>
