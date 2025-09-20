@@ -113,6 +113,7 @@ requirements*.lock
 poetry.lock
 package-lock.json
 yarn.lock
+.container/*
 
 # =========================
 # === SolArk Scraper & Artifacts ===
