@@ -69,7 +69,7 @@ export default function AskConsole() {
       }
       setStreaming(false)
       setController(null)
-    } catch (err) {
+    } catch (_err) {
       setResult("❌ Stream error or aborted")
       setStreaming(false)
       setController(null)
@@ -106,4 +106,3 @@ export default function AskConsole() {
   )
 }
 //#endregion
-

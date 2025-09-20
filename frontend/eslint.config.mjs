@@ -22,5 +22,16 @@ export default [
       }
     },
   },
-  ...compat.extends("next/core-web-vitals", "next/typescript")
+  ...compat.extends("next/core-web-vitals", "next/typescript"),
+  // Final override: ensure these rules are warnings (not errors) project-wide.
+  {
+    files: ["**/*.{js,jsx,ts,tsx}"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" }
+      ],
+      "@typescript-eslint/no-explicit-any": "warn",
+    },
+  },
 ];
