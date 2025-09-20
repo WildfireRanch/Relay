@@ -32,7 +32,9 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
-    const upstream = await fetch(`${base}/ask/run`, {
+    // Note: backend expects POST /ask (not /ask/run). It coalesces
+    // q/query/prompt/question/text => query, so UI may send {prompt}.
+    const upstream = await fetch(`${base}/ask`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -58,4 +60,3 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 //#endregion
-

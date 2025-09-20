@@ -24,13 +24,37 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   try {
+    // Backend /ask/stream requires body.question (alias to query)
+    // Normalize incoming payload to ensure `question` is present.
+    const incomingText = await req.text()
+    let normalized: Record<string, unknown> = {}
+    try {
+      const parsed = incomingText ? JSON.parse(incomingText) : {}
+      const q =
+        parsed?.question ||
+        parsed?.query ||
+        parsed?.prompt ||
+        parsed?.text ||
+        ""
+      if (typeof q === "string" && q.trim()) {
+        normalized.question = q.trim()
+      }
+      if (typeof parsed?.context === "string") normalized.context = parsed.context
+      if (typeof parsed?.user_id === "string") normalized.user_id = parsed.user_id
+    } catch {
+      // If not JSON, pass through as-is (backend will 422)
+      normalized = {}
+    }
+
+    const body = JSON.stringify(normalized)
+
     const upstream = await fetch(`${base}/ask/stream`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "X-Api-Key": key,
       },
-      body: await req.text(),
+      body,
     })
 
     const contentType = upstream.headers.get("Content-Type") || "text/event-stream"
@@ -43,4 +67,3 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 //#endregion
-
