@@ -210,30 +210,8 @@ def _execute_op(
     background.add_task(_bg_wrapper)
     return _ok({"accepted": True}, status=202)
 
-    @router.get("/op_status")
-    def op_status():
-        """Small ops probe: list in-flight async ops and present lockfiles."""
-        locks = []
-        try:
-            for p in Path(str(LOCK_DIR)).glob("*.lock"):
-                locks.append(p.name)
-        except Exception:
-         pass
-    return _ok({"in_flight": sorted(list(_ASYNC_IN_FLIGHT)), "locks": locks})
-
-    @router.get("/op_status")
-    def op_status():
-        """
-         Read-only probe for long-ops.
-        Returns: { ok:true, in_flight:[...], locks:["<name>.lock", ...] }
-        """
-    locks = []
-    try:
-        for p in Path(str(LOCK_DIR)).glob("*.lock"):
-            locks.append(p.name)
-    except Exception:
-        pass
-    return _ok({"action": "op_status", "in_flight": sorted(list(_ASYNC_IN_FLIGHT)), "locks": locks})
+    # (remove any nested / duplicated @router.get("/op_status") definitions here)
+    # (keep _execute_op helper body focused solely on running ops)
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Router                                                                   ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -243,6 +221,32 @@ router = APIRouter(
     tags=["docs"],
     dependencies=[Depends(require_api_key)],  # enforce auth on ALL endpoints
 )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Change: Define a single, module-scope /op_status with clear, non-throwing body
+# Why: Duplicates + nesting broke import/registration; this is the canonical one
+# ──────────────────────────────────────────────────────────────────────────────
+@router.get("/op_status")
+def op_status():
+    """Read-only probe for long-ops and active locks. Never raises."""
+    try:
+        try:
+            in_flight = sorted(list(_ASYNC_IN_FLIGHT))
+        except Exception:
+            in_flight = []
+
+        locks: List[str] = []
+        try:
+            for p in Path(str(LOCK_DIR)).glob("*.lock"):
+                locks.append(p.name)
+        except Exception:
+            locks = []
+
+        return _ok({"action": "op_status", "in_flight": in_flight, "locks": locks})
+    except Exception as e:
+        # Final guard: never raise from diagnostics
+        return {"ok": False, "action": "op_status", "error": str(e), "in_flight": [], "locks": []}
 
 
 # ── List documents (read-only) -----------------------------------------------

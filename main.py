@@ -459,12 +459,12 @@ def router_map(
         return {"routes": [], "count": 0, "filters": {"prefix": prefix or None, "tag": tag, "method": method, "regex": regex, "verbose": bool(verbose)}, "error": str(e)}
 
 # ── Router diagnostics: attempt imports and report exceptions (read-only) -----
-    @app.get("/__router_diag")
-    def router_diag():
-        """
-        Attempts to import key route modules and returns exception strings, if any.
-        Does NOT mount anything; purely diagnostic for ops.
-        """
+@app.get("/__router_diag")
+def __router_diag():
+    """
+    Attempts to import key route modules and returns exception strings, if any.
+    Does NOT mount anything; purely diagnostic for ops.
+    """
     import importlib, traceback
     targets = ["routes.docs", "routes.kb", "routes.x_mirror"]
     out = {}
