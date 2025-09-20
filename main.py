@@ -113,18 +113,27 @@ class AccessLogMiddleware(BaseHTTPMiddleware):
 
 
 class TimeoutMiddleware(BaseHTTPMiddleware):
-    """
-    Per-request timeout to prevent worker starvation.
+    """Per-request timeout with a longer budget for known long operations.
 
-    Returns 504 when the handler exceeds timeout_s.
+    Default: 35s (HTTP_TIMEOUT_S). Long ops: LONG_OP_TIMEOUT_S (default 300s).
+    Long ops are matched by path startswith against LONG_OP_PATHS.
     """
     def __init__(self, app, timeout_s: float = 35.0):
         super().__init__(app)
-        self.timeout_s = timeout_s
+        self.default_timeout = timeout_s
+        # Comma-separated, defaults cover our KB/docs heavy endpoints
+        paths = os.getenv(
+            "LONG_OP_PATHS",
+            "/docs/refresh_kb,/docs/sync,/docs/full_sync,/kb/reindex"
+        )
+        self.long_op_paths = tuple(p.strip() for p in paths.split(",") if p.strip())
+        self.long_timeout = float(os.getenv("LONG_OP_TIMEOUT_S", "300"))
 
     async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        budget = self.long_timeout if path.startswith(self.long_op_paths) else self.default_timeout
         response = None
-        with anyio.move_on_after(self.timeout_s) as scope:
+        with anyio.move_on_after(budget) as scope:
             response = await call_next(request)
         if scope.cancel_called or response is None:
             return Response("Request timeout", status_code=504)
