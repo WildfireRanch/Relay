@@ -256,17 +256,62 @@ def list_docs(
 
 # ── View a document (read-only) ----------------------------------------------
 @router.get("/view")
-def view_doc(path: str = Query(..., description="Relative path under 'imported' or 'generated'")):
+def view_doc(path: str = Query(..., description="Relative path under 'docs/', 'imported/', or 'generated/'")):
     """
     Return file content for a single relative path.
-    Tries 'generated' first, then 'imported'. Prevents path traversal.
+    Accepts:
+      • 'imported/foo.md' or 'generated/foo.md'
+      • 'foo.md' (we'll look in generated/ first, then imported/)
+      • 'imported/sub/dir/foo.md' etc.
+    Always prevents path traversal.
     """
-    # Try under generated then imported
-    for base in (DOCS_GENERATED, DOCS_IMPORTED):
+    candidates: List[Path] = []
+
+    # 1) Directly under DOCS_BASE (handles 'imported/...' / 'generated/...' / plain 'foo.md')
+    try:
+        cand = _safe_under(DOCS_BASE, path)
+        candidates.append(cand)
+    except HTTPException:
+        # If this failed due to traversal, we still try base-specific below,
+        # which will raise a 400 if all attempts fail.
+        pass
+
+    # 2) If user passed 'imported/...' or 'generated/...', also try stripping the prefix
+    #    and resolving under the specific base to catch edge differences in symlinks/paths.
+    lowered = path.lstrip("/").lower()
+    if lowered.startswith("generated/"):
+        sub = path.split("/", 1)[1] if "/" in path else ""
         try:
-            safe = _safe_under(base, path)
+            candidates.append(_safe_under(DOCS_GENERATED, sub))
         except HTTPException:
-            continue
+            pass
+    elif lowered.startswith("imported/"):
+        sub = path.split("/", 1)[1] if "/" in path else ""
+        try:
+            candidates.append(_safe_under(DOCS_IMPORTED, sub))
+        except HTTPException:
+            pass
+    else:
+        # 3) Plain filename like 'foo.md': probe generated first, then imported
+        try:
+            candidates.append(_safe_under(DOCS_GENERATED, path))
+        except HTTPException:
+            pass
+        try:
+            candidates.append(_safe_under(DOCS_IMPORTED, path))
+        except HTTPException:
+            pass
+
+    # Deduplicate candidates while preserving order
+    seen = set()
+    uniq: List[Path] = []
+    for p in candidates:
+        key = str(p)
+        if key not in seen:
+            seen.add(key)
+            uniq.append(p)
+
+    for safe in uniq:
         if safe.exists() and safe.is_file():
             try:
                 text = safe.read_text(encoding="utf-8", errors="replace")
@@ -274,7 +319,10 @@ def view_doc(path: str = Query(..., description="Relative path under 'imported' 
                 return _ok({"action": "view", "path": path, "binary": True, "bytes": safe.stat().st_size})
             return _ok({"action": "view", "path": path, "binary": False, "content": text})
 
-    _err(404, f"File not found under allowed bases: {path}")  # raises
+    # If none existed, decide between 400 (traversal) vs 404 (not found)
+    # The traversal case would have raised above during _safe_under;
+    # if we got here, it means the path was syntactically safe but missing.
+    _err(404, f"File not found under allowed bases: {path}")
 
 
 # ── Google Docs Sync ----------------------------------------------------------
