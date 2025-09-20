@@ -1,38 +1,19 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # File: core/context_engine.py
-# Purpose: Single authoritative context engine for /ask and /mcp pipelines.
-#          Deterministic tiered retrieval with tunable Top-K, score thresholds,
-#          normalized scores, and token budgeting.
-#
-# Upstream:
-#   - ENV (optional):
-#       TOPK_GLOBAL, TOPK_CONTEXT, TOPK_PROJECT_DOCS, TOPK_CODE
-#       RERANK_MIN_SCORE_GLOBAL, RERANK_MIN_SCORE_CONTEXT,
-#       RERANK_MIN_SCORE_PROJECT_DOCS, RERANK_MIN_SCORE_CODE
-#       MAX_CONTEXT_TOKENS
-#   - Adapters (at call site): dict of {RetrievalTier: Retriever}
-#
-# Downstream:
-#   - Routers/Agents call build_context() and consume ContextResult.
-#
-# Notes:
-#   - No imports from routes/main to avoid circularity.
-#   - Will use services.token_budget if present; otherwise uses internal estimator.
+# Purpose: Pure context engine service with deterministic inputs/outputs.
 # ──────────────────────────────────────────────────────────────────────────────
 
 from __future__ import annotations
 
-import importlib
-import os
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Sequence, Tuple, TypedDict
+from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypedDict
 
-try:
+try:  # Attempt to use real tokenizers when available.
     import tiktoken  # type: ignore
     _HAS_TIKTOKEN = True
-except Exception:
+except Exception:  # pragma: no cover - optional dependency
     _HAS_TIKTOKEN = False
 
 
@@ -63,37 +44,14 @@ class ContextResult(TypedDict):
     meta: Dict[str, KBMeta]
 
 
-@dataclass
-class ContextRequest:
-    query: str
-    corr_id: Optional[str] = None
-    max_tokens: Optional[int] = None  # override MAX_CONTEXT_TOKENS if needed
+TokenCounter = Callable[[str], int]
 
-
-class Retriever:
-    """
-    Adapter interface that concrete tiers must implement.
-    Returns a list of (path, raw_score, snippet) where raw_score is unbounded (e.g., cosine sim).
-    The engine will normalize to [0,1].
-    """
-    def search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
-        raise NotImplementedError
-
-
-@dataclass
-class EngineConfig:
-    """Provide retrievers per tier. Missing tiers are simply skipped."""
-    retrievers: Dict[RetrievalTier, Retriever]
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Token budgeting (optional external, internal fallback)
-# ──────────────────────────────────────────────────────────────────────────────
 
 def _approx_token_count(text: str) -> int:
     if not text:
         return 0
-    return max(1, math.ceil(len(text) / 4))  # ~4 chars/token heuristic
+    return max(1, math.ceil(len(text) / 4))
+
 
 def _tiktoken_count(text: str, model: str = "gpt-4o") -> int:
     try:
@@ -102,24 +60,8 @@ def _tiktoken_count(text: str, model: str = "gpt-4o") -> int:
         enc = tiktoken.get_encoding("cl100k_base")  # type: ignore
     return len(enc.encode(text))  # type: ignore
 
-def _load_external_token_budget():
-    try:
-        mod = importlib.import_module("services.token_budget")
-        counter = getattr(mod, "tokens", None)
-        if callable(counter):
-            return counter
-    except Exception:
-        pass
-    return None
 
-_EXTERNAL_COUNTER = _load_external_token_budget()
-
-def count_tokens(text: str) -> int:
-    if _EXTERNAL_COUNTER:
-        try:
-            return int(_EXTERNAL_COUNTER(text))
-        except Exception:
-            pass
+def _default_token_counter(text: str) -> int:
     if _HAS_TIKTOKEN:
         try:
             return _tiktoken_count(text)
@@ -128,39 +70,72 @@ def count_tokens(text: str) -> int:
     return _approx_token_count(text)
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Env helpers
-# ──────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class ContextRequest:
+    """Validated request envelope consumed by the engine."""
 
-def _int_env(name: str, default: int) -> int:
-    try:
-        v = int(os.getenv(name, "").strip())
-        return v if v > 0 else default
-    except Exception:
-        return default
+    query: str
+    corr_id: Optional[str] = None
+    max_tokens: Optional[int] = None
 
-def _float_env(name: str, default: float) -> float:
-    try:
-        v = float(os.getenv(name, "").strip())
-        return v if v >= 0 else default
-    except Exception:
-        return default
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "query", (self.query or "").strip())
+        corr_val = (self.corr_id or "").strip()
+        object.__setattr__(self, "corr_id", corr_val or None)
+        if self.max_tokens is not None and self.max_tokens <= 0:
+            raise ValueError("max_tokens must be positive when provided")
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Core logic
-# ──────────────────────────────────────────────────────────────────────────────
+@dataclass(frozen=True)
+class TierConfig:
+    """Tier-specific retrieval knobs."""
 
-def _defaults_for_tier(tier: RetrievalTier) -> Tuple[int, float]:
-    if tier == RetrievalTier.GLOBAL:
-        return (_int_env("TOPK_GLOBAL", 6), _float_env("RERANK_MIN_SCORE_GLOBAL", 0.35))
-    if tier == RetrievalTier.CONTEXT:
-        return (_int_env("TOPK_CONTEXT", 6), _float_env("RERANK_MIN_SCORE_CONTEXT", 0.35))
-    if tier == RetrievalTier.PROJECT_DOCS:
-        return (_int_env("TOPK_PROJECT_DOCS", 6), _float_env("RERANK_MIN_SCORE_PROJECT_DOCS", 0.35))
-    if tier == RetrievalTier.CODE:
-        return (_int_env("TOPK_CODE", 6), _float_env("RERANK_MIN_SCORE_CODE", 0.35))
-    return (6, 0.35)
+    top_k: int = 6
+    min_score: float = 0.35
+
+    def __post_init__(self) -> None:
+        if self.top_k <= 0:
+            raise ValueError("top_k must be > 0")
+        if not (0.0 <= self.min_score <= 1.0):
+            raise ValueError("min_score must be between 0 and 1")
+
+
+@dataclass(frozen=True)
+class EngineConfig:
+    """Pure configuration required to assemble context."""
+
+    retrievers: Mapping[RetrievalTier, "Retriever"]
+    tier_overrides: Mapping[RetrievalTier, TierConfig] = field(default_factory=dict)
+    default_tier: TierConfig = field(default_factory=TierConfig)
+    max_context_tokens: int = 2400
+    token_counter: Optional[TokenCounter] = None
+
+    def __post_init__(self) -> None:
+        if self.max_context_tokens <= 0:
+            raise ValueError("max_context_tokens must be > 0")
+
+        retriever_map: Dict[RetrievalTier, Retriever] = {
+            tier: retriever
+            for tier, retriever in (self.retrievers or {}).items()
+            if retriever is not None
+        }
+        object.__setattr__(self, "retrievers", retriever_map)
+
+        overrides: Dict[RetrievalTier, TierConfig] = {}
+        for tier, cfg in (self.tier_overrides or {}).items():
+            overrides[tier] = cfg if isinstance(cfg, TierConfig) else TierConfig(**dict(cfg))
+        object.__setattr__(self, "tier_overrides", overrides)
+
+        counter = self.token_counter or _default_token_counter
+        object.__setattr__(self, "token_counter", counter)
+
+
+class Retriever:
+    """Interface every tier adapter must implement."""
+
+    def search(self, query: str, k: int) -> List[Tuple[str, float, str]]:  # pragma: no cover
+        raise NotImplementedError
+
 
 def _normalize(scores: Sequence[float]) -> List[float]:
     if not scores:
@@ -170,101 +145,161 @@ def _normalize(scores: Sequence[float]) -> List[float]:
         return [1.0 for _ in scores]
     return [(s - lo) / (hi - lo) for s in scores]
 
+
 def _assemble_header(path: str, tier: RetrievalTier, idx: int) -> str:
-    return f"\n--- [source:{tier.value} #{idx+1}] {path} ---\n"
+    return f"
+--- [source:{tier.value} #{idx + 1}] {path} ---
+"
+
 
 def _apply_threshold(matches: List[Match], min_score: float) -> List[Match]:
     return [m for m in matches if m["score"] >= min_score]
 
-def _budgeted_concat(snippets: List[Tuple[str, str, RetrievalTier]], max_tokens: int) -> Tuple[str, List[int]]:
+
+def _budgeted_concat(
+    snippets: List[Tuple[str, str, RetrievalTier]],
+    *,
+    max_tokens: int,
+    token_counter: TokenCounter,
+) -> Tuple[str, List[int]]:
     out: List[str] = []
     used_indices: List[int] = []
     running = 0
-    for i, (path, snippet, tier) in enumerate(snippets):
-        piece = _assemble_header(path, tier, i) + snippet.strip() + "\n"
-        cost = count_tokens(piece)
+
+    for idx, (path, snippet, tier) in enumerate(snippets):
+        piece = _assemble_header(path, tier, idx) + (snippet or "").strip() + "
+"
+        try:
+            cost = max(0, int(token_counter(piece)))
+        except Exception:
+            cost = _approx_token_count(piece)
         if running + cost > max_tokens:
             continue
         out.append(piece)
-        used_indices.append(i)
+        used_indices.append(idx)
         running += cost
-    return ("".join(out).strip(), used_indices)
 
-def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
-    """
-    Deterministic, tiered retrieval:
-      Order: GLOBAL → CONTEXT → PROJECT_DOCS → CODE
-      - For each tier:
-         1) retrieve Top-K
-         2) normalize scores to [0,1]
-         3) threshold by tier min score (env)
-      - Merge results, dedupe by path (keep best score), then token-budget assemble.
-    """
-    query = (req.query or "").strip()
-    max_context_tokens = req.max_tokens or _int_env("MAX_CONTEXT_TOKENS", 2400)
+    return "".join(out).strip(), used_indices
 
-    ordered_tiers = [
+
+class ContextEngine:
+    """Pure, deterministic context assembly service."""
+
+    TIER_ORDER: Tuple[RetrievalTier, ...] = (
         RetrievalTier.GLOBAL,
         RetrievalTier.CONTEXT,
         RetrievalTier.PROJECT_DOCS,
         RetrievalTier.CODE,
-    ]
+    )
 
-    all_matches: List[Match] = []
-    seen_best: Dict[str, float] = {}
-    raw_for_meta: List[float] = []
+    def __init__(self, *, config: EngineConfig) -> None:
+        self._config = config
+        self._token_counter = config.token_counter
 
-    for tier in ordered_tiers:
-        retriever = cfg.retrievers.get(tier)
-        if not retriever:
-            continue
+    def build(self, request: ContextRequest) -> ContextResult:
+        query = request.query
+        max_tokens = request.max_tokens or self._config.max_context_tokens
 
-        topk, min_score = _defaults_for_tier(tier)
-        raw = retriever.search(query=query, k=topk)
-        if not raw:
-            continue
+        aggregated: Dict[str, Match] = {}
+        meta_scores: List[float] = []
 
-        paths, scores, snippets = zip(*raw)
-        normalized = _normalize(scores)
-        tier_matches: List[Match] = []
-        for p, s_norm, snip in zip(paths, normalized, snippets):
-            m: Match = {"path": p, "score": float(s_norm), "tier": tier.value, "snippet": snip}
-            tier_matches.append(m)
-            raw_for_meta.append(float(s_norm))
+        for tier in self.TIER_ORDER:
+            retriever = self._config.retrievers.get(tier)
+            if retriever is None:
+                continue
 
-        tier_kept = _apply_threshold(tier_matches, min_score)
+            tier_cfg = self._config.tier_overrides.get(tier, self._config.default_tier)
+            raw_results = self._safe_search(retriever, query, tier_cfg.top_k)
+            if not raw_results:
+                continue
 
-        for m in tier_kept:
-            best = seen_best.get(m["path"])
-            if best is None or m["score"] > best:
-                seen_best[m["path"]] = m["score"]
+            sanitized = self._sanitize(raw_results)
+            if not sanitized:
+                continue
 
-        all_matches.extend(tier_kept)
+            normalized = _normalize([score for _, score, _ in sanitized])
+            tier_matches: List[Match] = []
 
-    best_by_path: Dict[str, Match] = {}
-    for m in all_matches:
-        if (prev := best_by_path.get(m["path"])) is None or (m["score"] > prev["score"]):
-            best_by_path[m["path"]] = m
+            for (path, _score, snippet), norm_score in zip(sanitized, normalized):
+                match: Match = {
+                    "path": path,
+                    "score": float(norm_score),
+                    "tier": tier.value,
+                    "snippet": snippet,
+                }
+                tier_matches.append(match)
+                meta_scores.append(float(norm_score))
 
-    ordered = sorted(best_by_path.values(), key=lambda m: m["score"], reverse=True)
-    concat_inputs: List[Tuple[str, str, RetrievalTier]] = [
-        (m["path"], m["snippet"], RetrievalTier(m["tier"])) for m in ordered
-    ]
-    context_str, used_idx = _budgeted_concat(concat_inputs, max_tokens=max_context_tokens)
+            kept = _apply_threshold(tier_matches, tier_cfg.min_score)
+            for match in kept:
+                prev = aggregated.get(match["path"])
+                if prev is None or match["score"] > prev["score"]:
+                    aggregated[match["path"]] = match
 
-    files_used = [ordered[i]["path"] for i in used_idx]
-    max_score = max(raw_for_meta) if raw_for_meta else 0.0
+        ordered = sorted(
+            aggregated.values(),
+            key=lambda m: (-m["score"], m["path"]),
+        ) if aggregated else []
 
-    result: ContextResult = {
-        "context": context_str,
-        "files_used": files_used,
-        "matches": ordered,  # includes snippet & score for downstream grounding
-        "meta": {
-            "kb": {
-                "hits": len(ordered),
-                "max_score": float(max_score),
-                "sources": list(dict.fromkeys(files_used)),
-            }
-        },
-    }
-    return result
+        concat_inputs = [
+            (m["path"], m["snippet"], RetrievalTier(m["tier"]))
+            for m in ordered
+        ]
+
+        context_text, used_indices = _budgeted_concat(
+            concat_inputs,
+            max_tokens=max_tokens,
+            token_counter=self._token_counter,
+        )
+
+        files_used = [ordered[i]["path"] for i in used_indices] if used_indices else []
+        kb_sources = list(dict.fromkeys(files_used))
+        max_score = max(meta_scores) if meta_scores else 0.0
+
+        result: ContextResult = {
+            "context": context_text,
+            "files_used": files_used,
+            "matches": ordered,
+            "meta": {
+                "kb": {
+                    "hits": len(ordered),
+                    "max_score": float(max_score),
+                    "sources": kb_sources,
+                }
+            },
+        }
+        return result
+
+    @staticmethod
+    def _safe_search(retriever: "Retriever", query: str, top_k: int) -> List[Tuple[str, float, str]]:
+        try:
+            return list(retriever.search(query=query, k=top_k) or [])
+        except TypeError:  # accommodate legacy call signatures
+            return list(retriever.search(query, top_k) or [])  # type: ignore[arg-type]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _sanitize(raw: Iterable[Tuple[object, object, object]]) -> List[Tuple[str, float, str]]:
+        sanitized: List[Tuple[str, float, str]] = []
+        for item in raw:
+            if not isinstance(item, tuple) or len(item) < 3:
+                continue
+            path, score, snippet = item[:3]
+            path_str = str(path or "").strip()
+            if not path_str:
+                continue
+            try:
+                score_val = float(score)
+            except (TypeError, ValueError):
+                continue
+            snippet_str = str(snippet or "")
+            sanitized.append((path_str, score_val, snippet_str))
+        return sanitized
+
+
+def build_context(req: ContextRequest, cfg: EngineConfig) -> ContextResult:
+    """Public entry point retained for compatibility with existing callers."""
+
+    engine = ContextEngine(config=cfg)
+    return engine.build(req)

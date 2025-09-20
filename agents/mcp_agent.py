@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import time
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
@@ -26,6 +27,38 @@ KB_TOPK_LIMIT = 12
 KB_MIN_SCORE_FLOOR = 0.0  # engine already thresholds per-tier
 
 # ── Small utils ───────────────────────────────────────────────────────────────
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw.strip())
+    except Exception:
+        return default
+    return value if value > 0 else default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw.strip())
+    except Exception:
+        return default
+    return value if value >= 0 else default
+
+
+def _resolve_token_counter():
+    try:
+        from services import token_budget  # type: ignore
+
+        counter = getattr(token_budget, "tokens", None)
+        return counter if callable(counter) else None
+    except Exception:
+        return None
+
 
 def _jsonable(obj: Any) -> Any:
     try:
@@ -151,7 +184,11 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
     """Build retrieval context; support both object and dict return shapes."""
     try:
         from core.context_engine import (
-            build_context, ContextRequest, EngineConfig, RetrievalTier,
+            build_context,
+            ContextRequest,
+            EngineConfig,
+            RetrievalTier,
+            TierConfig,
         )
         from services.semantic_retriever import TieredSemanticRetriever
     except Exception as e:
@@ -159,11 +196,31 @@ def _build_context(query: str, debug: bool, corr_id: str) -> Dict[str, Any]:
         return {"context": "", "files_used": [], "matches": []}
 
     retrievers = {
-        RetrievalTier.GLOBAL:       TieredSemanticRetriever("global"),
+        RetrievalTier.GLOBAL: TieredSemanticRetriever("global"),
         RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs"),
     }
     req = ContextRequest(query=query, corr_id=corr_id)
-    cfg = EngineConfig(retrievers=retrievers)
+    tier_overrides = {
+        RetrievalTier.GLOBAL: TierConfig(
+            top_k=_env_int("TOPK_GLOBAL", 6),
+            min_score=_env_float("RERANK_MIN_SCORE_GLOBAL", 0.35),
+        ),
+        RetrievalTier.PROJECT_DOCS: TierConfig(
+            top_k=_env_int("TOPK_PROJECT_DOCS", 6),
+            min_score=_env_float("RERANK_MIN_SCORE_PROJECT_DOCS", 0.35),
+        ),
+    }
+    default_tier = TierConfig(
+        top_k=_env_int("TOPK_CONTEXT", 6),
+        min_score=_env_float("RERANK_MIN_SCORE_CONTEXT", 0.35),
+    )
+    cfg = EngineConfig(
+        retrievers=retrievers,
+        tier_overrides=tier_overrides,
+        default_tier=default_tier,
+        max_context_tokens=_env_int("MAX_CONTEXT_TOKENS", 2400),
+        token_counter=_resolve_token_counter(),
+    )
 
     try:
         ctx = build_context(req=req, cfg=cfg)

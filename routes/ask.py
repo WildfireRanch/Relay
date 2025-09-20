@@ -345,8 +345,9 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
         ContextRequest = getattr(ctx_mod, "ContextRequest", None)
         EngineConfig = getattr(ctx_mod, "EngineConfig", None)
         RetrievalTier = getattr(ctx_mod, "RetrievalTier", None)
+        TierConfig = getattr(ctx_mod, "TierConfig", None)
 
-        if not callable(build_context) or ContextRequest is None or EngineConfig is None or RetrievalTier is None:
+        if not callable(build_context) or None in {ContextRequest, EngineConfig, RetrievalTier, TierConfig}:
             raise RuntimeError("context engine not available")
 
         from services.semantic_retriever import SemanticRetriever, TieredSemanticRetriever  # type: ignore
@@ -358,7 +359,38 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
             RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",       score_threshold=score_thresh),
             RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs", score_threshold=score_thresh),
         }
-        cfg = EngineConfig(retrievers=retrievers)  # type: ignore
+        tier_overrides = {
+            RetrievalTier.GLOBAL: TierConfig(
+                top_k=_env_int("TOPK_GLOBAL", default=6),
+                min_score=_env_float("RERANK_MIN_SCORE_GLOBAL", default=0.35),
+            ),
+            RetrievalTier.PROJECT_DOCS: TierConfig(
+                top_k=_env_int("TOPK_PROJECT_DOCS", default=6),
+                min_score=_env_float("RERANK_MIN_SCORE_PROJECT_DOCS", default=0.35),
+            ),
+        }
+        default_tier = TierConfig(
+            top_k=_env_int("TOPK_CONTEXT", default=6),
+            min_score=_env_float("RERANK_MIN_SCORE_CONTEXT", default=0.35),
+        )
+
+        token_counter = None
+        try:
+            from services import token_budget  # type: ignore
+
+            maybe_counter = getattr(token_budget, "tokens", None)
+            if callable(maybe_counter):
+                token_counter = maybe_counter
+        except Exception:
+            token_counter = None
+
+        cfg = EngineConfig(
+            retrievers=retrievers,
+            tier_overrides=tier_overrides,
+            default_tier=default_tier,
+            max_context_tokens=_env_int("MAX_CONTEXT_TOKENS", default=2400),
+            token_counter=token_counter,
+        )  # type: ignore
         ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore
 
         context_text = str((ctx or {}).get("context") or "")
