@@ -223,6 +223,7 @@ SECONDARY_ROUTERS: Iterable[str] = (
 OPTIONAL_ROUTERS = {
     "routes.control",
     "routes.docs",
+    "routes.x_mirror",
 }
 
 def _include(router_path: str, *, required: bool) -> None:
