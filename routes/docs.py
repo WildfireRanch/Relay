@@ -221,6 +221,19 @@ def _execute_op(
          pass
     return _ok({"in_flight": sorted(list(_ASYNC_IN_FLIGHT)), "locks": locks})
 
+    @router.get("/op_status")
+    def op_status():
+        """
+         Read-only probe for long-ops.
+        Returns: { ok:true, in_flight:[...], locks:["<name>.lock", ...] }
+        """
+    locks = []
+    try:
+        for p in Path(str(LOCK_DIR)).glob("*.lock"):
+            locks.append(p.name)
+    except Exception:
+        pass
+    return _ok({"action": "op_status", "in_flight": sorted(list(_ASYNC_IN_FLIGHT)), "locks": locks})
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Router                                                                   ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -367,6 +380,9 @@ def sync_docs(
         if "already in progress" in str(err):
             _err(409, str(err))
         raise
+    except HTTPException as http_exc:
+        # Preserve original status (e.g., 409)
+        raise http_exc
     except Exception as exc:  # pragma: no cover
         _err(500, f"sync failed: {exc}")
 
@@ -414,6 +430,8 @@ def refresh_kb(
         if "already in progress" in str(err):
             _err(409, str(err))
         raise
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as exc:  # pragma: no cover
         _err(500, f"refresh_kb failed: {exc}")
 
@@ -498,6 +516,8 @@ def prune_duplicates(
         if "already in progress" in str(err):
             _err(409, str(err))
         raise
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as exc:  # pragma: no cover
         _err(500, f"prune failed: {exc}")
 
