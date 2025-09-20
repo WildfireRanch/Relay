@@ -1,7 +1,43 @@
 {
+  // ──────────────────────────────────────────────────────────────────────────
+  // Dev Container for Relay
+  // - Installs Git (inside the container)
+  // - Pins must-have extensions for the REMOTE workspace
+  // - Optionally seeds global Git identity (safe defaults)
+  // ──────────────────────────────────────────────────────────────────────────
+  "name": "Relay Codespace",
+  "features": {
+    // Official Dev Containers features:
+    // https://github.com/devcontainers/features/tree/main/src
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": false
+    },
+    "ghcr.io/devcontainers/features/git:1": {}
+  },
+
   "customizations": {
     "vscode": {
-      "extensions": ["openai.chatgpt"]
+      "extensions": [
+        "github.vscode-pull-request-github",
+        "ms-azuretools.vscode-docker",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        // These are VS Code settings (scoped to the REMOTE workspace)
+        "git.enabled": true,
+        "git.autofetch": true,
+        "git.confirmSync": false,
+        "git.detectSubmodules": true,
+        "git.pruneOnFetch": true,
+        "settingsSync.keybindingsPerPlatform": true,
+        "settingsSync.ignoredExtensions": [
+          "ms-vscode.remote-repositories",
+          "github.remotehub"
+        ]
+      }
     }
-  }
+  },
+
+  // Optional: set your Git identity inside the container
+  "postCreateCommand": "git config --global user.name 'Bret' && git config --global user.email 'you@example.com'"
 }

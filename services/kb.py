@@ -363,6 +363,86 @@ def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> 
         log_event("kb_index_build_fail", {"model": MODEL_NAME, "error": str(e)})
         return {"ok": False, "error": str(e), "model": MODEL_NAME, "indexed": 0}
 
+
+def api_reindex(
+    *,
+    tiers: Optional[List[TierSpec]] = None,
+    verbose: bool = False,
+) -> Dict[str, Any]:
+    """API-friendly wrapper around :func:`embed_all`.
+
+    Ensures a stable response contract for HTTP handlers by adding
+    human-readable status messaging while preserving the raw embed result.
+    """
+
+    status = embed_all(verbose=verbose, tiers=tiers)
+    ok = bool(status.get("ok"))
+    indexed = int(status.get("indexed") or 0)
+    model = status.get("model")
+    error = status.get("error")
+
+    message = (
+        f"KB index rebuilt ({indexed} docs, model={model})"
+        if ok
+        else f"KB reindex failed: {error or 'unknown error'}"
+    )
+
+    response = {
+        "ok": ok,
+        "status": "ok" if ok else "error",
+        "indexed": indexed,
+        "model": model,
+        "error": error,
+        "message": message,
+    }
+    logger.info("[KB] api_reindex → ok=%s indexed=%s model=%s", ok, indexed, model)
+    if not ok and error:
+        logger.error("[KB] api_reindex error: %s", error)
+    return response
+
+
+def get_recent_summaries(
+    user_id: Optional[str] = None,
+    limit: int = 10,
+) -> List[str]:
+    """Return up to ``limit`` recent context summaries.
+
+    The implementation is deliberately tolerant: it inspects a handful of
+    common docs/ generated files and falls back to an empty list when no
+    summaries are present. This keeps legacy callers working without forcing a
+    strict storage backend.
+    """
+
+    summaries: List[str] = []
+    generated_dir = PROJECT_ROOT / "docs" / "generated"
+    candidate_files: List[Path] = []
+
+    if user_id:
+        candidate_files.append(generated_dir / f"{user_id}_context.md")
+        candidate_files.append(generated_dir / f"{user_id}_context.auto.md")
+    candidate_files.extend(
+        [
+            generated_dir / "relay_context.md",
+            generated_dir / "relay_context.auto.md",
+            generated_dir / "global_context.md",
+            PROJECT_ROOT / "docs" / "PROJECT_SUMMARY.md",
+        ]
+    )
+
+    for path in candidate_files:
+        try:
+            if path.exists() and path.is_file():
+                text = path.read_text(encoding="utf-8").strip()
+                if text:
+                    summaries.append(text)
+        except Exception as exc:  # pragma: no cover - filesystem issues
+            logger.debug("[KB] get_recent_summaries skip %s: %s", path, exc)
+            continue
+        if len(summaries) >= limit:
+            break
+
+    return summaries[:limit]
+
 def index_is_valid() -> bool:
     """
     Return True if an on-disk index exists and dimension matches expectation.

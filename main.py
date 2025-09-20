@@ -134,21 +134,23 @@ def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
 
     # ---- CORS HARDENING (must be before include_router) ----------------------
-    # Prefer explicit origin list; allow optional wildcard by regex for *.wildfireranch.us
-    explicit_origins = ["https://status.wildfireranch.us"]
     env_origins = _parse_origins(_env("FRONTEND_ORIGINS"))
-    allow_origins = env_origins or explicit_origins
+    single_origin = (_env("FRONTEND_ORIGIN") or "").strip()
+    allow_origins = env_origins or ([single_origin] if single_origin else [])
 
-    # Optional: allow any subdomain of wildfireranch.us (safe even with credentials=True)
-    allow_origin_regex = _env("FRONTEND_ORIGIN_REGEX", r"^https://([a-z0-9-]+\.)?wildfireranch\.us$")
+    app_env = (_env("ENV") or _env("APP_ENV") or "dev").strip().lower()
+    if not allow_origins:
+        if app_env in {"prod", "production"}:
+            raise RuntimeError(
+                "CORS misconfiguration: FRONTEND_ORIGINS (or FRONTEND_ORIGIN) is required in prod"
+            )
+        allow_origins = ["http://localhost:3000"]
 
-    logger.info("🔒 CORS allow_origins=%s allow_origin_regex=%s credentials=True",
-                allow_origins, allow_origin_regex)
+    logger.info("🔒 CORS allow_origins=%s app_env=%s credentials=True", allow_origins, app_env)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=allow_origins,                # exact prod origin(s)
-        allow_origin_regex=allow_origin_regex,      # plus *.wildfireranch.us if desired
+        allow_origins=allow_origins,
         allow_credentials=True,                     # safe with explicit origins/regex
         allow_methods=["GET", "POST", "OPTIONS"],
         # explicit header allow-list keeps proxy chains honest; include app-specific IDs

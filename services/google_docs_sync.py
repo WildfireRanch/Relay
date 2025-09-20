@@ -18,11 +18,16 @@ import base64
 from pathlib import Path
 from typing import List, Tuple
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from markdownify import markdownify as md
+try:  # optional dependency block
+    from google.oauth2.credentials import Credentials  # type: ignore
+    from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
+    from google.auth.transport.requests import Request  # type: ignore
+    from googleapiclient.discovery import build  # type: ignore
+    from markdownify import markdownify as md
+    SYNC_AVAILABLE_ERR: Exception | None = None
+except Exception as exc:  # pragma: no cover - optional deps absent in prod images
+    Credentials = InstalledAppFlow = Request = build = md = None  # type: ignore
+    SYNC_AVAILABLE_ERR = exc
 
 # The scopes our application requires to read files from Drive and Docs.
 SCOPES = [
@@ -37,6 +42,25 @@ TOKEN_PATH = Path("frontend/sync/token.json")
 # Directory where imported Markdown files will be stored.
 IMPORT_PATH = Path("docs/imported")
 IMPORT_PATH.mkdir(parents=True, exist_ok=True)
+
+
+def _load_json_from_env_or_path(env_name: str, fallback_path: Path) -> str:
+    """Return JSON content from env (path or base64) or an on-disk fallback."""
+
+    raw = os.getenv(env_name)
+    if raw:
+        candidate = Path(raw)
+        if candidate.exists():
+            return candidate.read_text(encoding="utf-8")
+        try:
+            return base64.b64decode(raw).decode("utf-8")
+        except Exception as exc:
+            raise ValueError(f"{env_name} must be a file path or base64 JSON") from exc
+
+    if fallback_path.exists():
+        return fallback_path.read_text(encoding="utf-8")
+
+    raise FileNotFoundError(f"Missing {env_name} and fallback file {fallback_path}")
 
 # Name of the Drive folder to sync.  Can be overridden via env var.
 FOLDER_NAME = os.getenv("GOOGLE_FOLDER_NAME", "COMMAND_CENTER")
@@ -53,22 +77,14 @@ def get_google_service() -> Tuple:
 
     # Write client secrets if they don't exist yet.
     if not CREDENTIALS_PATH.exists():
-        raw = os.getenv("GOOGLE_CREDS_JSON")
-        if not raw:
-            raise FileNotFoundError(
-                "Missing GOOGLE_CREDS_JSON environment variable; cannot authenticate."
-            )
-        decoded = base64.b64decode(raw).decode()
-        CREDENTIALS_PATH.write_text(decoded)
+        creds_json = _load_json_from_env_or_path("GOOGLE_CREDS_JSON", CREDENTIALS_PATH)
+        CREDENTIALS_PATH.write_text(creds_json, encoding="utf-8")
 
     # Write token from environment, if available and no token file exists.
     if not TOKEN_PATH.exists() and os.getenv("GOOGLE_TOKEN_JSON"):
-        try:
-            token_raw = os.getenv("GOOGLE_TOKEN_JSON")
-            TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-            TOKEN_PATH.write_text(base64.b64decode(token_raw).decode())
-        except Exception as exc:
-            raise RuntimeError(f"Failed to decode GOOGLE_TOKEN_JSON: {exc}") from exc
+        token_json = _load_json_from_env_or_path("GOOGLE_TOKEN_JSON", TOKEN_PATH)
+        TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TOKEN_PATH.write_text(token_json, encoding="utf-8")
 
     # Load existing credentials
     if TOKEN_PATH.exists():
@@ -167,6 +183,9 @@ def sync_google_docs() -> List[str]:
 
     Returns a list of filenames that were saved.
     """
+    if SYNC_AVAILABLE_ERR is not None:
+        raise RuntimeError(f"Google client stack unavailable: {SYNC_AVAILABLE_ERR}")
+
     drive_service, docs_service = get_google_service()
     folder_id = find_folder_id(drive_service, FOLDER_NAME)
     doc_files = get_docs_in_folder(drive_service, folder_id)

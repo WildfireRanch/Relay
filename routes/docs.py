@@ -30,19 +30,19 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
+import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List
+from typing import Any, Callable, Dict, List
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Header
 from fastapi.responses import JSONResponse
 
-from services.google_docs_sync import sync_google_docs
 from services import kb
 from services.context_engine import ContextEngine
-
-
 from services.docs_utils import (
     extract_doc_id,
     build_doc_registry,
@@ -50,17 +50,129 @@ from services.docs_utils import (
     write_doc_metadata,
 )
 
+
+logger = logging.getLogger(__name__)
+
+try:
+    from services.google_docs_sync import sync_google_docs as _sync_google_docs
+    _GOOGLE_SYNC_IMPORT_ERROR: Exception | None = None
+except Exception as exc:  # pragma: no cover - optional dependency may be absent
+    _sync_google_docs = None  # type: ignore[assignment]
+    _GOOGLE_SYNC_IMPORT_ERROR = exc
+    logger.warning("Google Docs sync disabled: %s", exc)
+
+# Preserve historical module-level symbol for tests/monkeypatching.
+sync_google_docs = _sync_google_docs
+
 # ─── Router Setup ──────────────────────────────────────────────────────────
 router = APIRouter(prefix="/docs", tags=["docs"])
 
-# ─── Auth Stub (replace with real auth) ────────────────────────────────────
-def require_api_key():
-    return True  # TODO: Replace with real API key or OAuth validation
+# ─── Auth ‐ enforce X-Api-Key ------------------------------------------------
+_AUTH_ENV_NAMES = ("API_KEY", "RELAY_API_KEY", "ADMIN_API_KEY")
+_AUTH_BYPASS_LOGGED = False
+
+
+def _load_admin_keys() -> List[str]:
+    keys = []
+    for name in _AUTH_ENV_NAMES:
+        value = (os.getenv(name) or "").strip()
+        if value:
+            keys.append(value)
+    return keys
+
+
+def require_api_key(x_api_key: str | None = Header(None, alias="X-Api-Key")) -> bool:
+    global _AUTH_BYPASS_LOGGED
+    keys = _load_admin_keys()
+    if not keys:
+        if not _AUTH_BYPASS_LOGGED:
+            logger.warning("X-Api-Key check bypassed (no key envs present)")
+            _AUTH_BYPASS_LOGGED = True
+        return True
+
+    if not x_api_key or x_api_key not in keys:
+        raise HTTPException(
+            status_code=401,
+            detail={"error": True, "detail": "Missing or invalid X-Api-Key"},
+        )
+
+    return True
 
 # ─── Constants ────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BASE_DIR: Path = PROJECT_ROOT / "docs"
 CATEGORIES = ("imported", "generated")
+LOCK_DIR = PROJECT_ROOT / "var" / "locks"
+LOCK_DIR.mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def _op_lock(name: str):
+    lock_path = LOCK_DIR / f"{name}.lock"
+    fh = lock_path.open("a+")
+    try:
+        try:
+            import fcntl  # type: ignore
+
+            try:
+                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError(f"{name} already in progress") from exc
+        except ImportError:
+            if lock_path.exists():
+                raise RuntimeError(f"{name} already in progress")
+            lock_path.write_text(str(time.time()), encoding="utf-8")
+
+        yield
+    finally:
+        try:
+            try:
+                import fcntl  # type: ignore
+
+                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            except ImportError:
+                pass
+        except Exception:
+            pass
+        fh.close()
+        try:
+            if lock_path.exists():
+                lock_path.unlink()
+        except Exception:
+            pass
+
+
+_ASYNC_IN_FLIGHT: set[str] = set()
+
+
+def _run_locked(name: str, fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
+    with _op_lock(name):
+        return fn()
+
+
+def _execute_op(
+    name: str,
+    *,
+    wait: bool,
+    background: BackgroundTasks,
+    fn: Callable[[], Dict[str, Any]],
+):
+    if wait:
+        return _run_locked(name, fn)
+
+    if name in _ASYNC_IN_FLIGHT:
+        raise RuntimeError(f"{name} already in progress")
+
+    _ASYNC_IN_FLIGHT.add(name)
+
+    def _background_wrapper() -> None:
+        try:
+            _run_locked(name, fn)
+        finally:
+            _ASYNC_IN_FLIGHT.discard(name)
+
+    background.add_task(_background_wrapper)
+    return JSONResponse(status_code=202, content={"accepted": True})
 
 def _safe_resolve(path: Path) -> Path:
     resolved = path.resolve()
@@ -109,34 +221,100 @@ async def view_doc(path: str):
 
 # ─── Google Docs Sync ─────────────────────────────────────────────────────
 @router.post("/sync", dependencies=[Depends(require_api_key)])
-async def sync_docs():
-    try:
-        saved_files = sync_google_docs()
+async def sync_docs(
+    request: Request,
+    background: BackgroundTasks,
+    wait: bool = Query(True),
+):
+    del request  # currently unused; keeps signature for future telemetry
+
+    if _sync_google_docs is None:
+        detail = "Google Docs sync is not available in this environment."
+        if _GOOGLE_SYNC_IMPORT_ERROR is not None:
+            detail = f"{detail} ({_GOOGLE_SYNC_IMPORT_ERROR})"
+        raise HTTPException(status_code=503, detail=detail)
+
+    def _job() -> Dict[str, Any]:
+        saved_files = _sync_google_docs()
         kb.api_reindex()
         ContextEngine.clear_cache()
         return {"synced_docs": saved_files}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        return _execute_op(
+            "docs_sync",
+            wait=wait,
+            background=background,
+            fn=_job,
+        )
+    except RuntimeError as err:
+        if "already in progress" in str(err):
+            raise HTTPException(status_code=409, detail=str(err))
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 # ─── Manual Reindex ───────────────────────────────────────────────────────
 @router.post("/refresh_kb", dependencies=[Depends(require_api_key)])
-async def refresh_kb():
-    try:
+async def refresh_kb(
+    request: Request,
+    background: BackgroundTasks,
+    wait: bool = Query(True),
+):
+    del request
+
+    def _job() -> Dict[str, Any]:
         result = kb.api_reindex()
         ContextEngine.clear_cache()
         return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        return _execute_op(
+            "kb_reindex",
+            wait=wait,
+            background=background,
+            fn=_job,
+        )
+    except RuntimeError as err:
+        if "already in progress" in str(err):
+            raise HTTPException(status_code=409, detail=str(err))
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 @router.post("/full_sync", dependencies=[Depends(require_api_key)])
-async def full_sync():
-    try:
-        files = sync_google_docs()
+async def full_sync(
+    request: Request,
+    background: BackgroundTasks,
+    wait: bool = Query(True),
+):
+    del request
+
+    if _sync_google_docs is None:
+        detail = "Google Docs sync is not available in this environment."
+        if _GOOGLE_SYNC_IMPORT_ERROR is not None:
+            detail = f"{detail} ({_GOOGLE_SYNC_IMPORT_ERROR})"
+        raise HTTPException(status_code=503, detail=detail)
+
+    def _job() -> Dict[str, Any]:
+        files = _sync_google_docs()
         index_info = kb.api_reindex()
         ContextEngine.clear_cache()
         return {"synced_docs": files, "kb": index_info}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        return _execute_op(
+            "docs_full_sync",
+            wait=wait,
+            background=background,
+            fn=_job,
+        )
+    except RuntimeError as err:
+        if "already in progress" in str(err):
+            raise HTTPException(status_code=409, detail=str(err))
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 # ─── Promote to canonical ─────────────────────────────────────────────────
 @router.post("/promote", dependencies=[Depends(require_api_key)])
@@ -163,9 +341,15 @@ async def promote_doc(request: Request):
 
 # ─── Prune Duplicates ─────────────────────────────────────────────────────
 @router.post("/prune_duplicates", dependencies=[Depends(require_api_key)])
-async def prune_duplicates():
-    removed = []
-    try:
+async def prune_duplicates(
+    request: Request,
+    background: BackgroundTasks,
+    wait: bool = Query(True),
+):
+    del request
+
+    def _job() -> Dict[str, Any]:
+        removed: List[str] = []
         registry = build_doc_registry()
         for doc_id, versions in registry.items():
             if len(versions) <= 1:
@@ -181,8 +365,20 @@ async def prune_duplicates():
         kb.api_reindex()
         ContextEngine.clear_cache()
         return {"removed": removed}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Prune failed: {e}")
+
+    try:
+        return _execute_op(
+            "docs_prune",
+            wait=wait,
+            background=background,
+            fn=_job,
+        )
+    except RuntimeError as err:
+        if "already in progress" in str(err):
+            raise HTTPException(status_code=409, detail=str(err))
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Prune failed: {exc}")
 
 # ─── Mark Priority / Tier ─────────────────────────────────────────────────
 @router.post("/mark_priority", dependencies=[Depends(require_api_key)])
