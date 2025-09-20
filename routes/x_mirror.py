@@ -1,59 +1,39 @@
-"""Poem mirror using X API (ranch_wildfire timeline)."""
+# ──────────────────────────────────────────────────────────────────────────────
+# File: routes/x_mirror.py
+# Purpose: Minimal authenticated echo endpoint for ops/debug
+#          • POST /x_mirror/echo  (Authorization: Bearer <X_BEARER>)
+# Contract:
+#   - 200: returns request JSON when bearer matches env
+#   - 401: invalid bearer
+#   - 503: feature disabled (X_BEARER not set)
+# Notes:
+#   - No import-time crashes; env is read lazily.
+# ──────────────────────────────────────────────────────────────────────────────
+
+from __future__ import annotations
 
 import os
-from typing import Any, Dict, List
+from fastapi import APIRouter, HTTPException, Request
 
-import httpx
-from fastapi import APIRouter, HTTPException
+def _get_bearer() -> str | None:
+    # Support legacy "$shared.X_BEARER" fallback
+    return os.getenv("X_BEARER") or os.getenv("$shared.X_BEARER")
 
-router = APIRouter(prefix="/poems", tags=["poems"])
+router = APIRouter(prefix="/x_mirror", tags=["mirror"])
 
-X_BEARER = os.environ.get("X_BEARER")
-USER = os.environ.get("X_USERNAME", "ranch_wildfire")
-BASE = "https://api.x.com/2"
+@router.post("/echo")
+async def echo(req: Request):
+    expected = _get_bearer()
+    if not expected:
+        raise HTTPException(status_code=503, detail="x_mirror disabled: missing X_BEARER")
 
-if not X_BEARER:
-    # Fail fast so misconfigurations show up during startup.
-    raise RuntimeError("Missing X_BEARER environment variable")
+    auth = req.headers.get("authorization", "")
+    token = auth.split(" ", 1)[1] if auth.lower().startswith("bearer ") else ""
+    if token != expected:
+        raise HTTPException(status_code=401, detail="invalid bearer")
 
-
-async def _fetch_json(client: httpx.AsyncClient, url: str, *, params: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
-    response = await client.get(url, params=params, headers=headers)
-    if response.status_code != 200:
-        raise HTTPException(response.status_code, response.text)
-    return response.json()
-
-
-@router.get("/latest")
-async def poems_latest() -> List[Dict[str, Any]]:
-    headers = {"Authorization": f"Bearer {X_BEARER}"}
     try:
-        async with httpx.AsyncClient(timeout=10) as http:
-            user_payload = await _fetch_json(
-                http,
-                f"{BASE}/users/by",
-                params={"usernames": USER},
-                headers=headers,
-            )
-            data = user_payload.get("data") or []
-            if not data:
-                raise HTTPException(404, "user not found")
-            uid = data[0]["id"]
-
-            tweets_payload = await _fetch_json(
-                http,
-                f"{BASE}/users/{uid}/tweets",
-                params={"max_results": 5, "tweet.fields": "created_at"},
-                headers=headers,
-            )
-            tweets = tweets_payload.get("data", [])
-            return [
-                {
-                    "id": tweet["id"],
-                    "text": tweet["text"],
-                    "created_at": tweet.get("created_at"),
-                }
-                for tweet in tweets
-            ]
-    except httpx.RequestError as exc:
-        raise HTTPException(502, f"upstream error: {exc}") from exc
+        body = await req.json()
+    except Exception:
+        body = None
+    return {"ok": True, "echo": body}
