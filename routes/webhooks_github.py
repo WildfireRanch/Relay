@@ -164,7 +164,7 @@ def _extract_fenced_block(text: str, lang_hint: str = "") -> Optional[str]:
 
 @router.get("/github")
 async def github_probe():
-    return {"ok": True, "msg": "github webhook endpoint is up (GET probe)"}
+    return {"ok": True, "msg": "GitHub webhook endpoint is up (GET probe)"}
 
 
 @router.get("/github/debug")
@@ -180,6 +180,7 @@ async def github_debug():
 
 # ────────────────────────── Route (POST) ──────────────────────────
 
+# ── Main webhook handler ─────────────────────────────────────────────────────
 @router.post("/github")
 async def github(req: Request, bg: BackgroundTasks):
     """
