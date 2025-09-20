@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import os
 from typing import Any, Dict, List, Optional, Callable, Tuple
+import time
+from pathlib import Path
+import math
 
 # Safe logging shim (avoid hard dependency during early boot)
 try:
@@ -35,22 +38,59 @@ except Exception:  # pragma: no cover
         except Exception:
             _LOG.info("event=%s data=%s", event, (data or {}))
 
-from services.kb import search as kb_search
+# Guarded import: degrade gracefully if KB adapter is unavailable
+try:  # noqa: SIM105
+    from services.kb import search as kb_search  # type: ignore
+except Exception as e:  # pragma: no cover
+    kb_search = None  # type: ignore[assignment]
+    try:
+        log_event("semantic_kb_import_failed", {"error": str(e)})
+    except Exception:
+        pass
 
-DEFAULT_K = int(os.getenv("SEMANTIC_DEFAULT_K", "6"))
+def _safe_int(val: Any, default: int) -> int:
+    """Parse int safely; return default on any error."""
+    try:
+        return int(str(val))
+    except Exception:
+        return default
+
+DEFAULT_K = _safe_int(os.getenv("SEMANTIC_DEFAULT_K"), 6)
 
 def _clean_str(s: Any, max_len: int = 1200) -> str:
     t = ("" if s is None else str(s)).strip()
     return t[:max_len]
 
 def _mk_row(hit: Dict[str, Any]) -> Dict[str, Any]:
-    # Map KB schema → stable row fields for rendering
+    """Map KB hit schema → stable row with normalized score in [0,1]."""
     # KB emits: title, path, tier, snippet, similarity (float), meta
     similarity = hit.get("similarity")
+    # Normalize score to [0,1] across potential backends (cosine, IP, etc.)
+    def _norm(x: Any) -> Optional[float]:
+        try:
+            v = float(x)
+        except Exception:
+            return None
+        if not math.isfinite(v):  # NaN/Inf guard
+            return None
+        if -1.0 <= v <= 1.0:
+            # Cosine-like → shift/scale to [0,1]
+            v = 0.5 + 0.5 * v
+        else:
+            # Large positives (e.g., inner product) → logistic-style squash
+            v = max(-20.0, min(20.0, v))
+            v = 1.0 - (1.0 / (1.0 + math.exp(-v)))
+        return max(0.0, min(1.0, v))
+
+    score = _norm(similarity)
+
+    meta = hit.get("meta") or {}
     try:
-        score = float(similarity) if similarity is not None else None
+        if similarity is not None and "_raw_similarity" not in meta:
+            # Aid troubleshooting without affecting ranking logic
+            meta = {**meta, "_raw_similarity": similarity}
     except Exception:
-        score = None
+        pass
 
     return {
         "title": _clean_str(hit.get("title") or hit.get("node_id") or hit.get("id")),
@@ -58,7 +98,7 @@ def _mk_row(hit: Dict[str, Any]) -> Dict[str, Any]:
         "tier": hit.get("tier"),
         "score": score,
         "snippet": _clean_str(hit.get("snippet") or hit.get("text") or hit.get("preview"), 1500),
-        "meta": hit.get("meta") or {},
+        "meta": meta,
     }
 
 def search(
@@ -69,10 +109,24 @@ def search(
     score_threshold: Optional[float] = None,
     **kwargs: Any,
 ) -> List[Dict[str, Any]]:
-    use_k = int(top_k or k or DEFAULT_K)
+    """Run semantic search via KB adapter with robust fallbacks.
+
+    - Accepts either `top_k` or `k`; coerces to an integer with defaults.
+    - Tolerates backend signature drift by trying multiple param forms.
+    - Normalizes results into rows with `score` ∈ [0,1].
+    - Applies optional local `score_threshold` after normalization.
+    - Never raises on adapter errors; logs and returns [] instead.
+    """
+    try:
+        use_k = int(top_k or k or DEFAULT_K)
+    except Exception:
+        use_k = DEFAULT_K
 
     # IMPORTANT: kb.search may accept top_k or k; try both (with/without threshold), then kwargs-free.
     results: List[Dict[str, Any]] = []
+    if kb_search is None:
+        log_event("semantic_search_degraded", {"reason": "kb_search_unavailable"})
+        return []
     try_order = [
         dict(query=q, top_k=use_k, score_threshold=score_threshold, **kwargs),
         dict(query=q, k=use_k,     score_threshold=score_threshold, **kwargs),
@@ -99,8 +153,77 @@ def search(
         return [] 
 
     rows = [_mk_row(h) for h in results if isinstance(h, dict)]
+    # Optional local threshold filter (router may also apply its own env threshold)
+    if score_threshold is not None:
+        try:
+            thr = float(score_threshold)
+            rows = [r for r in rows if (r.get("score") is not None and float(r["score"]) >= thr)]
+        except Exception:
+            pass
     log_event("semantic_search_done", {"k": use_k, "rows": len(rows), "thresh": score_threshold})
     return rows
+
+# Public API (explicit for contributors)
+__all__ = [
+    "search",
+    "render_markdown",
+    "get_semantic_context",
+    "get_retriever",
+    "SemanticRetriever",
+    "TieredSemanticRetriever",
+    "reindex_all",  # public: used by KB reindex path
+]
+
+def reindex_all(root: str | Path) -> Dict[str, Any]:
+    """
+    Contract:
+      { ok: bool, status: "done"|"error",
+        counts: { documents:int, chunks:int }, took_ms:int, error?:str }
+    Pass-1 implementation: fast file walk + conservative chunk estimate.
+    """
+    t0 = time.perf_counter()
+    try:
+        root_path = Path(root).expanduser().resolve()
+        if not root_path.exists() or not root_path.is_dir():
+            took_ms = int((time.perf_counter() - t0) * 1000)
+            msg = f"KB root not found or not a directory: {root_path}"
+            log_event("semantic_reindex_invalid_root", {"root": str(root_path)})
+            return {"ok": False, "status": "error", "counts": {"documents": 0, "chunks": 0}, "took_ms": took_ms, "error": msg}
+
+        allowed = {".md", ".markdown", ".txt"}
+        max_chars = 1200
+        docs = 0
+        chunks = 0
+        for fp in root_path.rglob("*"):
+            if not (fp.is_file() and fp.suffix.lower() in allowed):
+                continue
+            docs += 1
+            try:
+                text = fp.read_text(encoding="utf-8", errors="ignore")
+            except Exception as e:
+                log_event("semantic_reindex_read_skip", {"path": str(fp), "error": str(e)})
+                continue
+            parts = [s.strip() for s in text.split("\n\n") if s.strip()]
+            if not parts:
+                continue
+            acc = 0
+            for part in parts:
+                sz = len(part)
+                if acc == 0 or acc + sz <= max_chars:
+                    acc = (acc + sz) if acc else sz
+                else:
+                    chunks += 1
+                    acc = sz
+            if acc > 0:
+                chunks += 1
+
+        took_ms = int((time.perf_counter() - t0) * 1000)
+        log_event("semantic_reindex_done", {"docs": docs, "chunks": chunks, "took_ms": took_ms})
+        return {"ok": True, "status": "done", "counts": {"documents": docs, "chunks": chunks}, "took_ms": took_ms}
+    except Exception as e:
+        took_ms = int((time.perf_counter() - t0) * 1000)
+        log_event("semantic_reindex_error", {"error": str(e)})
+        return {"ok": False, "status": "error", "counts": {"documents": 0, "chunks": 0}, "took_ms": took_ms, "error": str(e)}
 
 def render_markdown(results: List[Dict[str, Any]]) -> str:
     """
@@ -191,7 +314,7 @@ class TieredSemanticRetriever(SemanticRetriever):
         super().__init__(score_threshold=score_threshold)
         self.wanted_tier = wanted_tier
 
-    def search(self, query: str, k: int):
+    def search(self, query: str, k: int) -> List[Tuple[str, float, str]]:
         rows = search(q=query, k=k, score_threshold=self.score_threshold)
         out = []
         for r in rows:
