@@ -285,18 +285,17 @@ app = create_app()
 PRIMARY_ROUTERS: Iterable[str] = (
     "routes.ask",
     "routes.mcp",
-    # 🔒 Golden paths: require these to be present (fail-fast in prod)
+)
+
+SECONDARY_ROUTERS: Iterable[str] = (
+    # Make these fail-soft so the app stays up while we diagnose imports.
     "routes.docs",
     "routes.kb",
 )
 
-SECONDARY_ROUTERS: Iterable[str] = (
-    # keep this empty for now; add others as you stabilize
-)
-
 OPTIONAL_ROUTERS = {
     "routes.control",
-    "routes.x_mirror",
+   "routes.x_mirror",
     # NOTE: routes.health is mounted early above; do not mount it again.
 }
 
@@ -358,7 +357,27 @@ def router_map():
         return {"routes": table, "count": len(table)}
     except Exception as e:
         return {"error": str(e)}
-
+# ── Router diagnostics: attempt imports and report exceptions (read-only) -----
+    @app.get("/__router_diag")
+    def router_diag():
+        """
+        Attempts to import key route modules and returns exception strings, if any.
+        Does NOT mount anything; purely diagnostic for ops.
+        """
+    import importlib, traceback
+    targets = ["routes.docs", "routes.kb"]
+    out = {}
+    for mod in targets:
+        try:
+            importlib.reload(importlib.import_module(mod))
+            out[mod] = {"ok": True}
+        except Exception as e:
+            out[mod] = {
+                "ok": False,
+                "error": f"{e.__class__.__name__}: {e}",
+                "traceback": traceback.format_exc(),
+            }
+    return {"diagnostics": out}
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Tiny Debug Endpoint (Safe)                                               ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
