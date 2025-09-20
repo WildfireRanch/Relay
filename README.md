@@ -360,3 +360,40 @@ To disable KB writes temporarily: set the API to read-only in your ops UI and av
  /readyz returns 200 (or 200 with google_stack=disabled if sync is intentionally off)
 
  Smoke tests pass (above)
+## Admin Ask (Safe Ask-Echo)
+
+- Paths: `frontend/src/app/admin/ask/page.tsx` (UI), `frontend/src/app/api/ask/*` (proxies)
+- Gate: `frontend/middleware.ts` protects `/admin/ask` and alias `/status/ask`.
+
+Environment (server-side only):
+- `NEXT_PUBLIC_API_URL` – base API URL (e.g., https://api.wildfireranch.us)
+- `ADMIN_API_KEY` or `RELAY_API_KEY` or `API_KEY` – injected as `X-Api-Key`
+- `ADMIN_UI_TOKEN` – Bearer token required by middleware
+- `ADMIN_IPS` (optional) – comma-separated IP allowlist (e.g., `203.0.113.10,198.51.100.25`)
+
+Security Notes:
+- Browser never contacts the backend API directly; it calls `/api/ask/*` proxies.
+- Proxies inject `X-Api-Key` from server env; secrets never render client-side or in logs.
+- Edge Middleware enforces IP allowlist (if set) and `Authorization: Bearer <ADMIN_UI_TOKEN>`.
+- Page is hidden and `noindex` via `metadata`.
+
+Test with curl:
+```
+FRONTEND=http://localhost:3000
+TOKEN='<ADMIN_UI_TOKEN>'
+
+# Gate checks
+curl -i "$FRONTEND/admin/ask" | head -n2                  # 401
+curl -i -H "Authorization: Bearer $TOKEN" "$FRONTEND/admin/ask" | head -n2    # 200 if IP allowed
+
+# Proxy check (server adds X-Api-Key)
+curl -i -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  "$FRONTEND/api/ask/run" --data '{"prompt":"ping"}'      # mirrors upstream status/body
+```
+
+Rollback:
+- Remove `frontend/middleware.ts`
+- Remove `frontend/src/app/api/ask/run/route.ts`
+- Remove `frontend/src/app/api/ask/stream/route.ts` (if not needed)
+- Remove `frontend/src/app/admin/ask/page.tsx`
