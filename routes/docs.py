@@ -210,6 +210,16 @@ def _execute_op(
     background.add_task(_bg_wrapper)
     return _ok({"accepted": True}, status=202)
 
+    @router.get("/op_status")
+    def op_status():
+        """Small ops probe: list in-flight async ops and present lockfiles."""
+        locks = []
+        try:
+            for p in Path(str(LOCK_DIR)).glob("*.lock"):
+                locks.append(p.name)
+        except Exception:
+         pass
+    return _ok({"in_flight": sorted(list(_ASYNC_IN_FLIGHT)), "locks": locks})
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Router                                                                   ║
