@@ -335,28 +335,120 @@ for rp in OPTIONAL_ROUTERS:
 
 logger.info("✅ Critical routers present: ['ask','mcp']")
 
-
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Router map (read-only; safe for ops)                                     ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
 
 @app.get("/__router_map")
-def router_map():
+def router_map(
+    prefix: str = "",              # optional: return only paths starting with this
+    tag: str | None = None,        # optional: filter by a specific tag
+    method: str | None = None,     # optional: filter by HTTP method (e.g., GET)
+    regex: str | None = None,      # optional: re filter on path (compiled safely)
+    verbose: int = 0,              # optional: include extra fields when 1
+):
     """
-    Read-only list of mounted routes (paths + methods).
-    Helps diagnose 404s from missing or failed router imports.
+    Read-only inventory of mounted routes (paths + methods).
+    Filters:
+      • prefix=/docs     → only routes starting with /docs
+      • tag=docs         → only routes carrying the 'docs' tag
+      • method=POST      → only routes exposing that method
+      • regex=^/kb/.*    → only routes whose path matches this regex
+      • verbose=1        → include name, module, tags, and auth hint
+
+    Guaranteed to never raise; returns {"routes":[...],"count":N,"filters":{...}}
     """
     try:
+        import re
         from fastapi.routing import APIRoute
-        table = [
-            {"path": r.path, "methods": sorted(list(r.methods or []))}
-            for r in app.router.routes
-            if isinstance(r, APIRoute)
-        ]
-        table.sort(key=lambda x: (x["path"], ",".join(x["methods"])))
-        return {"routes": table, "count": len(table)}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"imports failed: {e}"}
+
+    # Compile regex safely, but do not fail the endpoint if it's invalid
+    rx = None
+    if regex:
+        try:
+            rx = re.compile(regex)
+        except Exception:
+            rx = None  # ignore invalid regex; behave as if unset
+
+    def _has_api_key_dep(r: APIRoute) -> bool:
+        """
+        Best-effort detection of our shared API-key dependency.
+        Never raises; returns False if structure changes.
+        """
+        try:
+            dep = getattr(r, "dependant", None)
+            if not dep:
+                return False
+            for d in getattr(dep, "dependencies", []) or []:
+                call = getattr(d, "call", None)
+                # Match by function name to avoid import coupling
+                if getattr(call, "__name__", "") == "require_api_key":
+                    return True
+        except Exception:
+            return False
+        return False
+
+    rows = []
+    try:
+        for r in app.router.routes:  # type: ignore[attr-defined]
+            if not isinstance(r, APIRoute):
+                continue
+            path = r.path
+            methods = sorted(list(r.methods or []))
+
+            # Basic filters (fast)
+            if prefix and not path.startswith(prefix):
+                continue
+            if method and method.upper() not in methods:
+                continue
+
+            # Tag filter (APIRoute.tags is a list[str], may be absent)
+            rtags = []
+            try:
+                rtags = list(getattr(r, "tags", []) or [])
+            except Exception:
+                rtags = []
+            if tag and tag not in rtags:
+                continue
+
+            # Regex filter last (slowest)
+            if rx and not rx.search(path or ""):
+                continue
+
+            item = {
+                "path": path,
+                "methods": methods,
+            }
+
+            if verbose:
+                # Extra fields for ops
+                try:
+                    item["name"] = getattr(r, "name", None)
+                except Exception:
+                    item["name"] = None
+                try:
+                    # endpoint is the user function; module gives provenance
+                    ep = getattr(r, "endpoint", None)
+                    item["module"] = getattr(ep, "__module__", None)
+                except Exception:
+                    item["module"] = None
+                item["tags"] = rtags
+                item["auth_api_key"] = _has_api_key_dep(r)
+
+            rows.append(item)
+
+        rows.sort(key=lambda x: (x["path"], ",".join(x["methods"])))
+        return {
+            "routes": rows,
+            "count": len(rows),
+            "filters": {"prefix": prefix or None, "tag": tag, "method": (method.upper() if method else None), "regex": regex, "verbose": bool(verbose)},
+        }
+    except Exception as e:
+        # Last-resort guard (never crash)
+        return {"routes": [], "count": 0, "filters": {"prefix": prefix or None, "tag": tag, "method": method, "regex": regex, "verbose": bool(verbose)}, "error": str(e)}
+
 # ── Router diagnostics: attempt imports and report exceptions (read-only) -----
     @app.get("/__router_diag")
     def router_diag():
@@ -365,7 +457,7 @@ def router_map():
         Does NOT mount anything; purely diagnostic for ops.
         """
     import importlib, traceback
-    targets = ["routes.docs", "routes.kb"]
+    targets = ["routes.docs", "routes.kb", "routes.x_mirror"]
     out = {}
     for mod in targets:
         try:
