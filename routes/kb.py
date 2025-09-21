@@ -1,54 +1,61 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# File: kb.py
-# Directory: routes
-# Purpose: Provides the backend functionality for knowledge base search and management, including API endpoints and data validation models.
-# Security: All admin/debug endpoints require X-API-Key header, which must match API_KEY in environment.
-# Stack: FastAPI, LlamaIndex/OpenAI (via services.kb), User-aware
-# Upstream:
-#   - ENV: —
-#   - Imports: fastapi, os, pydantic, services, typing
+# File: routes/kb.py
+# Purpose: KB search + admin ops — semantic-first, timeout-safe, production-grade
+# Security: All endpoints require X-Api-Key via require_api_key dependency
+# Contracts:
+#   • POST /kb/search   body {query, k?, search_type?} → {ok, threshold, count, results[]}
+#   • GET  /kb/search   ?query=&k=&search_type=        → same
+#   • POST /kb/warmup   → {ok, warmed}
+#   • GET  /kb/summary  → {ok?, items? | summary?} (shim in services.kb)
+#   • POST /kb/reindex  → services.kb.api_reindex() passthrough
 #
-# Downstream:
-#   - main
-#
-# Contents:
-#   - SearchQuery()
-#   - get_summary()
-#   - reindex_kb()
-#   - require_api_key()
-#   - search_kb()
-#   - search_kb_get()
-
+# Notes:
+#   • Fast path uses services.semantic_retriever.search (adaptable signature).
+#   • Optional fallback to services.kb.search guarded by ALLOW_KB_FALLBACK.
+#   • Non-blocking timeouts return JSON 503 (never edge 504).
+#   • Scores normalized to [0,1]; filtered by SEMANTIC_SCORE_THRESHOLD (env).
+#   • Stable, non-throwing warmup and summary paths.
 # ──────────────────────────────────────────────────────────────────────────────
 
-from fastapi import APIRouter, HTTPException, Header, Depends, Query
-import os, math, time, logging
+from __future__ import annotations
+
+import logging
+import math
+import os
+import time
+from typing import Any, Callable, List, Optional, Tuple
+
 import anyio
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, List
-from services import kb
+
+# Best-effort structured logger (safe to no-op if missing)
+try:  # pragma: no cover
+    from core.logging import log_event as _structured_log_event  # type: ignore
+except Exception:  # pragma: no cover
+    def _structured_log_event(event: str, data: dict) -> None:  # type: ignore
+        return
+
 from services import kb as kb_service
-from services.auth import require_api_key  # ✅ shared API key validator
+from services.auth import require_api_key
 
 # Prefer semantic adapter when available (fast path)
 try:  # pragma: no cover
-    from services.semantic_retriever import search as sem_search  # type: ignore
-except Exception:
-    sem_search = None  # type: ignore
+    from services.semantic_retriever import search as sem_search  # type: ignore[attr-defined]
+except Exception:  # pragma: no cover
+    sem_search = None  # type: ignore[assignment]
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Enforce X-Api-Key (or Bearer) on ALL /kb/* endpoints.
-# Golden path requires /kb/search to succeed "with auth".
+# Router (global auth)
 # ──────────────────────────────────────────────────────────────────────────────
-router = APIRouter(
-    prefix="/kb",
-    tags=["kb"],
-    dependencies=[Depends(require_api_key)],
-)
 
-logger = logging.getLogger("routes.kb")
-if not logger.handlers:
-    logger.setLevel(logging.INFO)
+router = APIRouter(prefix="/kb", tags=["kb"], dependencies=[Depends(require_api_key)])
+
+_LOG = logging.getLogger("relay.kb")
+if not _LOG.handlers:
+    _LOG.setLevel(logging.INFO)
+
 
 def _env_float(name: str, default: float) -> float:
     try:
@@ -56,89 +63,211 @@ def _env_float(name: str, default: float) -> float:
     except Exception:
         return default
 
-SEMANTIC_SCORE_THRESHOLD = _env_float("SEMANTIC_SCORE_THRESHOLD", 0.25)
-# Fail-fast timeout for KB search (seconds)
-try:
-    KB_SEARCH_TIMEOUT_S = float(os.getenv("KB_SEARCH_TIMEOUT_S", "30"))
-except Exception:
-    KB_SEARCH_TIMEOUT_S = 30.0
-ALLOW_KB_FALLBACK = (os.getenv("ALLOW_KB_FALLBACK", "1") not in ("0", "false", "False"))
 
-def _score_of(row) -> float:
+SEMANTIC_SCORE_THRESHOLD: float = _env_float("SEMANTIC_SCORE_THRESHOLD", 0.25)
+KB_SEARCH_TIMEOUT_S: float = _env_float("KB_SEARCH_TIMEOUT_S", 30.0)
+ALLOW_KB_FALLBACK: bool = os.getenv("ALLOW_KB_FALLBACK", "1") not in ("0", "false", "False")
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers: non-blocking timeout harness, scoring, logging
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def _run_with_timeout(fn: Callable[[], Any], timeout_s: float) -> Tuple[bool, Any]:
     """
-    Be tolerant: accept 'score' or 'similarity'; coerce to float, clamp 0..1 when possible.
+    Run a blocking function in a worker thread and race a timeout.
+
+    Returns:
+        (ok, value) on success,
+        (False, "timeout") on timeout,
+        (False, Exception) on error.
+
+    Design:
+        - The worker runs in a thread via anyio.to_thread.run_sync.
+        - The main task awaits a memory channel receive with a move_on_after timeout.
+        - We never block the event loop; the worker may complete later but we return promptly.
+    """
+    send, recv = anyio.create_memory_object_stream(1)
+
+    async def _runner() -> None:
+        def _work():
+            try:
+                return fn()
+            except Exception as e:  # noqa: BLE001
+                return e
+
+        result = await anyio.to_thread.run_sync(_work)
+        # send is async; dispatch from thread-safe context is not needed here
+        await send.send(result)
+
+    result: Any = None
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(_runner)
+        with anyio.move_on_after(timeout_s) as scope:
+            result = await recv.receive()
+        tg.cancel_scope.cancel()
+
+    if scope.cancel_called:
+        return False, "timeout"
+    if isinstance(result, Exception):
+        return False, result
+    return True, result
+
+
+def _score_of(row: dict) -> float:
+    """
+    Accept 'score' or 'similarity'; coerce to float; clamp into [0,1].
+    - If score already in [0,1], keep it.
+    - If cosine similarity in [-1,1], map to [0,1] via (x+1)/2.
+    - If arbitrary positive score, squash with logistic curve and clamp.
     """
     v = (row or {}).get("score", (row or {}).get("similarity"))
     try:
         x = float(v)
     except Exception:
-        return -math.inf  # guarantees it will be filtered if threshold > -inf
+        return -math.inf
     if math.isnan(x) or math.isinf(x):
         return -math.inf
     if 0.0 <= x <= 1.0:
         return x
     if -1.0 <= x <= 1.0:
-        return max(0.0, min(1.0, 0.5 + 0.5 * x))
-    # Large positives (e.g., dot product): logistic squash (clamped)
+        return max(0.0, min(1.0, 0.5 + 0.5 * x))  # shift/scale cosine
+    # Logistic squash for large positives (clamped)
     x = min(x, 20.0)
     return 1.0 - (1.0 / (1.0 + math.exp(-x)))
 
+
+def _log_search_event(event: str, **data: Any) -> None:
+    try:
+        _LOG.info("%s %s", event, {k: v for k, v in data.items()})
+    except Exception:
+        pass
+    try:
+        _structured_log_event(event, data)  # best-effort external logger
+    except Exception:
+        pass
+
+
+def _corr_id(req: Optional[Request]) -> str:
+    try:
+        return getattr(getattr(req, "state", None), "corr_id", "") or ""
+    except Exception:
+        return ""
+
+
+def _json_503(reason: str, **extra: Any) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"ok": False, "status": 503, "reason": reason, **extra},
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Models
+# ──────────────────────────────────────────────────────────────────────────────
+
+
 class SearchQuery(BaseModel):
     query: str
-    k: int = 4
-    search_type: Optional[str] = "all"  # "code", "doc", or "all"
+    k: int = 10
+    search_type: Optional[str] = "all"  # "code" | "doc" | "all"
 
-@router.post("/search", dependencies=[Depends(require_api_key)])
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /kb/search — semantic-first search (async, timeout-safe)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.post("/search")
 async def search_kb(
     q: SearchQuery,
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+    request: Request,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
-    """
-    Search the knowledge base (semantic vector index) for relevant snippets.
-    Optional X-User-Id header for user-aware results.
-    `search_type`: 'code', 'doc', or 'all'.
-    """
     user_id = x_user_id or "anonymous"
+    corr_id = _corr_id(request)
+    t0 = time.perf_counter()
+    source = "none"
     rows: List[dict] = []
+
     # 1) Semantic fast path
     if sem_search is not None:
         try:
-            with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-                def _sem_post():
-                    try:
-                        return sem_search(query=q.query, k=q.k) or []
-                    except TypeError:
-                        return sem_search(q=q.query, k=q.k) or []
-                rows = await anyio.to_thread.run_sync(_sem_post)
-            if scope.cancel_called:
-                return {
-                    "ok": False,
-                    "status": 503,
-                    "reason": "semantic_timeout",
-                    "timeout_s": KB_SEARCH_TIMEOUT_S,
-                }
+            def _sem_call():
+                try:
+                    return sem_search(query=q.query, k=q.k) or []
+                except TypeError:
+                    return sem_search(q=q.query, k=q.k) or []
+
+            ok, res = await _run_with_timeout(_sem_call, KB_SEARCH_TIMEOUT_S)
+            if ok and res:
+                rows = res
+                source = "semantic"
+            elif not ok and res == "timeout":
+                took_ms = int((time.perf_counter() - t0) * 1000)
+                _log_search_event(
+                    "kb.search.timeout",
+                    corr_id=corr_id,
+                    path="POST",
+                    source="semantic",
+                    timeout_s=KB_SEARCH_TIMEOUT_S,
+                    took_ms=took_ms,
+                    k=q.k,
+                    query_len=len(q.query or ""),
+                    allow_fallback=ALLOW_KB_FALLBACK,
+                )
+                return _json_503("semantic_timeout", timeout_s=KB_SEARCH_TIMEOUT_S)
         except Exception:
             rows = []
 
-    # 2) Optional fallback to KB service
+    # 2) Optional fallback to KB service (heavier)
     if not rows and ALLOW_KB_FALLBACK:
         try:
-            with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-                rows = await anyio.to_thread.run_sync(
-                    lambda: kb_service.search(q=q.query, limit=q.k, offset=0) or []
-                )
-            if scope.cancel_called:
-                return {
-                    "ok": False,
-                    "status": 503,
-                    "reason": "kb_timeout",
-                    "timeout_s": KB_SEARCH_TIMEOUT_S,
-                }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"KB search failed: {e}")
+            def _kb_call():
+                try:
+                    # Prefer passing search_type if accepted by the service
+                    return kb_service.search(
+                        q=q.query, limit=q.k, offset=0, search_type=q.search_type
+                    ) or []
+                except TypeError:
+                    return kb_service.search(q=q.query, limit=q.k, offset=0) or []
 
-    normalized = []
-    for r in (rows or []):
+            ok, res = await _run_with_timeout(_kb_call, KB_SEARCH_TIMEOUT_S)
+            if not ok and res == "timeout":
+                took_ms = int((time.perf_counter() - t0) * 1000)
+                _log_search_event(
+                    "kb.search.timeout",
+                    corr_id=corr_id,
+                    path="POST",
+                    source="fallback",
+                    timeout_s=KB_SEARCH_TIMEOUT_S,
+                    took_ms=took_ms,
+                    k=q.k,
+                    query_len=len(q.query or ""),
+                    allow_fallback=ALLOW_KB_FALLBACK,
+                )
+                return _json_503("kb_timeout", timeout_s=KB_SEARCH_TIMEOUT_S)
+            if not ok and isinstance(res, Exception):
+                raise res
+            rows = res or []
+            source = "fallback" if rows else source
+        except Exception as e:  # noqa: BLE001
+            took_ms = int((time.perf_counter() - t0) * 1000)
+            _log_search_event(
+                "kb.search.error",
+                corr_id=corr_id,
+                path="POST",
+                source="fallback",
+                error=str(e),
+                took_ms=took_ms,
+                k=q.k,
+                query_len=len(q.query or ""),
+            )
+            raise HTTPException(status_code=503, detail=f"KB search failed: {e}")
+
+    # 3) Normalize & filter
+    normalized: List[dict] = []
+    for r in rows or []:
         if not isinstance(r, dict):
             continue
         s = _score_of(r)
@@ -147,14 +276,165 @@ async def search_kb(
         n = dict(r)
         n["score"] = s
         normalized.append(n)
-    return {"ok": True, "impl": "kb.search v2-async", "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
+
+    took_ms = int((time.perf_counter() - t0) * 1000)
+    _log_search_event(
+        "kb.search.ok",
+        corr_id=corr_id,
+        path="POST",
+        source=source,
+        took_ms=took_ms,
+        k=q.k,
+        count=len(normalized),
+        threshold=SEMANTIC_SCORE_THRESHOLD,
+        timeout_s=KB_SEARCH_TIMEOUT_S,
+        allow_fallback=ALLOW_KB_FALLBACK,
+        query_len=len(q.query or ""),
+        user_id=user_id,
+    )
+    return {
+        "ok": True,
+        "threshold": SEMANTIC_SCORE_THRESHOLD,
+        "count": len(normalized),
+        "results": normalized,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GET /kb/search — convenience GET variant (same behavior/shape)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/search")
+async def search_kb_get(
+    query: str = Query(...),
+    k: int = Query(10, ge=1, le=1000),
+    search_type: Optional[str] = Query("all"),
+    request: Optional[Request] = None,
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+):
+    user_id = x_user_id or "anonymous"
+    corr_id = _corr_id(request)
+    t0 = time.perf_counter()
+    source = "none"
+    rows: List[dict] = []
+
+    # 1) Semantic fast path
+    if sem_search is not None:
+        try:
+            def _sem_call():
+                try:
+                    return sem_search(query=query, k=k) or []
+                except TypeError:
+                    return sem_search(q=query, k=k) or []
+
+            ok, res = await _run_with_timeout(_sem_call, KB_SEARCH_TIMEOUT_S)
+            if ok and res:
+                rows = res
+                source = "semantic"
+            elif not ok and res == "timeout":
+                took_ms = int((time.perf_counter() - t0) * 1000)
+                _log_search_event(
+                    "kb.search.timeout",
+                    corr_id=corr_id,
+                    path="GET",
+                    source="semantic",
+                    timeout_s=KB_SEARCH_TIMEOUT_S,
+                    took_ms=took_ms,
+                    limit=k,
+                    query_len=len(query or ""),
+                    allow_fallback=ALLOW_KB_FALLBACK,
+                )
+                return _json_503("semantic_timeout", timeout_s=KB_SEARCH_TIMEOUT_S)
+        except Exception:
+            rows = []
+
+    # 2) Optional fallback to KB service
+    if not rows and ALLOW_KB_FALLBACK:
+        try:
+            def _kb_call():
+                try:
+                    return kb_service.search(
+                        q=query, limit=k, offset=0, search_type=search_type
+                    ) or []
+                except TypeError:
+                    return kb_service.search(q=query, limit=k, offset=0) or []
+
+            ok, res = await _run_with_timeout(_kb_call, KB_SEARCH_TIMEOUT_S)
+            if not ok and res == "timeout":
+                took_ms = int((time.perf_counter() - t0) * 1000)
+                _log_search_event(
+                    "kb.search.timeout",
+                    corr_id=corr_id,
+                    path="GET",
+                    source="fallback",
+                    timeout_s=KB_SEARCH_TIMEOUT_S,
+                    took_ms=took_ms,
+                    limit=k,
+                    query_len=len(query or ""),
+                    allow_fallback=ALLOW_KB_FALLBACK,
+                )
+                return _json_503("kb_timeout", timeout_s=KB_SEARCH_TIMEOUT_S)
+            if not ok and isinstance(res, Exception):
+                raise res
+            rows = res or []
+            source = "fallback" if rows else source
+        except Exception as e:  # noqa: BLE001
+            took_ms = int((time.perf_counter() - t0) * 1000)
+            _log_search_event(
+                "kb.search.error",
+                corr_id=corr_id,
+                path="GET",
+                source="fallback",
+                error=str(e),
+                took_ms=took_ms,
+                limit=k,
+                query_len=len(query or ""),
+            )
+            raise HTTPException(status_code=503, detail=f"KB search failed: {e}")
+
+    # 3) Normalize & filter
+    normalized: List[dict] = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        s = _score_of(r)
+        if s < SEMANTIC_SCORE_THRESHOLD:
+            continue
+        n = dict(r)
+        n["score"] = s
+        normalized.append(n)
+
+    took_ms = int((time.perf_counter() - t0) * 1000)
+    _log_search_event(
+        "kb.search.ok",
+        corr_id=corr_id,
+        path="GET",
+        source=source,
+        took_ms=took_ms,
+        limit=k,
+        count=len(normalized),
+        threshold=SEMANTIC_SCORE_THRESHOLD,
+        timeout_s=KB_SEARCH_TIMEOUT_S,
+        allow_fallback=ALLOW_KB_FALLBACK,
+        query_len=len(query or ""),
+        user_id=user_id,
+    )
+    return {
+        "ok": True,
+        "threshold": SEMANTIC_SCORE_THRESHOLD,
+        "count": len(normalized),
+        "results": normalized,
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /kb/warmup — prime semantic + fallback paths (idempotent)
+# ──────────────────────────────────────────────────────────────────────────────
 
 
 @router.post("/warmup")
-async def kb_warmup(user=Depends(require_api_key)):
-    """
-    Kick semantic+kb warm paths in background so first real search is fast.
-    """
+async def kb_warmup():
     try:
         if sem_search is not None:
             def _sem():
@@ -162,97 +442,46 @@ async def kb_warmup(user=Depends(require_api_key)):
                     return sem_search(query="warmup", k=1)
                 except TypeError:
                     return sem_search(q="warmup", k=1)
+
             await anyio.to_thread.run_sync(_sem)
-        await anyio.to_thread.run_sync(lambda: kb_service.search(q="warmup", limit=1, offset=0) or [])
+
+        # Warm fallback path lightly
+        await anyio.to_thread.run_sync(
+            lambda: kb_service.search(q="warmup", limit=1, offset=0) or []
+        )
         return {"ok": True, "warmed": True}
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
 
-@router.get("/search", dependencies=[Depends(require_api_key)])
-async def search_kb_get(
-    query: str,
-    k: int = 4,
-    search_type: Optional[str] = "all",
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
-):
-    """
-    GET variant of KB search for easy testing.
-    """
-    user_id = x_user_id or "anonymous"
-    rows: List[dict] = []
-    # Semantic fast path
-    if sem_search is not None:
-        try:
-            with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-                def _sem_get():
-                    try:
-                        return sem_search(query=query, k=k) or []
-                    except TypeError:
-                        return sem_search(q=query, k=k) or []
-                rows = await anyio.to_thread.run_sync(_sem_get)
-            if scope.cancel_called:
-                return {
-                    "ok": False,
-                    "status": 503,
-                    "reason": "semantic_timeout",
-                    "timeout_s": KB_SEARCH_TIMEOUT_S,
-                }
-        except Exception:
-            rows = []
 
-    # Fallback to KB service when allowed
-    if not rows and ALLOW_KB_FALLBACK:
-        try:
-            with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-                rows = await anyio.to_thread.run_sync(
-                    lambda: kb_service.search(q=query, limit=k, offset=0) or []
-                )
-            if scope.cancel_called:
-                return {
-                    "ok": False,
-                    "status": 503,
-                    "reason": "kb_timeout",
-                    "timeout_s": KB_SEARCH_TIMEOUT_S,
-                }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"KB search failed: {e}")
+# ──────────────────────────────────────────────────────────────────────────────
+# GET /kb/summary — tolerant wrapper over services.kb shim
+# ──────────────────────────────────────────────────────────────────────────────
 
-    normalized = []
-    for r in (rows or []):
-        if not isinstance(r, dict):
-            continue
-        s = _score_of(r)
-        if s < SEMANTIC_SCORE_THRESHOLD:
-            continue
-        n = dict(r)
-        n["score"] = s
-        normalized.append(n)
-    return {"ok": True, "impl": "kb.search v2-async", "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
 
 @router.get("/summary")
-async def get_summary(
-    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
-):
-    """
-    Fetch recent context summary for a given user, or fallback to generic summary.
-    """
+async def get_summary(x_user_id: Optional[str] = Header(None, alias="X-User-Id")):
     user_id = x_user_id or "anonymous"
     try:
-        summary = kb.get_recent_summaries(user_id)
-        return {"summary": summary}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"KB summary fetch failed: {e}")
+        data = kb_service.get_recent_summaries(user_id=user_id)
+        # Normalize shape (services.kb shim returns {ok, items, note?})
+        if isinstance(data, dict) and "ok" in data:
+            return data
+        return {"ok": True, "items": data or []}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "items": [], "error": str(e)}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# POST /kb/reindex — prefer semantic path; preserve legacy fields
+# ──────────────────────────────────────────────────────────────────────────────
+
 
 @router.post("/reindex")
-async def reindex_kb(
-    api_key: str = Depends(require_api_key)
-):
-    """
-    Trigger a rebuild of the KB index (admin/debug only).
-    Requires X-API-Key header.
-    """
+async def reindex_kb():
     try:
-        resp = kb.api_reindex()
+        # Pass through exactly (contracts enforced at services layer)
+        resp = kb_service.api_reindex()
         return resp
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"KB reindex failed: {e}")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"KB reindex failed: {e}")
