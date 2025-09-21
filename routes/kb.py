@@ -23,6 +23,7 @@
 
 from fastapi import APIRouter, HTTPException, Header, Depends, Query
 import os, math
+import anyio
 from pydantic import BaseModel
 from typing import Optional, List
 from services import kb
@@ -45,6 +46,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 SEMANTIC_SCORE_THRESHOLD = _env_float("SEMANTIC_SCORE_THRESHOLD", 0.25)
+KB_SEARCH_TIMEOUT_S = _env_float("KB_SEARCH_TIMEOUT_S", 20.0)
 
 def _score_of(row) -> float:
     """
@@ -82,11 +84,20 @@ async def search_kb(
     """
     user_id = x_user_id or "anonymous"
     try:
-        results = kb.api_search(
-            query=q.query,
-            k=q.k,
-            search_type=q.search_type or "all"
-        ) or []
+        with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
+            results = kb.api_search(
+                query=q.query,
+                k=q.k,
+                search_type=q.search_type or "all"
+            ) or []
+        if scope.cancel_called:
+            return {
+                "ok": False,
+                "status": 503,
+                "reason": "search_timeout",
+                "timeout_s": KB_SEARCH_TIMEOUT_S,
+                "hint": "Warm the index (/kb/reindex) or increase KB_SEARCH_TIMEOUT_S",
+            }
 
         normalized = []
         for r in results:
@@ -114,11 +125,20 @@ async def search_kb_get(
     """
     user_id = x_user_id or "anonymous"
     try:
-        results = kb.api_search(
-            query=query,
-            k=k,
-            search_type=search_type or "all"
-        ) or []
+        with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
+            results = kb.api_search(
+                query=query,
+                k=k,
+                search_type=search_type or "all"
+            ) or []
+        if scope.cancel_called:
+            return {
+                "ok": False,
+                "status": 503,
+                "reason": "search_timeout",
+                "timeout_s": KB_SEARCH_TIMEOUT_S,
+                "hint": "Warm the index (/kb/reindex) or increase KB_SEARCH_TIMEOUT_S",
+            }
 
         normalized = []
         for r in results:
