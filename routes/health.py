@@ -340,4 +340,20 @@ def readyz(request: Request) -> JSONResponse:
         "problems": problems,
     }
 
+    # Expose KB/search knobs as top-level typed fields (not stringified env)
+    try:
+        payload["kb_search_timeout_s"] = float(_env("KB_SEARCH_TIMEOUT_S", "30") or "30")
+    except Exception:
+        payload["kb_search_timeout_s"] = 30.0
+    try:
+        payload["semantic_score_threshold"] = float(_env("SEMANTIC_SCORE_THRESHOLD", "0.25") or "0.25")
+    except Exception:
+        payload["semantic_score_threshold"] = 0.25
+    try:
+        payload["allow_kb_fallback"] = (
+            (_env("ALLOW_KB_FALLBACK", "1") or "1") not in ("0", "false", "False")
+        )
+    except Exception:
+        payload["allow_kb_fallback"] = True
+
     return JSONResponse(status_code=(200 if ok else 503), content=payload)
