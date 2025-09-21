@@ -143,7 +143,7 @@ async def search_kb(
         n = dict(r)
         n["score"] = s
         normalized.append(n)
-    return {"ok": True, "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
+    return {"ok": True, "impl": "kb.search v2-async", "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
 
 
 @router.post("/warmup")
@@ -223,7 +223,7 @@ async def search_kb_get(
         n = dict(r)
         n["score"] = s
         normalized.append(n)
-    return {"ok": True, "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
+    return {"ok": True, "impl": "kb.search v2-async", "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
 
 @router.get("/summary")
 async def get_summary(
