@@ -497,12 +497,17 @@ def get_index():
         ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
         return load_index_from_storage(ctx, embed_model=_resolve_embed_model())
 
-def warmup() -> None:
-    """Optional convenience for readiness probes."""
+def warmup() -> Dict[str, Any]:
+    """
+    Optional convenience for readiness probes.
+    Performs a tiny search to trigger lazy imports, index load, or cache priming.
+    Returns a stable dict instead of raising.
+    """
     try:
-        _ = get_index()
+        _ = api_search(query="warmup", k=1) or []
+        return {"ok": True}
     except Exception as e:
-        log_event("kb_warmup_failed", {"error": str(e)})
+        return {"ok": False, "error": str(e)}
 
 
 # ╔══════════════════════════════════════════════════════════════════════════╗
