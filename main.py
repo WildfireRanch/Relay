@@ -39,6 +39,29 @@ from starlette.requests import ClientDisconnect
 logger = logging.getLogger("relay.main")
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# LlamaIndex LLM defaults (chat model, retries, timeout)
+# Why: Avoid legacy gpt-3.5-turbo RPD caps; set sane retries/timeouts centrally
+# ──────────────────────────────────────────────────────────────────────────────
+try:
+    from llama_index.core import Settings as LI_Settings  # type: ignore
+    from llama_index.llms.openai import OpenAI as LI_OpenAI  # type: ignore
+    from llama_index.embeddings.openai import OpenAIEmbedding  # type: ignore
+    import os
+
+    CHAT_MODEL = os.getenv("LLM_CHAT_MODEL", "gpt-4o-mini")
+    CHAT_MAX_RETRIES = int(os.getenv("LLM_CHAT_MAX_RETRIES", "1"))
+    CHAT_TIMEOUT_S = float(os.getenv("LLM_CHAT_TIMEOUT_S", "30"))
+    EMB_MODEL = os.getenv("EMBED_MODEL", "text-embedding-3-small")
+
+    LI_Settings.llm = LI_OpenAI(model=CHAT_MODEL, max_retries=CHAT_MAX_RETRIES, timeout=CHAT_TIMEOUT_S)
+    # Keep current embedding model; this matches your services.kb logs
+    LI_Settings.embed_model = OpenAIEmbedding(model=EMB_MODEL)
+    logger.info("🔧 LlamaIndex configured llm=%s retries=%s timeout_s=%.1f embed=%s",
+                CHAT_MODEL, CHAT_MAX_RETRIES, CHAT_TIMEOUT_S, EMB_MODEL)
+except Exception as _e:
+    logger.warning("LlamaIndex not configured (%s)", _e)
+
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Environment Helpers                                                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝

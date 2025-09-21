@@ -50,6 +50,28 @@ except Exception:  # pragma: no cover
         return
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Change: Guard LLM usage on daily rate limit; return structured 503
+# Why: Avoid useless retries once RPD is exhausted; surface clean error
+# ──────────────────────────────────────────────────────────────────────────────
+import threading
+import time as _time
+_LLM_SUSPEND_UNTIL = 0.0
+_LLM_LOCK = threading.Lock()
+
+def _llm_suspended() -> bool:
+    return _time.time() < _LLM_SUSPEND_UNTIL
+
+def _suspend_llm_for(seconds: float) -> None:
+    global _LLM_SUSPEND_UNTIL
+    with _LLM_LOCK:
+        _LLM_SUSPEND_UNTIL = max(_LLM_SUSPEND_UNTIL, _time.time() + seconds)
+
+def _maybe_mark_daily_limit(e: Exception) -> bool:
+    msg = str(e)
+    # LlamaIndex/OpenAI RateLimitError surfaces this text for daily caps
+    return "requests per day" in msg.lower() or "RPD" in msg or "rate_limit_exceeded" in msg
+
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Paths & Config (lightweight; no heavy imports here)                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
@@ -513,6 +535,44 @@ def warmup() -> Dict[str, Any]:
 # ╔══════════════════════════════════════════════════════════════════════════╗
 # ║ Search (public API)                                                      ║
 # ╚══════════════════════════════════════════════════════════════════════════╝
+
+def get_recent_summaries(user_id: str):
+    """
+    Return recent KB/context summaries for a user.
+
+    Normal return (legacy): list[str] of short summaries.
+    When LLM usage is suspended due to daily rate limit detection, returns:
+      {"ok": False, "items": [], "reason": "llm_rate_limited"}
+    """
+    if _llm_suspended():
+        return {"ok": False, "items": [], "reason": "llm_rate_limited"}
+
+    try:
+        items: List[str] = []
+        gen_dir = PROJECT_ROOT / "docs" / "generated"
+        # Prefer project-wide context first
+        for fname in ("relay_context.md", "global_context.md"):
+            fp = gen_dir / fname
+            if fp.exists() and fp.is_file():
+                try:
+                    text = fp.read_text(encoding="utf-8").strip()
+                    if text:
+                        items.append(text[:1200])  # keep it short for prompts
+                except Exception:
+                    continue
+
+        return items
+    except Exception as e:
+        # If the caller's path uses an LLM and we hit an RPD cap, suspend
+        if _maybe_mark_daily_limit(e):
+            import datetime as _dt
+            now = _dt.datetime.utcnow()
+            tomorrow = (now + _dt.timedelta(days=1)).date()
+            midnight = _dt.datetime.combine(tomorrow, _dt.time(0, 0))
+            suspend_secs = max(3600.0, (midnight - now).total_seconds())
+            _suspend_llm_for(suspend_secs)
+            return {"ok": False, "items": [], "reason": "llm_rate_limited"}
+        raise
 
 def simple_search(
     query: str,
