@@ -1,0 +1,114 @@
+   | `RERANK_MIN_SCORE_GLOBAL` / `SEMANTIC_SCORE_THRESHOLD` | optional | routes/mcp.py:279, services/kb.py:344 | Tightens retriever score filtering. |
+   | `KB_EMBED_MODEL` / `OPENAI_EMBED_MODEL` | default `text-embedding-3-large` | services/config.py:8 | Selects embedding model name. |
+   | `INDEX_ROOT` | default `./index/<ENV>` | services/config.py:15 | Root for persisted LlamaIndex storage. |
+   | `INDEX_DIR` | default `<INDEX_ROOT>/<MODEL>` | services/config.py:16 | Final index directory; created on import. |
+   | `RELAY_PROJECT_ROOT` | default repo root | services/kb.py:54 | Drives default doc/code scan paths. |
+
+   | `KB_EMBED_MODEL` / `OPENAI_EMBED_MODEL` | default `text-embedding-3-large` | services/config.py:8 | Selects embedding model name. |
+   | `INDEX_ROOT` | default `./index/<ENV>` | services/config.py:15 | Root for persisted LlamaIndex storage. |
+   | `INDEX_DIR` | default `<INDEX_ROOT>/<MODEL>` | services/config.py:16 | Final index directory; created on import. |
+   | `RELAY_PROJECT_ROOT` | default repo root | services/kb.py:54 | Drives default doc/code scan paths. |
+   | `OPENAI_API_KEY` | optional | services/kb.py:48, main.py:265 | Required for OpenAI embedding fallback and debug endpoint signal. |
+
+   [Generated]  ────────────────────> docs/generated/*.md
+                                               │
+                                               ├─> /docs/refresh_kb → services/kb.api_reindex() → INDEX_ROOT
+                                               └─> ContextEngine.clear_cache()  (real, tolerant)
+   
+
+   One of API_KEY | RELAY_API_KEY | ADMIN_API_KEY — used as X-Api-Key
+   
+   INDEX_ROOT — persistent, writable path for KB index
+   
+   OPENAI_API_KEY — embedding/runtime (per your KB implementation)
+
+   <PROJECT_ROOT>/docs/generated
+   
+   INDEX_ROOT
+   
+   ── Authentication & CORS
+
+   
+   KB reindex returns {ok:false}
+   Check OPENAI_API_KEY, KB_EMBED_MODEL, and INDEX_ROOT writability. See logs for the error class.
+   
+   CORS errors in browser
+
+    One of API_KEY|RELAY_API_KEY|ADMIN_API_KEY configured
+   
+    INDEX_ROOT mounted & writable (volume)
+   
+    OPENAI_API_KEY set; KB_EMBED_MODEL sensible
+
+   #
+   # Notes
+   #   • INDEX_ROOT defaults to ./data/index (created & probed for writability).
+   #   • FRONTEND_ORIGINS must be set in prod; dev falls back to localhost:3000.
+   #   • Keep this file small and boring; complex logic belongs in services/.
+
+               docs_imported = project_root / "docs" / "imported"
+               docs_generated = project_root / "docs" / "generated"
+               index_root = Path(_env("INDEX_ROOT") or "./data/index").resolve()
+   
+               # Create if missing (no-op when present)
+
+   def _index_root() -> Path:
+       """Resolve the index root used by docs/KB subsystems."""
+       return Path(_env("INDEX_ROOT", "./data/index")).resolve()
+   
+   
+
+   
+   # Safer defaults: allow override, but don't break in test/dev
+   INDEX_ROOT = Path(os.getenv("INDEX_ROOT", str(DEFAULT_PROJECT_ROOT / "index" / ENV_NAME)))
+   INDEX_DIR = Path(os.getenv("INDEX_DIR", str(INDEX_ROOT / MODEL_NAME)))
+   
+
+   # Safer defaults: allow override, but don't break in test/dev
+   INDEX_ROOT = Path(os.getenv("INDEX_ROOT", str(DEFAULT_PROJECT_ROOT / "index" / ENV_NAME)))
+   INDEX_DIR = Path(os.getenv("INDEX_DIR", str(INDEX_ROOT / MODEL_NAME)))
+   
+   INDEX_DIR.mkdir(parents=True, exist_ok=True)
+
+       should_index_file,  # single source of truth for filters
+       INDEX_DIR,
+       INDEX_ROOT,
+       MODEL_NAME,
+       EXPECTED_DIM,
+
+   
+   # Correct default is ./data/index (NOT .data/index)
+   ENV_INDEX_ROOT = os.getenv("INDEX_ROOT")
+   _INDEX_ROOT_FALLBACK = Path("./data/index").resolve()
+   
+
+   
+   try:
+       from services.config import INDEX_DIR as _CFG_INDEX_DIR, INDEX_ROOT as _CFG_INDEX_ROOT  # type: ignore
+   except Exception:
+       _CFG_INDEX_ROOT = _INDEX_ROOT_FALLBACK
+
+       _CFG_INDEX_DIR = _CFG_INDEX_ROOT
+   
+   INDEX_ROOT: Path = Path(ENV_INDEX_ROOT or str(_CFG_INDEX_ROOT)).resolve()
+   INDEX_DIR: Path = Path(os.getenv("INDEX_DIR", str(_CFG_INDEX_DIR))).resolve()
+   INDEX_DIR.mkdir(parents=True, exist_ok=True)
+
+   ]
+   
+   logger.info("🔎 KB module loaded | INDEX_DIR=%s INDEX_ROOT=%s", INDEX_DIR, INDEX_ROOT)
+   
+   # Embedding model and dimensions
+
+       cfg = importlib.import_module("services.kb")
+       monkeypatch.setenv("INDEX_DIR", str(tmp_path / "index"))
+       monkeypatch.setenv("INDEX_ROOT", str(tmp_path / "index"))
+       # Re-import to pick up env overrides (safer than reload in many runners)
+       kb = importlib.reload(cfg)
+
+   # === ⚙️ Runtime & Embedding ===
+   ENV=local
+   INDEX_ROOT=./data/index
+   KB_EMBED_MODEL=text-embedding-3-large
+   RELAY_PROJECT_ROOT=.
+

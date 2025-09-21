@@ -1,0 +1,7 @@
+backend/solark_browser/poll_and_insert.py:27:    from dotenv import load_dotenv
+backend/solark_browser/poll_and_insert.py:31:        load_dotenv(dotenv_file)
+backend/solark_browser/requirements.txt:2:python-dotenv>=1.0        # Only needed if poll_and_insert.py calls load_dotenv()
+services/settings.py:17:from dotenv import load_dotenv
+services/settings.py:21:load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
+tools/fill_purposes.py:4:from dotenv import load_dotenv
+tools/fill_purposes.py:5:load_dotenv()

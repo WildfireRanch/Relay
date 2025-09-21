@@ -1,0 +1,19 @@
+README.md:94:| `INDEX_ROOT` | default `./index/<ENV>` | services/config.py:15 | Root for persisted LlamaIndex storage. |
+README.md:95:| `INDEX_DIR` | default `<INDEX_ROOT>/<MODEL>` | services/config.py:16 | Final index directory; created on import. |
+README.md:183:                                            ├─> /docs/refresh_kb → services/kb.api_reindex() → INDEX_ROOT
+README.md:193:INDEX_ROOT — persistent, writable path for KB index
+README.md:219:INDEX_ROOT
+README.md:334:Check OPENAI_API_KEY, KB_EMBED_MODEL, and INDEX_ROOT writability. See logs for the error class.
+README.md:369: INDEX_ROOT mounted & writable (volume)
+main.py:13:#   • INDEX_ROOT defaults to ./data/index (created & probed for writability).
+main.py:192:            index_root = Path(_env("INDEX_ROOT") or "./data/index").resolve()
+routes/health.py:131:    return Path(_env("INDEX_ROOT", "./data/index")).resolve()
+services/config.py:15:INDEX_ROOT = Path(os.getenv("INDEX_ROOT", str(DEFAULT_PROJECT_ROOT / "index" / ENV_NAME)))
+services/config.py:16:INDEX_DIR = Path(os.getenv("INDEX_DIR", str(INDEX_ROOT / MODEL_NAME)))
+services/indexer.py:28:    INDEX_ROOT,
+services/kb.py:80:ENV_INDEX_ROOT = os.getenv("INDEX_ROOT")
+services/kb.py:84:    from services.config import INDEX_DIR as _CFG_INDEX_DIR, INDEX_ROOT as _CFG_INDEX_ROOT  # type: ignore
+services/kb.py:89:INDEX_ROOT: Path = Path(ENV_INDEX_ROOT or str(_CFG_INDEX_ROOT)).resolve()
+services/kb.py:102:logger.info("🔎 KB module loaded | INDEX_DIR=%s INDEX_ROOT=%s", INDEX_DIR, INDEX_ROOT)
+tests/test_kb_embed_status.py:11:    monkeypatch.setenv("INDEX_ROOT", str(tmp_path / "index"))
+tools/setup_relay_local.sh:29:INDEX_ROOT=./data/index
