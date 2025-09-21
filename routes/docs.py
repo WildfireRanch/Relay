@@ -425,8 +425,18 @@ def refresh_kb(
 ):
     def _job() -> Dict[str, Any]:
         reindex = _safe_kb_reindex()
+        # ── Extract semantic counts if present (non-throwing) ────────────────
+        semantic_counts = None
+        try:
+            sem = reindex.get("semantic") if isinstance(reindex, dict) else None
+            if isinstance(sem, dict) and sem.get("ok"):
+                semantic_counts = sem.get("counts")
+            if semantic_counts is None and isinstance(reindex, dict) and isinstance(reindex.get("counts"), dict):
+                semantic_counts = reindex.get("counts")
+        except Exception:
+            semantic_counts = None
         cache = _safe_clear_cache()
-        return {"action": "refresh_kb", "kb": reindex, "cache": cache}
+        return {"action": "refresh_kb", "kb": reindex, "semantic_counts": semantic_counts, "cache": cache}
 
     try:
         return _execute_op("kb_reindex", wait=wait, background=background, fn=_job)

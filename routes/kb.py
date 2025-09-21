@@ -22,6 +22,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException, Header, Depends, Query
+import os, math
 from pydantic import BaseModel
 from typing import Optional, List
 from services import kb
@@ -36,6 +37,33 @@ router = APIRouter(
     tags=["kb"],
     dependencies=[Depends(require_api_key)],
 )
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+SEMANTIC_SCORE_THRESHOLD = _env_float("SEMANTIC_SCORE_THRESHOLD", 0.25)
+
+def _score_of(row) -> float:
+    """
+    Be tolerant: accept 'score' or 'similarity'; coerce to float, clamp 0..1 when possible.
+    """
+    v = (row or {}).get("score", (row or {}).get("similarity"))
+    try:
+        x = float(v)
+    except Exception:
+        return -math.inf  # guarantees it will be filtered if threshold > -inf
+    if math.isnan(x) or math.isinf(x):
+        return -math.inf
+    if 0.0 <= x <= 1.0:
+        return x
+    if -1.0 <= x <= 1.0:
+        return max(0.0, min(1.0, 0.5 + 0.5 * x))
+    # Large positives (e.g., dot product): logistic squash (clamped)
+    x = min(x, 20.0)
+    return 1.0 - (1.0 / (1.0 + math.exp(-x)))
 
 class SearchQuery(BaseModel):
     query: str
@@ -58,8 +86,19 @@ async def search_kb(
             query=q.query,
             k=q.k,
             search_type=q.search_type or "all"
-        )
-        return {"results": results}
+        ) or []
+
+        normalized = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            s = _score_of(r)
+            if s < SEMANTIC_SCORE_THRESHOLD:
+                continue
+            n = dict(r)
+            n["score"] = s
+            normalized.append(n)
+        return {"ok": True, "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"KB search failed: {e}")
 
@@ -79,8 +118,19 @@ async def search_kb_get(
             query=query,
             k=k,
             search_type=search_type or "all"
-        )
-        return {"results": results}
+        ) or []
+
+        normalized = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            s = _score_of(r)
+            if s < SEMANTIC_SCORE_THRESHOLD:
+                continue
+            n = dict(r)
+            n["score"] = s
+            normalized.append(n)
+        return {"ok": True, "threshold": SEMANTIC_SCORE_THRESHOLD, "count": len(normalized), "results": normalized}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"KB search failed: {e}")
 

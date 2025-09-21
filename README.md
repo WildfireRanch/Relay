@@ -1,6 +1,21 @@
 # Relay Command Center
 FastAPI control plane for Wildfire Ranch agent workflows with a Next.js dashboard.
 
+## Recent Changes (Ops, Cache, KB)
+- Docs Ops (/docs/*)
+  - Added a single, production‑grade `/docs/op_status` endpoint that never raises and reports both in‑flight async ops and lock files under `LOCK_DIR`. Duplicate/mis‑indented handlers were removed.
+  - Long operations remain lock‑protected; use `/docs/op_status` to see `in_flight` and `locks` at a glance.
+- Diagnostics
+  - Fixed `/__router_diag` to be registered at module scope; it now reliably returns import diagnostics for `routes.docs`, `routes.kb`, and `routes.x_mirror`.
+- Redis cache safety
+  - `services/cache.py` no longer crashes on import. aioredis is imported lazily; `get_redis()` returns `None` if Redis is unavailable or `REDIS_URL` is unset.
+  - New helpers: `key_for(*parts)` for simple namespacing and `keyed_hash(namespace, payload)` for stable hashed keys.
+- Semantic Retriever (services/semantic_retriever.py)
+  - Guarded KB adapter import; when unavailable, search degrades gracefully and logs a structured event.
+  - Normalizes backend similarity to a consistent `score ∈ [0,1]` (cosine or inner‑product), and optionally applies a local `score_threshold`.
+  - Public API explicitly declared via `__all__`; added `reindex_all(root)` with a stable, non‑throwing contract used by KB maintenance paths.
+  - Safer env parsing for `SEMANTIC_DEFAULT_K`; additional docstrings and explicit typing for production clarity.
+
 ## Architecture Snapshot
 - [main.py](./main.py) – App factory, CORS, core middleware, router mounting, health probes.
 - [routes/](./routes) – Mounted APIs: ask, MCP, control queue, docs maintenance.

@@ -147,9 +147,8 @@ def _normalize(scores: Sequence[float]) -> List[float]:
 
 
 def _assemble_header(path: str, tier: RetrievalTier, idx: int) -> str:
-    return f"
---- [source:{tier.value} #{idx + 1}] {path} ---
-"
+    # One-line f-string with explicit newlines to avoid unterminated literal
+    return f"\n--- [source:{tier.value} #{idx + 1}] {path} ---\n"
 
 
 def _apply_threshold(matches: List[Match], min_score: float) -> List[Match]:
