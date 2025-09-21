@@ -18,6 +18,7 @@ const links = [
   { href: "/action-queue", label: "ActionQueue", icon: "/beanie and smoke.png" },
   { href: "/janitor", label: "Janitor", icon: "/sunglass shadow.png" },
     { href: "/status", label: "Status", icon: "/globe.svg" },
+  { href: "/admin/github", label: "GitHub", icon: "/file.svg" },
 
 
 ];
