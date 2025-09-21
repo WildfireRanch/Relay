@@ -47,6 +47,8 @@ router = APIRouter(
 )
 
 logger = logging.getLogger("routes.kb")
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
 
 def _env_float(name: str, default: float) -> float:
     try:
