@@ -10,6 +10,20 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, TypedDict
 
+__all__ = [
+    "RetrievalTier",
+    "Match",
+    "KBMeta",
+    "ContextResult",
+    "TokenCounter",
+    "ContextRequest",
+    "TierConfig",
+    "EngineConfig",
+    "Retriever",
+    "ContextEngine",
+    "build_context",
+]
+
 try:  # Attempt to use real tokenizers when available.
     import tiktoken  # type: ignore
     _HAS_TIKTOKEN = True
@@ -142,8 +156,11 @@ def _normalize(scores: Sequence[float]) -> List[float]:
         return []
     lo, hi = min(scores), max(scores)
     if hi - lo <= 1e-12:
+        # Degenerate case: identical scores → all count as strongest
         return [1.0 for _ in scores]
-    return [(s - lo) / (hi - lo) for s in scores]
+    # Clamp defensively in case of float funkiness
+    out = [(s - lo) / (hi - lo) for s in scores]
+    return [0.0 if x < 0.0 else 1.0 if x > 1.0 else float(x) for x in out]
 
 
 def _assemble_header(path: str, tier: RetrievalTier, idx: int) -> str:
@@ -166,8 +183,7 @@ def _budgeted_concat(
     running = 0
 
     for idx, (path, snippet, tier) in enumerate(snippets):
-        piece = _assemble_header(path, tier, idx) + (snippet or "").strip() + "
-"
+        piece = _assemble_header(path, tier, idx) + (snippet or "").strip() + "\n"
         try:
             cost = max(0, int(token_counter(piece)))
         except Exception:
@@ -196,6 +212,14 @@ class ContextEngine:
         self._token_counter = config.token_counter
 
     def build(self, request: ContextRequest) -> ContextResult:
+        """Assemble a context string deterministically from tiered retrievers.
+
+        Pipeline:
+          1) For each tier: search → sanitize → per-tier min–max normalize to [0,1].
+          2) Apply tier min_score; keep highest score per path across tiers.
+          3) Sort by (-score, path); greedily pack with token budget.
+          4) Return context, files_used, per-hit matches, and kb meta.
+        """
         query = request.query
         max_tokens = request.max_tokens or self._config.max_context_tokens
 
