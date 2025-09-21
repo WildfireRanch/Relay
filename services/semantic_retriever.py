@@ -77,9 +77,12 @@ def _mk_row(hit: Dict[str, Any]) -> Dict[str, Any]:
             # Cosine-like → shift/scale to [0,1]
             v = 0.5 + 0.5 * v
         else:
-            # Large positives (e.g., inner product) → logistic-style squash
+            # ──────────────────────────────────────────────────────────────
+            # Change: Fix logistic score squash (correct orientation)
+            # Why: Large positive scores must map near 1.0, not 0.0
+            # ──────────────────────────────────────────────────────────────
             v = max(-20.0, min(20.0, v))
-            v = 1.0 - (1.0 / (1.0 + math.exp(-v)))
+            v = 1.0 / (1.0 + math.exp(-v))
         return max(0.0, min(1.0, v))
 
     score = _norm(similarity)

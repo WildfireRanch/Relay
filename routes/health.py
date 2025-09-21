@@ -356,4 +356,15 @@ def readyz(request: Request) -> JSONResponse:
     except Exception:
         payload["allow_kb_fallback"] = True
 
+    # ──────────────────────────────────────────────────────────────────────────
+    # Change: Expose kb_roots in readiness payload
+    # Why: Ops visibility for docs + index paths used by KB
+    # ──────────────────────────────────────────────────────────────────────────
+    try:
+        docs_root = str((Path("./docs")).resolve())
+        payload["kb_roots"] = {"docs_root": docs_root, "index_root": str(index_root)}
+    except Exception:
+        # Best effort; keep payload otherwise intact
+        pass
+
     return JSONResponse(status_code=(200 if ok else 503), content=payload)

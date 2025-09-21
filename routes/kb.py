@@ -450,6 +450,10 @@ async def search_kb_get(
 
 @router.post("/warmup")
 async def kb_warmup():
+    # ──────────────────────────────────────────────────────────────────────────
+    # Change: Time-bound warmup; return structured 503 on timeout
+    # Why: Align with contract (503 JSON; never 504)
+    # ──────────────────────────────────────────────────────────────────────────
     try:
         # Time-bound both warmups to avoid startup stalls
         if sem_search is not None:
@@ -460,17 +464,17 @@ async def kb_warmup():
                     return sem_search(q="warmup", k=1)
             ok_sem, _ = await _run_with_timeout(_sem, timeout_s=10.0)
             if not ok_sem:
-                return {"ok": False, "error": "warmup_semantic_timeout"}
+                return _json_503("warmup_semantic_timeout", timeout_s=10.0)
 
         def _kb():
             return kb_service.search(q="warmup", limit=1, offset=0) or []
         ok_fb, _ = await _run_with_timeout(_kb, timeout_s=10.0)
         if not ok_fb:
-            return {"ok": False, "error": "warmup_kb_timeout"}
+            return _json_503("warmup_kb_timeout", timeout_s=10.0)
 
-        return {"ok": True, "warmed": True}
+        return {"ok": True, "warmed": True, **({"impl": IMPL_MARKER} if IMPL_MARKER else {})}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": str(e)}
+        return _json_503("warmup_error", error=str(e))
 
 
 # ──────────────────────────────────────────────────────────────────────────────

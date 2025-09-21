@@ -37,8 +37,12 @@ ENV PYTHONUNBUFFERED=1 \
     PORT=8000
 
 # Healthcheck (cheaper liveness path)
+# ─────────────────────────────────────────────────────────────────────────────
+# Change: Healthcheck probes /livez (actual liveness path)
+# Why: Docker was probing /live which is not defined; avoid false negatives
+# ─────────────────────────────────────────────────────────────────────────────
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=5 \
-  CMD curl -fsS "http://127.0.0.1:${PORT}/live" || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT}/livez" || exit 1
 
 # Drop privileges
 USER appuser
