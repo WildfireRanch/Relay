@@ -34,6 +34,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import ClientDisconnect
+from utils.env import get_float, get_list
 
 # ── Logging -------------------------------------------------------------------
 logger = logging.getLogger("relay.main")
@@ -46,6 +47,14 @@ os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
 os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("transformers").setLevel(logging.ERROR)
+
+
+# From utils.env: safe readers for timeouts and long-op paths
+HTTP_TIMEOUT_S = get_float("HTTP_TIMEOUT_S", 35.0)
+LONG_OP_PATHS  = set(get_list("LONG_OP_PATHS",
+                              ["/docs/refresh_kb", "/docs/sync", "/docs/full_sync", "/kb/reindex"]))
+# If you add a TimeoutMiddleware, pass HTTP_TIMEOUT_S and exempt LONG_OP_PATHS.
+# Also echo these in /readyz so ops can see live budgets.
 
 
 # ──────────────────────────────────────────────────────────────────────────────

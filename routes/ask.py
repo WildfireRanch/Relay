@@ -21,7 +21,9 @@ from uuid import uuid4
 import inspect
 
 from fastapi import APIRouter, HTTPException, Query, Request, Header, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
+import anyio
+from utils.env import get_float
 from services.errors import error_payload
 
 # --- Pydantic v1/v2 compatibility ---------------------------------------------
@@ -87,7 +89,7 @@ ANTI_PARROT_JACCARD: float = _env_float("ANTI_PARROT_JACCARD", default=0.35)
 FINAL_TEXT_MAX_LEN: int = _env_int("FINAL_TEXT_MAX_LEN", default=20000)
 
 # Agent timeout (router-enforced)
-ASK_TIMEOUT_S: int = _env_int("ASK_TIMEOUT_S", default=60)
+ASK_TIMEOUT_S: float = get_float("ASK_TIMEOUT_S", 25.0)
 
 # ── Models --------------------------------------------------------------------
 
@@ -535,29 +537,31 @@ async def ask(
         mcp_raw: Dict[str, Any] | Any = {}
         if gated_no_answer_reason is None:
             try:
-                mcp_raw = await _maybe_await(
-                    run_mcp,
-                    query=q,
-                    role=role,
-                    files=files,
-                    topics=topics,
-                    user_id=user_id,
-                    debug=debug,
-                    corr_id=corr_id,
-                    context=context_text,
-                    timeout_s=ASK_TIMEOUT_S,
-                )
+                with anyio.move_on_after(ASK_TIMEOUT_S) as scope:
+                    mcp_raw = await _maybe_await(
+                        run_mcp,
+                        query=q,
+                        role=role,
+                        files=files,
+                        topics=topics,
+                        user_id=user_id,
+                        debug=debug,
+                        corr_id=corr_id,
+                        context=context_text,
+                        timeout_s=ASK_TIMEOUT_S,
+                    )
+                if scope.cancel_called:
+                    log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
+                    return JSONResponse({
+                        "reason": "ask_timeout",
+                        "timeout_s": ASK_TIMEOUT_S,
+                    }, status_code=503)
             except asyncio.TimeoutError:
                 log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
-                raise HTTPException(
-                    status_code=408,
-                    detail=error_payload(
-                        "ask_timeout",
-                        "Agent execution exceeded timeout.",
-                        corr_id=corr_id,
-                        extra={"timeout_s": ASK_TIMEOUT_S},
-                    ),
-                )
+                return JSONResponse({
+                    "reason": "ask_timeout",
+                    "timeout_s": ASK_TIMEOUT_S,
+                }, status_code=503)
             except Exception as e:
                 log_event(
                     "ask_mcp_exception",
