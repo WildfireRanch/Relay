@@ -1,0 +1,9 @@
+[
+{"name":"router_map","url":"https://relay.wildfireranch.us/__router_map?verbose=1","status":200,"content_type":"application/json","body_head":"{\"routes\":[{\"path\":\"/__router_diag\",\"methods\":[\"GET\"],\"name\":\"__router_diag\",\"module\":\"main\",\"tags\":[],\"auth_api_key\":false},{\"path\":\"/__router_map\",\"methods\":[\"GET\"],\"name\":\"router_map\",\"module\":\"main\",\"tags\":[],\"auth_api_key\":false},{\"path\":\"/ask\",\"methods\":[\"GET\"],\"name\":\"ask_get\",\"module\":\"route"}
+,
+{"name":"readyz","url":"https://relay.wildfireranch.us/readyz","status":200,"content_type":"application/json","body_head":"{\"ok\":true,\"env\":\"main\",\"service\":\"relay\",\"version\":\"dev\",\"ts\":1758475109,\"api_auth\":\"configured\",\"auth_present_keys\":[\"API_KEY\",\"RELAY_API_KEY\"],\"index_root\":{\"path\":\"/app/index/dev\",\"writable\":true},\"google_stack\":\"misconfigured\",\"details\":{\"google\":{\"creds_present\":false,\"token_parent\":\"/data/sec"}
+,
+{"name":"livez","url":"https://relay.wildfireranch.us/livez","status":200,"content_type":"application/json","body_head":"{\"ok\":true,\"ts\":1758475109}"}
+,
+{"name":"kb_search","url":"https://relay.wildfireranch.us/kb/search?query=tarana&k=3","status":503,"content_type":"application/json","body_head":"{\"ok\":false,\"status\":503,\"reason\":\"semantic_timeout\",\"timeout_s\":1.0}"}
+]
