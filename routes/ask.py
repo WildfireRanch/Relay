@@ -1,4 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
+__all__ = ["ASK_TIMEOUT_S"]
 # File: routes/ask.py
 # Purpose: FastAPI endpoints for /ask — production-grade and CORS-tolerant
 #          • Accepts q/query/prompt/question/text (coalesced → payload.query)

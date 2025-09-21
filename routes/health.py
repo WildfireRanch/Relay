@@ -35,6 +35,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+try:
+    from routes.ask import ASK_TIMEOUT_S as _ASK_TIMEOUT_S
+except Exception:
+    _ASK_TIMEOUT_S = None
 from utils.env import get_float, get_list
 
 router = APIRouter(tags=["health"])
@@ -327,6 +331,7 @@ def readyz(request: Request) -> JSONResponse:
         "service": _env("SERVICE_NAME", "relay"),
         "version": _env("RELEASE", "dev"),
         "ts": int(time.time()),
+        "ask_timeout_s": _ASK_TIMEOUT_S,  # now shows a number when ask is loaded
         "api_auth": api_auth,
         "auth_present_keys": [k for k in present_keys if k],  # redact values; show which families exist
         "index_root": {"path": str(index_root), "writable": index_writable},
