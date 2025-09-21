@@ -56,6 +56,12 @@ _LOG = logging.getLogger("relay.kb")
 if not _LOG.handlers:
     _LOG.setLevel(logging.INFO)
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Change: Add a temporary impl marker for Step A verification
+# Why: Prove the async handler returns JSON (200/503) to kill edge 504 ambiguity
+# ──────────────────────────────────────────────────────────────────────────────
+IMPL_MARKER: str = "kb.search/stepA"
+
 
 def _env_float(name: str, default: float) -> float:
     try:
@@ -158,7 +164,7 @@ def _corr_id(req: Optional[Request]) -> str:
 def _json_503(reason: str, **extra: Any) -> JSONResponse:
     return JSONResponse(
         status_code=503,
-        content={"ok": False, "status": 503, "reason": reason, **extra},
+        content={"ok": False, "status": 503, "reason": reason, "impl": IMPL_MARKER, **extra},
     )
 
 
@@ -297,6 +303,8 @@ async def search_kb(
         "threshold": SEMANTIC_SCORE_THRESHOLD,
         "count": len(normalized),
         "results": normalized,
+        # ── Step A marker (remove after verification)
+        "impl": IMPL_MARKER,
     }
 
 
@@ -425,6 +433,8 @@ async def search_kb_get(
         "threshold": SEMANTIC_SCORE_THRESHOLD,
         "count": len(normalized),
         "results": normalized,
+        # ── Step A marker (remove after verification)
+        "impl": IMPL_MARKER,
     }
 
 
