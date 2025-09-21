@@ -22,7 +22,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException, Header, Depends, Query
-import os, math
+import os, math, time, logging
 import anyio
 from pydantic import BaseModel
 from typing import Optional, List
@@ -45,6 +45,8 @@ router = APIRouter(
     tags=["kb"],
     dependencies=[Depends(require_api_key)],
 )
+
+logger = logging.getLogger("routes.kb")
 
 def _env_float(name: str, default: float) -> float:
     try:
