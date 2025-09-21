@@ -46,7 +46,11 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 SEMANTIC_SCORE_THRESHOLD = _env_float("SEMANTIC_SCORE_THRESHOLD", 0.25)
-KB_SEARCH_TIMEOUT_S = _env_float("KB_SEARCH_TIMEOUT_S", 20.0)
+# Fail-fast timeout for KB search (seconds)
+try:
+    KB_SEARCH_TIMEOUT_S = float(os.getenv("KB_SEARCH_TIMEOUT_S", "30"))
+except Exception:
+    KB_SEARCH_TIMEOUT_S = 30.0
 
 def _score_of(row) -> float:
     """
@@ -85,11 +89,14 @@ async def search_kb(
     user_id = x_user_id or "anonymous"
     try:
         with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-            results = kb.api_search(
-                query=q.query,
-                k=q.k,
-                search_type=q.search_type or "all"
-            ) or []
+            # Offload blocking call to a worker thread so timeout can cancel
+            results = await anyio.to_thread.run_sync(
+                lambda: kb.api_search(
+                    query=q.query,
+                    k=q.k,
+                    search_type=q.search_type or "all"
+                ) or []
+            )
         if scope.cancel_called:
             return {
                 "ok": False,
@@ -126,11 +133,13 @@ async def search_kb_get(
     user_id = x_user_id or "anonymous"
     try:
         with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-            results = kb.api_search(
-                query=query,
-                k=k,
-                search_type=search_type or "all"
-            ) or []
+            results = await anyio.to_thread.run_sync(
+                lambda: kb.api_search(
+                    query=query,
+                    k=k,
+                    search_type=search_type or "all"
+                ) or []
+            )
         if scope.cancel_called:
             return {
                 "ok": False,
