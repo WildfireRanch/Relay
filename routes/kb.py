@@ -100,9 +100,12 @@ async def search_kb(
     if sem_search is not None:
         try:
             with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-                rows = await anyio.to_thread.run_sync(
-                    lambda: sem_search(q.query, k=q.k) or []
-                )
+                def _sem_post():
+                    try:
+                        return sem_search(query=q.query, k=q.k) or []
+                    except TypeError:
+                        return sem_search(q=q.query, k=q.k) or []
+                rows = await anyio.to_thread.run_sync(_sem_post)
             if scope.cancel_called:
                 return {
                     "ok": False,
@@ -150,7 +153,12 @@ async def kb_warmup(user=Depends(require_api_key)):
     """
     try:
         if sem_search is not None:
-            await anyio.to_thread.run_sync(lambda: sem_search("warmup", k=1))
+            def _sem():
+                try:
+                    return sem_search(query="warmup", k=1)
+                except TypeError:
+                    return sem_search(q="warmup", k=1)
+            await anyio.to_thread.run_sync(_sem)
         await anyio.to_thread.run_sync(lambda: kb_service.search(q="warmup", limit=1, offset=0) or [])
         return {"ok": True, "warmed": True}
     except Exception as e:
@@ -172,9 +180,12 @@ async def search_kb_get(
     if sem_search is not None:
         try:
             with anyio.move_on_after(KB_SEARCH_TIMEOUT_S) as scope:
-                rows = await anyio.to_thread.run_sync(
-                    lambda: sem_search(query, k=k) or []
-                )
+                def _sem_get():
+                    try:
+                        return sem_search(query=query, k=k) or []
+                    except TypeError:
+                        return sem_search(q=query, k=k) or []
+                rows = await anyio.to_thread.run_sync(_sem_get)
             if scope.cancel_called:
                 return {
                     "ok": False,
