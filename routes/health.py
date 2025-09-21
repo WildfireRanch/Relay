@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from utils.env import get_float, get_list
 
 router = APIRouter(tags=["health"])
 
@@ -339,6 +340,29 @@ def readyz(request: Request) -> JSONResponse:
         },
         "problems": problems,
     }
+
+    # Expose HTTP timeout settings (robust against malformed envs)
+    try:
+        payload["http_timeout_s"] = float(get_float("HTTP_TIMEOUT_S", 35.0))
+    except Exception:
+        payload["http_timeout_s"] = 35.0
+    try:
+        payload["long_op_paths"] = sorted(set(get_list(
+            "LONG_OP_PATHS",
+            [
+                "/docs/refresh_kb",
+                "/docs/sync",
+                "/docs/full_sync",
+                "/kb/reindex",
+            ],
+        )))
+    except Exception:
+        payload["long_op_paths"] = [
+            "/docs/refresh_kb",
+            "/docs/sync",
+            "/docs/full_sync",
+            "/kb/reindex",
+        ]
 
     # Expose KB/search knobs as top-level typed fields (not stringified env)
     try:
