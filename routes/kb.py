@@ -28,7 +28,7 @@ from typing import Any, Callable, List, Optional, Tuple
 import anyio
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Best-effort structured logger (safe to no-op if missing)
 try:  # pragma: no cover
@@ -57,10 +57,10 @@ if not _LOG.handlers:
     _LOG.setLevel(logging.INFO)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Change: Add a temporary impl marker for Step A verification
-# Why: Prove the async handler returns JSON (200/503) to kill edge 504 ambiguity
+# Change: Gate temporary impl marker via env (Step A verification only)
+# Why: Keep 504-debug signal without permanently changing response shape
 # ──────────────────────────────────────────────────────────────────────────────
-IMPL_MARKER: str = "kb.search/stepA"
+IMPL_MARKER: str = os.getenv("KB_IMPL_MARKER", "").strip()
 
 
 def _env_float(name: str, default: float) -> float:
@@ -140,7 +140,7 @@ def _score_of(row: dict) -> float:
         return max(0.0, min(1.0, 0.5 + 0.5 * x))  # shift/scale cosine
     # Logistic squash for large positives (clamped)
     x = min(x, 20.0)
-    return 1.0 - (1.0 / (1.0 + math.exp(-x)))
+    return 1.0 / (1.0 + math.exp(-x))
 
 
 def _log_search_event(event: str, **data: Any) -> None:
@@ -164,7 +164,13 @@ def _corr_id(req: Optional[Request]) -> str:
 def _json_503(reason: str, **extra: Any) -> JSONResponse:
     return JSONResponse(
         status_code=503,
-        content={"ok": False, "status": 503, "reason": reason, "impl": IMPL_MARKER, **extra},
+        content={
+            "ok": False,
+            "status": 503,
+            "reason": reason,
+            **({"impl": IMPL_MARKER} if IMPL_MARKER else {}),
+            **extra,
+        },
     )
 
 
@@ -175,7 +181,8 @@ def _json_503(reason: str, **extra: Any) -> JSONResponse:
 
 class SearchQuery(BaseModel):
     query: str
-    k: int = 10
+    # Guardrails: bound server work; matches GET default, adds upper bound for POST
+    k: int = Field(10, ge=1, le=100)
     search_type: Optional[str] = "all"  # "code" | "doc" | "all"
 
 
@@ -269,7 +276,7 @@ async def search_kb(
                 k=q.k,
                 query_len=len(q.query or ""),
             )
-            raise HTTPException(status_code=503, detail=f"KB search failed: {e}")
+            return _json_503("kb_error", error=str(e))
 
     # 3) Normalize & filter
     normalized: List[dict] = []
@@ -303,8 +310,7 @@ async def search_kb(
         "threshold": SEMANTIC_SCORE_THRESHOLD,
         "count": len(normalized),
         "results": normalized,
-        # ── Step A marker (remove after verification)
-        "impl": IMPL_MARKER,
+        **({"impl": IMPL_MARKER} if IMPL_MARKER else {}),
     }
 
 
@@ -315,10 +321,10 @@ async def search_kb(
 
 @router.get("/search")
 async def search_kb_get(
+    request: Request,
     query: str = Query(...),
     k: int = Query(10, ge=1, le=1000),
     search_type: Optional[str] = Query("all"),
-    request: Optional[Request] = None,
     x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
 ):
     user_id = x_user_id or "anonymous"
@@ -349,7 +355,7 @@ async def search_kb_get(
                     source="semantic",
                     timeout_s=KB_SEARCH_TIMEOUT_S,
                     took_ms=took_ms,
-                    limit=k,
+                    k=k,
                     query_len=len(query or ""),
                     allow_fallback=ALLOW_KB_FALLBACK,
                 )
@@ -378,7 +384,7 @@ async def search_kb_get(
                     source="fallback",
                     timeout_s=KB_SEARCH_TIMEOUT_S,
                     took_ms=took_ms,
-                    limit=k,
+                    k=k,
                     query_len=len(query or ""),
                     allow_fallback=ALLOW_KB_FALLBACK,
                 )
@@ -396,10 +402,10 @@ async def search_kb_get(
                 source="fallback",
                 error=str(e),
                 took_ms=took_ms,
-                limit=k,
+                k=k,
                 query_len=len(query or ""),
             )
-            raise HTTPException(status_code=503, detail=f"KB search failed: {e}")
+            return _json_503("kb_error", error=str(e))
 
     # 3) Normalize & filter
     normalized: List[dict] = []
@@ -420,7 +426,7 @@ async def search_kb_get(
         path="GET",
         source=source,
         took_ms=took_ms,
-        limit=k,
+        k=k,
         count=len(normalized),
         threshold=SEMANTIC_SCORE_THRESHOLD,
         timeout_s=KB_SEARCH_TIMEOUT_S,
@@ -433,8 +439,7 @@ async def search_kb_get(
         "threshold": SEMANTIC_SCORE_THRESHOLD,
         "count": len(normalized),
         "results": normalized,
-        # ── Step A marker (remove after verification)
-        "impl": IMPL_MARKER,
+        **({"impl": IMPL_MARKER} if IMPL_MARKER else {}),
     }
 
 
@@ -446,19 +451,23 @@ async def search_kb_get(
 @router.post("/warmup")
 async def kb_warmup():
     try:
+        # Time-bound both warmups to avoid startup stalls
         if sem_search is not None:
             def _sem():
                 try:
                     return sem_search(query="warmup", k=1)
                 except TypeError:
                     return sem_search(q="warmup", k=1)
+            ok_sem, _ = await _run_with_timeout(_sem, timeout_s=10.0)
+            if not ok_sem:
+                return {"ok": False, "error": "warmup_semantic_timeout"}
 
-            await anyio.to_thread.run_sync(_sem)
+        def _kb():
+            return kb_service.search(q="warmup", limit=1, offset=0) or []
+        ok_fb, _ = await _run_with_timeout(_kb, timeout_s=10.0)
+        if not ok_fb:
+            return {"ok": False, "error": "warmup_kb_timeout"}
 
-        # Warm fallback path lightly
-        await anyio.to_thread.run_sync(
-            lambda: kb_service.search(q="warmup", limit=1, offset=0) or []
-        )
         return {"ok": True, "warmed": True}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
