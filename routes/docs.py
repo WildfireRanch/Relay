@@ -435,8 +435,22 @@ def refresh_kb(
                 semantic_counts = reindex.get("counts")
         except Exception:
             semantic_counts = None
+
+        # ── Friendly source label for UI/scripts (tolerant inference) ────────
+        kb_source = None
+        try:
+            kb_source = reindex.get("source") if isinstance(reindex, dict) else None
+            if not kb_source:
+                if isinstance(reindex.get("semantic"), dict) and reindex["semantic"].get("ok"):
+                    kb_source = "semantic"
+                elif any(k in (reindex or {}) for k in ("indexed", "model", "took_ms")):
+                    kb_source = "llamaindex"
+                else:
+                    kb_source = "unknown"
+        except Exception:
+            kb_source = "unknown"
         cache = _safe_clear_cache()
-        return {"action": "refresh_kb", "kb": reindex, "semantic_counts": semantic_counts, "cache": cache}
+        return {"action": "refresh_kb", "kb": reindex, "kb_source": kb_source, "semantic_counts": semantic_counts, "cache": cache}
 
     try:
         return _execute_op("kb_reindex", wait=wait, background=background, fn=_job)

@@ -393,7 +393,9 @@ def api_reindex(
     indexer_error: Optional[Exception] = None
     try:  # pragma: no cover
         from services.semantic_retriever import reindex_all as _reindex_all  # type: ignore
-        indexer_result = _reindex_all(root=str(INDEX_DIR))  # kwarg helps clarity
+        # Prefer scanning the project docs root rather than the index dir for semantic counts
+        kb_root = str((PROJECT_ROOT / "docs").resolve())
+        indexer_result = _reindex_all(root=kb_root)  # kwarg helps clarity
     except Exception as e:  # noqa: E722 - intentional broad catch; normalize below
         indexer_error = e
         # Fall back to embed_all below.
@@ -403,20 +405,29 @@ def api_reindex(
         took_ms = int((time.perf_counter() - t0) * 1000)
         counts = {}
         if isinstance(indexer_result, dict):
-            docs = indexer_result.get("documents") or indexer_result.get("doc_count") or indexer_result.get("files")
-            chks = indexer_result.get("chunks") or indexer_result.get("chunk_count")
-            if isinstance(docs, int):
-                counts["documents"] = docs
-            if isinstance(chks, int):
-                counts["chunks"] = chks
-        return {
+            # Prefer adapter-provided counts when present
+            if isinstance(indexer_result.get("counts"), dict):
+                counts = dict(indexer_result.get("counts") or {})
+            else:
+                docs = indexer_result.get("documents") or indexer_result.get("doc_count") or indexer_result.get("files")
+                chks = indexer_result.get("chunks") or indexer_result.get("chunk_count")
+                if isinstance(docs, int):
+                    counts["documents"] = docs
+                if isinstance(chks, int):
+                    counts["chunks"] = chks
+        # Preserve legacy fields and add provenance + raw semantic payload
+        resp = {
             "ok": True,
             "status": "done",
             "indexed": int(counts.get("documents", 0)),
             "model": MODEL_NAME,
             "took_ms": took_ms,
-            **({"counts": counts} if counts else {}),
+            "source": "semantic",
+            "semantic": indexer_result,
         }
+        if counts:
+            resp["counts"] = counts
+        return resp
 
     # Fall back to our embed_all flow
     status = embed_all(verbose=verbose, tiers=tiers)
@@ -432,6 +443,8 @@ def api_reindex(
         "model": status.get("model"),
         "took_ms": took_ms,
     }
+    # Indicate provenance for callers/UI
+    response.setdefault("source", "llamaindex")
     if indexer_error:
         response["note"] = f"semantic_retriever reindex_all unavailable: {indexer_error}"
     if error:

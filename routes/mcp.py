@@ -268,38 +268,35 @@ async def mcp_diag() -> Dict[str, Any]:
 @router.get("/diag_ctx")
 async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
     """
-    Try to build context end-to-end and report kb stats or the precise error.
-    DOES NOT call any agents; only the engine + retrievers.
+    Lightweight diagnostics for context engine wiring. Does not build context.
+    Returns stable engine_config values and cache status snapshot.
     """
-    resp: Dict[str, Any] = {"query": q, "kb": None, "grounding_len": 0, "error": None, "trace": None}
     try:
-        ctx_mod = importlib.import_module("core.context_engine")
-        build_context = getattr(ctx_mod, "build_context")
-        ContextRequest = getattr(ctx_mod, "ContextRequest")
-        EngineConfig = getattr(ctx_mod, "EngineConfig")
-        RetrievalTier = getattr(ctx_mod, "RetrievalTier")
-
-        sem = importlib.import_module("services.semantic_retriever")
-        TieredSemanticRetriever = getattr(sem, "TieredSemanticRetriever")
-
-        score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
-        score_thresh = float(score_thresh_env) if score_thresh_env else None
-
-        retrievers = {
-            RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",        score_threshold=score_thresh),
-            RetrievalTier.PROJECT_DOCS: TieredSemanticRetriever("project_docs",  score_threshold=score_thresh),
+        engine_config = {
+            "topk_global": int(os.getenv("TOPK_GLOBAL", "4")),
+            "topk_project_docs": int(os.getenv("TOPK_PROJECT_DOCS", "6")),
+            "topk_code": int(os.getenv("TOPK_CODE", "6")),
+            "rerank_min_score": float(os.getenv("RERANK_MIN_SCORE_GLOBAL", os.getenv("SEMANTIC_SCORE_THRESHOLD", "0.25"))),
+            "max_context_tokens": int(os.getenv("MAX_CONTEXT_TOKENS", "4000")),
         }
+    except Exception:
+        engine_config = {}
 
-        cfg = EngineConfig(retrievers=retrievers)
-        ctx = build_context(ContextRequest(query=q, corr_id="diag"), cfg)
-
-        kb = (ctx.get("meta") or {}).get("kb") or {}
-        resp["kb"] = kb
-        resp["grounding_len"] = len(ctx.get("matches") or [])
+    try:
+        ctx = importlib.import_module("services.context_engine")
+        cache = getattr(ctx, "cache_status")()
     except Exception as e:
-        resp["error"] = str(e)
-        resp["trace"] = traceback.format_exc(limit=6)
-    return resp
+        cache = {"ok": False, "error": str(e)}
+
+    import time as _time
+    return {
+        "ok": True,
+        "query": q,
+        "impl": "routes.mcp.diag_ctx v1",
+        "ts": int(_time.time()),
+        "engine_config": engine_config,
+        "cache_status": cache,
+    }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # /mcp/run
