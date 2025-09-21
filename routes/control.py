@@ -34,7 +34,10 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Body, Request
 
 from services import gmail
 from agents import codex_agent, docs_agent, echo_agent
-from agents.control_agent import control_agent
+try:
+    from agents.control_agent import control_agent
+except Exception as e:
+    raise RuntimeError("control router disabled: missing control_agent export") from e
 
 router = APIRouter(prefix="/control", tags=["control"])
 

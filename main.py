@@ -38,6 +38,15 @@ from starlette.requests import ClientDisconnect
 # ── Logging -------------------------------------------------------------------
 logger = logging.getLogger("relay.main")
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Change: Quiet noisy libs in production logs
+# Why: Cleaner logs (no framework warnings, no per-request httpx spam)
+# ──────────────────────────────────────────────────────────────────────────────
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("transformers").setLevel(logging.ERROR)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # LlamaIndex LLM defaults (chat model, retries, timeout)

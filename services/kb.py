@@ -211,7 +211,15 @@ def _resolve_embed_model():
                 raise RuntimeError("OPENAI_API_KEY not set for OpenAI fallback")
             from llama_index.embeddings.openai import OpenAIEmbedding  # lazy
             emb = OpenAIEmbedding(model=OPENAI_EMBEDDINGS_MODEL, api_key=OPENAI_API_KEY)
-            log_event("kb_embeddings_fallback", {"from_model": MODEL_NAME, "to_model": OPENAI_EMBEDDINGS_MODEL})
+            # ──────────────────────────────────────────────────────────────
+            # Change: Log fallback only when models differ
+            # Why: Avoid noisy logs when resolver returns the same model
+            # ──────────────────────────────────────────────────────────────
+            if str(MODEL_NAME) != str(OPENAI_EMBEDDINGS_MODEL):
+                log_event(
+                    "kb_embeddings_fallback",
+                    {"from_model": MODEL_NAME, "to_model": OPENAI_EMBEDDINGS_MODEL},
+                )
             return emb
         except Exception as e_openai:
             raise RuntimeError(
