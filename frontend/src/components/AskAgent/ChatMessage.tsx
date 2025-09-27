@@ -145,7 +145,7 @@ export default function ChatMessage({
 }: Props) {
   const isUser = role === "user";
   const align = isUser ? "items-end text-right" : "items-start text-left";
-  const bubbleTone = isUser ? "bg-blue-50 border-blue-200" : "bg-green-50 border-green-200";
+  const bubbleTone = isUser ? "bg-blue-50 border-black border" : "bg-green-50 border-black border";
   const textTone = isUser ? "text-blue-800" : "text-green-800";
 
   const [localOpen, setLocalOpen] = useState(false);
