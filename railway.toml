@@ -1,0 +1,14 @@
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+restartPolicyType = "always"
+healthcheckPath = "/livez"
+healthcheckTimeout = 300
+
+[environments.production]
+variables = { ENV = "production" }
+
+[environments.staging]
+variables = { ENV = "staging" }

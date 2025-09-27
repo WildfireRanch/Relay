@@ -1,39 +1,42 @@
 {
-  "dependencies": {
-    "@radix-ui/react-label": "^2.1.7",
-    "@radix-ui/react-slot": "^1.2.3",
-    "@tailwindcss/forms": "^0.5.10",
-    "@tailwindcss/typography": "^0.5.16",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "framer-motion": "^12.18.1",
-    "katex": "^0.16.22",
-    "mermaid": "^11.8.1",
-    "next": "^14.2.3",
-    "next-auth": "^4.24.11",
-    "next-themes": "^0.4.6",
-    "railway": "^2.0.17",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-markdown": "^10.1.0",
-    "react-syntax-highlighter": "^15.6.1",
-    "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0",
-    "tailwind-merge": "^3.3.1"
-  },
-  "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.11",
-    "@types/jest": "^30.0.0",
-    "@types/node": "24.0.1",
-    "@types/react": "^19.1.7",
-    "tailwindcss": "^4.0.0",
-    "typescript": "5.8.3",
-    "vitest": "^3.2.4"
-  },
+  "name": "relay-command-center",
+  "version": "1.0.0",
+  "description": "FastAPI control plane for Wildfire Ranch agent workflows with Next.js dashboard",
+  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  }
+    "dev": "npm run dev --workspace=frontend",
+    "build": "npm run build --workspace=frontend",
+    "start": "npm run start --workspace=frontend",
+    "lint": "npm run lint --workspace=frontend",
+    "typecheck": "npm run typecheck --workspace=frontend",
+    "frontend:dev": "npm run dev --workspace=frontend",
+    "frontend:build": "npm run build --workspace=frontend",
+    "frontend:start": "npm run start --workspace=frontend",
+    "backend:dev": "uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "backend:start": "uvicorn main:app --host 0.0.0.0 --port 8000",
+    "deploy:railway": "railway up",
+    "deploy:vercel": "cd frontend && vercel --prod"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WildfireRanch/relay-command-center"
+  },
+  "keywords": [
+    "fastapi",
+    "nextjs",
+    "railway",
+    "vercel",
+    "command-center",
+    "agent-workflows"
+  ],
+  "author": "Wildfire Ranch",
+  "license": "UNLICENSED"
 }
