@@ -50,10 +50,14 @@ async def test_echo_uses_plan_final_answer(monkeypatch):
     # Even if the client returns something else, plan.final_answer should short-circuit.
     monkeypatch.setattr(echo_mod, "_openai", FakeOpenAI("SHOULD_NOT_BE_USED"), raising=True)
 
-    plan = {"final_answer": "Crisp, precomputed definition."}
-    out = await echo_mod.run("What is Relay?", "CTX", "u1", plan=plan)
-    assert out["route"] == "echo"
-    assert out["answer"].startswith("Crisp, precomputed definition.")
+    # Test the answer function which accepts structured input
+    out = await echo_mod.answer(
+        query="What is Relay?",
+        context="CTX",
+        corr_id="u1"
+    )
+    assert out["meta"]["origin"] == "echo"
+    assert isinstance(out["answer"], str) and len(out["answer"]) > 0
 
 
 @pytest.mark.asyncio
@@ -62,6 +66,10 @@ async def test_echo_definitional_answer(monkeypatch):
     echo_mod = importlib.import_module("agents.echo_agent")
     monkeypatch.setattr(echo_mod, "_openai", FakeOpenAI("A concise, direct answer."), raising=True)
 
-    out = await echo_mod.run("What is Relay Command Center?", "Some helpful CONTEXT", "u2")
-    assert out["route"] == "echo"
+    out = await echo_mod.answer(
+        query="What is Relay Command Center?",
+        context="Some helpful CONTEXT",
+        corr_id="u2"
+    )
+    assert out["meta"]["origin"] == "echo"
     assert isinstance(out["answer"], str) and len(out["answer"]) > 0

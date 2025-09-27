@@ -143,3 +143,56 @@ def invoke(
             },
         )
         return ""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Streaming interface for /ask/stream endpoint
+# ──────────────────────────────────────────────────────────────────────────────
+async def stream(
+    *,
+    query: str,
+    context: str = "",
+    user_id: str = "anonymous",
+    corr_id: Optional[str] = None,
+    **kwargs,
+):
+    """
+    Async generator that yields streaming response chunks.
+    Compatible with FastAPI StreamingResponse for /ask/stream endpoint.
+    """
+    import asyncio
+
+    try:
+        # Get the full response first
+        result = await answer(
+            query=query,
+            context=context,
+            corr_id=corr_id,
+            **kwargs
+        )
+        final_text = result.get("text", "") or result.get("answer", "")
+
+        if not final_text:
+            yield "No response generated."
+            return
+
+        # Stream in word chunks for better UX
+        words = final_text.split()
+        chunk_size = 3  # 3 words per chunk
+
+        for i in range(0, len(words), chunk_size):
+            chunk = " ".join(words[i:i + chunk_size])
+            if i + chunk_size < len(words):
+                chunk += " "
+            yield chunk
+            # Small delay for streaming effect
+            await asyncio.sleep(0.05)
+
+    except Exception as e:
+        log_event(
+            "echo_stream_error",
+            {
+                "corr_id": corr_id,
+                "error": str(e),
+            },
+        )
+        yield f"[Stream error: {str(e)}]"

@@ -486,40 +486,6 @@ async def mcp_run(
         )
 
 
-    # ── Normal path: run the agent with enforced timeout ──────────────────────
-    log_event(
-        "mcp_run_received",
-        {
-            "corr_id": corr_id,
-            "role": (body.role or "planner"),
-            "files_count": len(body.files or []),
-            "topics_count": len(body.topics or []),
-            "debug": body.debug,
-        },
-    )
-
-    try:
-        provided = dict(
-            query=body.query,
-            role=(body.role or "planner"),
-            files=body.files or [],
-            topics=body.topics or [],
-            user_id="anonymous",
-            debug=body.debug,
-            corr_id=corr_id,
-            context=context_text,
-        )
-        filtered = _filter_kwargs_for_callable(run_mcp, **provided)
-        result = await _maybe_await(run_mcp, **filtered, timeout_s=body.timeout_s)
-    except HTTPException:
-        raise
-    except asyncio.TimeoutError:
-        log_event("mcp_run_timeout", {"corr_id": corr_id, "timeout_s": body.timeout_s})
-        return _err(504, "mcp_timeout", corr_id, hint="Agent exceeded timeout", message=f"{body.timeout_s}s")
-    except Exception as e:
-        log_event("mcp_run_exception", {"corr_id": corr_id, "error": str(e), "trace": traceback.format_exc(limit=6)})
-        return _err(500, "mcp_failed", corr_id, hint="See server logs for mcp_run_exception", message=str(e))
-
     # Normalize possible Pydantic/custom objects
     try:
         if hasattr(result, "model_dump"):
@@ -555,16 +521,16 @@ async def mcp_run(
     sources_raw = kb_from_agent.get("sources")
     if isinstance(sources_raw, list):
         _srcs: List[str] = []
-    for s in sources_raw:
-        if isinstance(s, str):
-            _srcs.append(s)
-        elif isinstance(s, dict) and s.get("path"):
-            _srcs.append(str(s["path"]))
-        else:
-            try:
-                _srcs.append(str(s))
-            except Exception:
-                continue
+        for s in sources_raw:
+            if isinstance(s, str):
+                _srcs.append(s)
+            elif isinstance(s, dict) and s.get("path"):
+                _srcs.append(str(s["path"]))
+            else:
+                try:
+                    _srcs.append(str(s))
+                except Exception:
+                    continue
         sources = _srcs or kb_meta.get("sources", [])
     else:
         sources = kb_meta.get("sources", [])

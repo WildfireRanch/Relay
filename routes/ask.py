@@ -776,11 +776,28 @@ async def ask_stream(payload: StreamRequest, request: Request):
 
     async def gen() -> AsyncGenerator[bytes, None]:
         try:
-            async for chunk in echo_stream(query=q, context=payload.context or "", user_id=payload.user_id, corr_id=corr_id):
-                yield (chunk if isinstance(chunk, str) else str(chunk)).encode("utf-8")
+            # Validate that echo_stream is available and callable
+            if not hasattr(echo_stream, '__call__'):
+                raise RuntimeError("echo_stream is not callable")
+
+            async for chunk in echo_stream(
+                query=q,
+                context=payload.context or "",
+                user_id=payload.user_id,
+                corr_id=corr_id
+            ):
+                if chunk:  # Only yield non-empty chunks
+                    chunk_str = chunk if isinstance(chunk, str) else str(chunk)
+                    yield chunk_str.encode("utf-8")
+        except ImportError as e:
+            log_event("ask_stream_import_error", {"corr_id": corr_id, "error": str(e)})
+            yield f"[Stream service unavailable: {str(e)}]".encode("utf-8")
+        except asyncio.TimeoutError:
+            log_event("ask_stream_timeout", {"corr_id": corr_id})
+            yield "[Stream timeout - response took too long]".encode("utf-8")
         except Exception as e:
             log_event("ask_stream_error", {"corr_id": corr_id, "error": str(e)})
-            yield f"[stream error] {str(e)}".encode("utf-8")
+            yield f"[Stream error: {str(e)}]".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/plain")
 
@@ -817,11 +834,28 @@ async def ask_codex_stream(payload: StreamRequest, request: Request):
 
     async def gen() -> AsyncGenerator[bytes, None]:
         try:
-            async for chunk in codex_stream(query=q, context=payload.context or "", user_id=payload.user_id, corr_id=corr_id):
-                yield (chunk if isinstance(chunk, str) else str(chunk)).encode("utf-8")
+            # Validate that codex_stream is available and callable
+            if not hasattr(codex_stream, '__call__'):
+                raise RuntimeError("codex_stream is not callable")
+
+            async for chunk in codex_stream(
+                query=q,
+                context=payload.context or "",
+                user_id=payload.user_id,
+                corr_id=corr_id
+            ):
+                if chunk:  # Only yield non-empty chunks
+                    chunk_str = chunk if isinstance(chunk, str) else str(chunk)
+                    yield chunk_str.encode("utf-8")
+        except ImportError as e:
+            log_event("ask_codex_stream_import_error", {"corr_id": corr_id, "error": str(e)})
+            yield f"[Codex stream service unavailable: {str(e)}]".encode("utf-8")
+        except asyncio.TimeoutError:
+            log_event("ask_codex_stream_timeout", {"corr_id": corr_id})
+            yield "[Codex stream timeout - response took too long]".encode("utf-8")
         except Exception as e:
             log_event("ask_codex_stream_error", {"corr_id": corr_id, "error": str(e)})
-            yield f"[stream error] {str(e)}".encode("utf-8")
+            yield f"[Codex stream error: {str(e)}]".encode("utf-8")
 
     return StreamingResponse(gen(), media_type="text/plain")
 

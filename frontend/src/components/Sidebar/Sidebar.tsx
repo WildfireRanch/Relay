@@ -17,10 +17,9 @@ const links = [
   { href: "/email", label: "Email", icon: "/blackbeard earing.png" },
   { href: "/action-queue", label: "ActionQueue", icon: "/beanie and smoke.png" },
   { href: "/janitor", label: "Janitor", icon: "/sunglass shadow.png" },
-    { href: "/status", label: "Status", icon: "/globe.svg" },
+  { href: "/ops", label: "Operator", icon: "/sunglass shadow.png" },
+  { href: "/status", label: "Status", icon: "/globe.svg" },
   { href: "/admin/github", label: "GitHub", icon: "/file.svg" },
-
-
 ];
 
 export default function Sidebar() {
