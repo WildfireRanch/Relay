@@ -346,6 +346,7 @@ SECONDARY_ROUTERS: Iterable[str] = (
 OPTIONAL_ROUTERS = {
     "routes.control",
     "routes.x_mirror",
+    "routes.debug_diagnostics",
     # GitHub integrations (API + proxy + webhooks)
     "routes.integrations_github",
     "routes.github_proxy",

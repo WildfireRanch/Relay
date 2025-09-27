@@ -335,6 +335,8 @@ async def _maybe_await(func, *args, timeout_s: int, **kwargs):
 # ── Context building (safe optional) ------------------------------------------
 
 async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
+    log_event("flow_trace_context_start", {"corr_id": corr_id, "step": "context_build_init"})
+
     result: Dict[str, Any] = {
         "context": "",
         "files_used": [],
@@ -342,6 +344,7 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
         "grounding": [],
     }
     try:
+        log_event("flow_trace_context_import", {"corr_id": corr_id, "step": "importing_context_engine"})
         import importlib
         ctx_mod = importlib.import_module("core.context_engine")
         build_context = getattr(ctx_mod, "build_context", None)
@@ -350,13 +353,28 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
         RetrievalTier = getattr(ctx_mod, "RetrievalTier", None)
         TierConfig = getattr(ctx_mod, "TierConfig", None)
 
+        log_event("flow_trace_context_validate", {
+            "corr_id": corr_id,
+            "step": "validating_context_engine",
+            "build_context_available": callable(build_context),
+            "classes_available": None not in {ContextRequest, EngineConfig, RetrievalTier, TierConfig}
+        })
+
         if not callable(build_context) or None in {ContextRequest, EngineConfig, RetrievalTier, TierConfig}:
             raise RuntimeError("context engine not available")
 
+        log_event("flow_trace_semantic_import", {"corr_id": corr_id, "step": "importing_semantic_retriever"})
         from services.semantic_retriever import SemanticRetriever, TieredSemanticRetriever  # type: ignore
 
         score_thresh_env = os.getenv("RERANK_MIN_SCORE_GLOBAL") or os.getenv("SEMANTIC_SCORE_THRESHOLD")
         score_thresh = float(score_thresh_env) if score_thresh_env else None
+
+        log_event("flow_trace_retrievers_setup", {
+            "corr_id": corr_id,
+            "step": "setting_up_retrievers",
+            "score_threshold": score_thresh,
+            "score_thresh_env": score_thresh_env
+        })
 
         retrievers = {
             RetrievalTier.GLOBAL:       TieredSemanticRetriever("global",       score_threshold=score_thresh),
@@ -387,6 +405,14 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
         except Exception:
             token_counter = None
 
+        log_event("flow_trace_engine_config", {
+            "corr_id": corr_id,
+            "step": "building_engine_config",
+            "max_context_tokens": _env_int("MAX_CONTEXT_TOKENS", default=2400),
+            "has_token_counter": token_counter is not None,
+            "retrievers_count": len(retrievers)
+        })
+
         cfg = EngineConfig(
             retrievers=retrievers,
             tier_overrides=tier_overrides,
@@ -394,12 +420,29 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
             max_context_tokens=_env_int("MAX_CONTEXT_TOKENS", default=2400),
             token_counter=token_counter,
         )  # type: ignore
+
+        log_event("flow_trace_context_execute", {
+            "corr_id": corr_id,
+            "step": "executing_build_context",
+            "query_length": len(query)
+        })
+
         ctx = build_context(ContextRequest(query=query, corr_id=corr_id), cfg)  # type: ignore
 
         context_text = str((ctx or {}).get("context") or "")
         files_used = (ctx or {}).get("files_used") or []
         kb = ((ctx or {}).get("meta") or {}).get("kb") or {}
         matches = (ctx or {}).get("matches") or []
+
+        log_event("flow_trace_context_success", {
+            "corr_id": corr_id,
+            "step": "context_build_complete",
+            "context_length": len(context_text),
+            "files_used_count": len(files_used),
+            "kb_hits": int(kb.get("hits") or 0),
+            "kb_max_score": float(kb.get("max_score") or 0.0),
+            "matches_count": len(matches)
+        })
 
         result["context"] = context_text
         result["files_used"] = [{"path": p} for p in files_used if isinstance(p, str)]
@@ -414,6 +457,12 @@ async def _build_context_safe(query: str, corr_id: str) -> Dict[str, Any]:
             if isinstance(m, dict) and m.get("path")
         ]
     except Exception as e:
+        log_event("flow_trace_context_error", {
+            "corr_id": corr_id,
+            "step": "context_build_failed",
+            "error": str(e),
+            "error_type": type(e).__name__
+        })
         log_event("ask_context_build_skipped", {"corr_id": corr_id, "error": str(e)})
 
     return result
@@ -511,11 +560,28 @@ async def ask(
             },
         )
 
+        log_event("flow_trace_pipeline_context", {
+            "corr_id": corr_id,
+            "step": "calling_build_context",
+            "query_length": len(q)
+        })
+
         ctx = await _build_context_safe(q, corr_id)
         context_text = ctx["context"]
         files_used = ctx["files_used"]
         kb_meta = ctx["kb"]
         grounding_from_ctx = ctx["grounding"]
+
+        log_event("flow_trace_pipeline_gate", {
+            "corr_id": corr_id,
+            "step": "evaluating_retrieval_gate",
+            "context_length": len(context_text),
+            "kb_hits": kb_meta["hits"],
+            "kb_max_score": kb_meta["max_score"],
+            "grounding_count": len(grounding_from_ctx),
+            "threshold": KB_SCORE_THRESHOLD,
+            "min_hits": KB_MIN_HITS
+        })
 
         has_hits = int(kb_meta["hits"]) >= KB_MIN_HITS
         score_ok = float(kb_meta["max_score"]) >= KB_SCORE_THRESHOLD
@@ -523,6 +589,13 @@ async def ask(
         gated_no_answer_reason = None
         if not (has_hits and score_ok and has_attr):
             gated_no_answer_reason = "Insufficient grounding"
+            log_event("flow_trace_pipeline_blocked", {
+                "corr_id": corr_id,
+                "step": "retrieval_gate_blocked",
+                "has_hits": has_hits,
+                "score_ok": score_ok,
+                "has_attr": has_attr
+            })
             log_event(
                 "ask_gate_blocked",
                 {
@@ -538,6 +611,14 @@ async def ask(
         mcp_raw: Dict[str, Any] | Any = {}
         if gated_no_answer_reason is None:
             try:
+                log_event("flow_trace_mcp_start", {
+                    "corr_id": corr_id,
+                    "step": "calling_mcp_agent",
+                    "timeout_s": ASK_TIMEOUT_S,
+                    "role": role,
+                    "debug": debug
+                })
+
                 with anyio.move_on_after(ASK_TIMEOUT_S) as scope:
                     mcp_raw = await _maybe_await(
                         run_mcp,
@@ -552,11 +633,23 @@ async def ask(
                         timeout_s=ASK_TIMEOUT_S,
                     )
                 if scope.cancel_called:
+                    log_event("flow_trace_mcp_timeout", {
+                        "corr_id": corr_id,
+                        "step": "mcp_agent_timeout",
+                        "timeout_s": ASK_TIMEOUT_S
+                    })
                     log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
                     return JSONResponse({
                         "reason": "ask_timeout",
                         "timeout_s": ASK_TIMEOUT_S,
                     }, status_code=503)
+                else:
+                    log_event("flow_trace_mcp_success", {
+                        "corr_id": corr_id,
+                        "step": "mcp_agent_complete",
+                        "mcp_result_type": type(mcp_raw).__name__,
+                        "mcp_result_size": len(str(mcp_raw)) if mcp_raw else 0
+                    })
             except asyncio.TimeoutError:
                 log_event("ask_mcp_timeout", {"corr_id": corr_id, "timeout_s": ASK_TIMEOUT_S})
                 return JSONResponse({
