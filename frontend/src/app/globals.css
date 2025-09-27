@@ -1,6 +1,5 @@
 @import "tailwindcss";
-@import "tw-animate-css"; /* Optional: only include if tw-animate-css is installed */
-@import url('https://fonts.googleapis.com/css2?family=Geist+Sans:wght@400;700&family=Geist+Mono&display=swap');
+/* Google Fonts and animation imports temporarily removed for testing */
 
 /* --- Custom Theme Vars --- */
 :root {
