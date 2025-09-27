@@ -115,13 +115,13 @@ function metaToBadges(meta: Record<string, unknown> | null | undefined): MetaBad
 function StatusChip({ status }: { status?: Status }) {
   if (!status) return null;
   const classes: Record<Status, string> = {
-    pending: "bg-yellow-200 text-yellow-900 border-yellow-300",
-    approved: "bg-emerald-200 text-emerald-900 border-emerald-300",
-    denied: "bg-rose-200 text-rose-900 border-rose-300",
+    pending: "bg-yellow-200 text-yellow-900",
+    approved: "bg-emerald-200 text-emerald-900",
+    denied: "bg-rose-200 text-rose-900",
   };
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${classes[status]}`}
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${classes[status]}`}
       aria-label={`status: ${status}`}
       title={`status: ${status}`}
       data-testid="status-chip"
@@ -145,7 +145,7 @@ export default function ChatMessage({
 }: Props) {
   const isUser = role === "user";
   const align = isUser ? "items-end text-right" : "items-start text-left";
-  const bubbleTone = isUser ? "bg-blue-50 border-black border" : "bg-green-50 border-black border";
+  const bubbleTone = isUser ? "bg-blue-50" : "bg-green-50";
   const textTone = isUser ? "text-blue-800" : "text-green-800";
 
   const [localOpen, setLocalOpen] = useState(false);
@@ -170,7 +170,7 @@ export default function ChatMessage({
   if (typeof error === "string" && error.length > 0) {
     return (
       <div className={`flex ${align} ${className}`}>
-        <div className="w-fit max-w-[80ch] rounded-xl border border-red-200 bg-red-50 p-3 text-left shadow-sm">
+        <div className="w-fit max-w-[80ch] rounded-xl bg-red-50 p-3 text-left shadow-sm">
           <div className="text-sm font-semibold text-red-800">Request error</div>
           <div className="mt-1 break-words font-mono text-sm text-red-900" data-testid="error-text">
             {error}
@@ -187,7 +187,7 @@ export default function ChatMessage({
 
   return (
     <div className={`flex ${align} ${className}`}>
-      <div className={`w-fit max-w-[80ch] rounded-xl border p-3 text-left shadow-sm ${bubbleTone}`}>
+      <div className={`w-fit max-w-[80ch] rounded-xl p-3 text-left shadow-sm ${bubbleTone}`}>
         {/* Main content */}
         <div className={`prose prose-neutral dark:prose-invert max-w-none ${textTone}`}>
           <SafeMarkdown>{md}</SafeMarkdown>
@@ -217,7 +217,7 @@ export default function ChatMessage({
             {open && (
               <div
                 id={ctxId}
-                className="mt-1 rounded border bg-background/60 p-2"
+                className="mt-1 rounded bg-background/60 p-2"
                 role="region"
                 aria-label="message context"
               >

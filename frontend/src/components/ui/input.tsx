@@ -9,18 +9,18 @@ import { cn } from "@/lib/utils";
 const inputVariants = cva(
   [
     // Base
-    "block w-full min-w-0 rounded-md border bg-transparent",
+    "block w-full min-w-0 rounded-md bg-transparent",
     "text-base md:text-sm",
     "px-3 py-1 h-9", // default sizing (overridden by variants)
-    "border-input dark:bg-input/30",
+    "dark:bg-input/30",
     "placeholder:text-muted-foreground file:text-foreground",
-    "file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium",
+    "file:inline-flex file:h-7 file:bg-transparent file:text-sm file:font-medium",
     "selection:bg-primary selection:text-primary-foreground",
     "shadow-xs transition-[color,box-shadow] outline-none",
     "disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
     // Focus & validation rings
-    "focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50",
-    "aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive",
+    "focus-visible:ring-[3px] focus-visible:ring-ring/50",
+    "aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40",
   ].join(" "),
   {
     variants: {
