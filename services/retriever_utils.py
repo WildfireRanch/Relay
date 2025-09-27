@@ -21,6 +21,7 @@ import asyncio
 import inspect
 import logging
 from typing import Any, Dict, Iterable, List, Optional
+from utils.async_helpers import maybe_await_simple
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,6 @@ def normalize_hits(hits: Optional[Iterable[Any]]) -> List[Dict[str, Any]]:
 # ------------------------------ Invokers ------------------------------------
 
 
-async def _maybe_await(x: Any) -> Any:
-    return await x if inspect.isawaitable(x) else x
 
 
 async def _try_call(fn: Any, *args, **kwargs) -> Optional[Any]:
@@ -89,7 +88,7 @@ async def _try_call(fn: Any, *args, **kwargs) -> Optional[Any]:
     """
     try:
         res = fn(*args, **kwargs)
-        return await _maybe_await(res)
+        return await maybe_await_simple(res)
     except TypeError:
         # signature mismatch; let caller try another pattern
         return None

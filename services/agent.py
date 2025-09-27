@@ -29,7 +29,7 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from openai import AsyncOpenAI
 import services.kb as kb
 import httpx
-from services.context_engine import ContextEngine
+from core.context_engine import ContextEngine
 from utils.openai_client import create_openai_client
 
 # === Initialize OpenAI client ===

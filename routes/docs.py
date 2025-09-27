@@ -39,7 +39,7 @@ from services.auth import require_api_key  # shared API key validator
 
 # ContextEngine — cache clear is wrapped to never raise
 try:
-    from services.context_engine import ContextEngine
+    from core.context_engine import ContextEngine
 except Exception as _ctx_exc:  # pragma: no cover
     ContextEngine = None  # type: ignore[assignment]
     _CTX_IMPORT_ERROR = _ctx_exc

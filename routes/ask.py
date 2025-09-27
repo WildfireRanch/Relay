@@ -26,6 +26,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 import anyio
 from utils.env import get_float
 from services.errors import error_payload
+from utils.async_helpers import maybe_await, filter_kwargs_for_callable
 
 # --- Pydantic v1/v2 compatibility ---------------------------------------------
 try:
@@ -326,11 +327,6 @@ def _extract_grounding_from_context(context: str):
             max_score = score if max_score is None else max(max_score, score)
     return hits, max_score, sources
 
-async def _maybe_await(func, *args, timeout_s: int, **kwargs):
-    if iscoroutinefunction(func):
-        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
-    loop = asyncio.get_running_loop()
-    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=timeout_s)
 
 # ── Context building (safe optional) ------------------------------------------
 
@@ -620,7 +616,7 @@ async def ask(
                 })
 
                 with anyio.move_on_after(ASK_TIMEOUT_S) as scope:
-                    mcp_raw = await _maybe_await(
+                    mcp_raw = await maybe_await(
                         run_mcp,
                         query=q,
                         role=role,

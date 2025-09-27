@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from utils.async_helpers import maybe_await
 
 # Router
 router = APIRouter(prefix="/debug", tags=["diagnostics"])
@@ -84,7 +85,7 @@ async def debug_kb_direct(
             "query_length": len(query)
         })
 
-        search_result = await _maybe_await(kb.search, query, k=k)
+        search_result = await maybe_await(kb.search, query=query, k=k)
 
         elapsed = time.perf_counter() - start_time
 
@@ -185,7 +186,7 @@ async def debug_semantic_direct(
             "score_threshold": score_thresh
         })
 
-        search_result = await _maybe_await(retriever.search, query, k=k)
+        search_result = await maybe_await(retriever.search, query, k=k)
 
         elapsed = time.perf_counter() - start_time
 
@@ -436,7 +437,7 @@ async def debug_mcp_ping(
         # Test basic MCP call with minimal payload
         log_event("debug_mcp_execute_attempt", {"corr_id": corr_id})
 
-        mcp_result = await _maybe_await(
+        mcp_result = await maybe_await(
             run_mcp,
             query="ping",
             role="planner",
@@ -578,16 +579,3 @@ async def debug_env_config(
 # Utility Functions
 # ──────────────────────────────────────────────────────────────────────────────
 
-async def _maybe_await(func, *args, timeout_s: float = 30, **kwargs):
-    """Call function, handling both sync and async cases with timeout."""
-    import inspect
-    from inspect import iscoroutinefunction
-
-    if iscoroutinefunction(func):
-        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
-    else:
-        loop = asyncio.get_event_loop()
-        return await asyncio.wait_for(
-            loop.run_in_executor(None, lambda: func(*args, **kwargs)),
-            timeout=timeout_s
-        )

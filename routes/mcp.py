@@ -28,6 +28,7 @@ import traceback
 from inspect import iscoroutinefunction
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, TYPE_CHECKING
+from utils.async_helpers import maybe_await, filter_kwargs_for_callable
 from uuid import uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -169,28 +170,6 @@ def _final_text_from(plan: Any, rr: Any, root_final: Optional[str] = None) -> st
             return fa
     return ""
 
-async def _maybe_await(func: Any, *args, timeout_s: int = 45, **kwargs) -> Any:
-    """Call a function that may be sync or async with a timeout."""
-    if iscoroutinefunction(func):
-        return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)
-    loop = asyncio.get_running_loop()
-    return await asyncio.wait_for(loop.run_in_executor(None, lambda: func(*args, **kwargs)), timeout=timeout_s)
-
-def _filter_kwargs_for_callable(func: Any, **kwargs) -> Dict[str, Any]:
-    """
-    Return kwargs filtered to only those accepted by `func`'s signature.
-    Prevents TypeError: unexpected keyword argument 'context' (etc).
-    """
-    try:
-        sig = inspect.signature(func)
-        params = sig.parameters
-        # if **kwargs present, just return everything
-        if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
-            return kwargs
-        return {k: v for k, v in kwargs.items() if k in params}
-    except Exception:
-        # if we can't inspect, pass nothing (safe) and let upstream handle missing args
-        return {}
 
 def _err(status: int, err: str, corr_id: str, *, hint: Optional[str] = None, message: Optional[str] = None) -> JSONResponse:
     payload: Dict[str, Any] = {"error": err, "corr_id": corr_id}
@@ -283,7 +262,7 @@ async def mcp_diag_ctx(q: str = "Relay Command Center") -> Dict[str, Any]:
         engine_config = {}
 
     try:
-        ctx = importlib.import_module("services.context_engine")
+        ctx = importlib.import_module("core.context_engine")
         cache = getattr(ctx, "cache_status")()
     except Exception as e:
         cache = {"ok": False, "error": str(e)}
@@ -388,7 +367,7 @@ async def mcp_run(
                 echo_invoke = getattr(echo_agent, "invoke", None)
                 text: str = ""
                 if echo_invoke:
-                    text = await _maybe_await(
+                    text = await maybe_await(
                         echo_invoke,
                         query=body.query,
                         context=context_text,
@@ -451,11 +430,11 @@ async def mcp_run(
             corr_id=corr_id,
             context=context_text,
         )
-        filtered = _filter_kwargs_for_callable(run_mcp, **provided)
+        filtered = filter_kwargs_for_callable(run_mcp, **provided)
         log_event("mcp_run_call_args", {"corr_id": corr_id, "args": list(filtered.keys())})
 
         # Execute with timeout (works for sync/async agents)
-        result = await _maybe_await(run_mcp, **filtered, timeout_s=body.timeout_s)
+        result = await maybe_await(run_mcp, **filtered, timeout_s=body.timeout_s)
 
         # Normalize common return types before any further use
         try:
