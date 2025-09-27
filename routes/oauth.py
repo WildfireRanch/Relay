@@ -50,12 +50,28 @@ async def start_oauth(request: Request):
         raw = os.getenv("GOOGLE_CREDS_JSON")
         if not raw:
             raise HTTPException(500, detail="Missing GOOGLE_CREDS_JSON environment variable.")
+
+        creds_json: str
+        potential_path = Path(raw).expanduser()
+        if potential_path.exists():
+            try:
+                creds_json = potential_path.read_text()
+                print(f"✅ Loaded client secrets from {potential_path}")
+            except Exception as e:
+                raise HTTPException(500, detail=f"Error reading GOOGLE_CREDS_JSON file: {e}")
+        else:
+            try:
+                creds_json = base64.b64decode(raw).decode()
+                print("✅ Decoded client secrets from base64 env value")
+            except Exception as e:
+                raise HTTPException(500, detail=f"Error decoding GOOGLE_CREDS_JSON: {e}")
+
         try:
-            creds_json = base64.b64decode(raw).decode()
+            CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
             CREDENTIALS_PATH.write_text(creds_json)
             print(f"✅ Wrote client secrets to {CREDENTIALS_PATH}")
         except Exception as e:
-            raise HTTPException(500, detail=f"Error decoding GOOGLE_CREDS_JSON: {e}")
+            raise HTTPException(500, detail=f"Error writing client secrets: {e}")
 
     # 2. Determine redirect URI
     if OVERRIDE_REDIRECT_URI:
