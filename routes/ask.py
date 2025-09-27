@@ -1,4 +1,6 @@
 # ──────────────────────────────────────────────────────────────────────────────
+from __future__ import annotations
+
 __all__ = ["ASK_TIMEOUT_S"]
 # File: routes/ask.py
 # Purpose: FastAPI endpoints for /ask — production-grade and CORS-tolerant
@@ -7,8 +9,6 @@ __all__ = ["ASK_TIMEOUT_S"]
 #          • Pydantic v1/v2 compatible validators
 #          • Retrieval Gate, Anti-Parrot, Context build, MCP call preserved
 # ──────────────────────────────────────────────────────────────────────────────
-
-from __future__ import annotations
 
 import asyncio
 import os
