@@ -4,6 +4,7 @@
 import ActionQueuePanel from "@/components/ActionQueue/ActionQueuePanel";
 import LogsPanel from "@/components/LogsPanel/LogsPanel";
 import MemoryPanel from "@/components/MemoryPanel";
+import GmailOpsPanel from "@/components/GmailOps/GmailOpsPanel";
 
 export default function ControlPage() {
   return (
@@ -23,6 +24,11 @@ export default function ControlPage() {
       <section>
         <h2 className="text-xl font-semibold mb-2">🧬 Memory Log</h2>
         <MemoryPanel />
+      </section>
+
+      <section>
+        <h2 className="text-xl font-semibold mb-2">✉️ Email Operations</h2>
+        <GmailOpsPanel />
       </section>
     </main>
   );

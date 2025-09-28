@@ -1,10 +1,5 @@
-import GmailOpsPanel from "@/components/GmailOps/GmailOpsPanel";
+import AgenticFlowMonitor from "@/components/AgenticFlowMonitor";
 
-export default function EmailPage() {
-  return (
-    <main className="p-6">
-      <h1 className="text-2xl font-bold mb-4">✉️ Email Ops</h1>
-      <GmailOpsPanel />
-    </main>
-  );
+export default function FlowMonitorPage() {
+  return <AgenticFlowMonitor />;
 }
