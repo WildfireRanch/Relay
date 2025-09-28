@@ -382,15 +382,16 @@ export default function AskEchoOpsConsole() {
                     <TooltipTrigger asChild>
                       <Button
                         size="sm"
-                        variant="ghost"
+                        variant={isTracing ? "secondary" : "outline"}
                         onClick={() => runFlowTrace()}
                         disabled={isTracing}
                         aria-label="Run flow trace"
+                        className="border-blue-200 hover:bg-blue-50"
                       >
                         {isTracing ? (
-                          <RefreshCw className="h-3 w-3 animate-spin" />
+                          <RefreshCw className="h-4 w-4 animate-spin" />
                         ) : (
-                          <Play className="h-3 w-3" />
+                          <Play className="h-4 w-4" />
                         )}
                       </Button>
                     </TooltipTrigger>
@@ -400,11 +401,12 @@ export default function AskEchoOpsConsole() {
                     <TooltipTrigger asChild>
                       <Button
                         size="sm"
-                        variant={autoTrace ? "default" : "ghost"}
+                        variant={autoTrace ? "default" : "outline"}
                         onClick={() => setAutoTrace(!autoTrace)}
                         aria-label="Toggle auto-trace"
+                        className={autoTrace ? "bg-green-600 hover:bg-green-700" : "border-green-200 hover:bg-green-50"}
                       >
-                        <Activity className={`h-3 w-3 ${autoTrace ? 'text-green-600' : ''}`} />
+                        <Activity className="h-4 w-4" />
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
@@ -414,30 +416,28 @@ export default function AskEchoOpsConsole() {
                 </div>
               </CardHeader>
               <Separator />
-              <CardContent className="h-[calc(100%-80px)] p-0">
-                <div className="h-full">
+              <CardContent className="h-[calc(100%-80px)] p-0 relative">
+                <div className="h-full w-full">
                   <ReactFlow nodes={flowNodes} edges={flowEdges} fitView>
                     <MiniMap zoomable pannable />
                     <Controls />
                     <Background />
                   </ReactFlow>
                 </div>
-                {/* Flow Status Summary */}
+                {/* Compact Flow Status Summary */}
                 {flowTrace && (
-                  <div className="absolute bottom-2 left-2 right-2 bg-white/90 backdrop-blur-sm rounded-lg p-2 text-xs border shadow-sm">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className={`flex items-center gap-1 ${flowTrace.success ? 'text-green-600' : 'text-red-600'}`}>
-                          {flowTrace.success ? <CheckCircle className="h-3 w-3" /> : <XCircle className="h-3 w-3" />}
-                          {flowTrace.success ? 'Pipeline OK' : 'Pipeline Failed'}
-                        </span>
-                        <span className="text-gray-600">
-                          {flowTrace.steps.filter(s => s.status === 'success').length}/{flowTrace.steps.length} steps
-                        </span>
-                      </div>
+                  <div className="absolute bottom-1 left-1 bg-white/95 backdrop-blur-sm rounded-md px-2 py-1 text-[10px] border shadow-sm max-w-xs">
+                    <div className="flex items-center gap-2">
+                      <span className={`flex items-center gap-1 ${flowTrace.success ? 'text-green-600' : 'text-red-600'}`}>
+                        {flowTrace.success ? <CheckCircle className="h-2 w-2" /> : <XCircle className="h-2 w-2" />}
+                        {flowTrace.success ? 'OK' : 'FAIL'}
+                      </span>
+                      <span className="text-gray-600">
+                        {flowTrace.steps.filter(s => s.status === 'success').length}/{flowTrace.steps.length}
+                      </span>
                       {!flowTrace.success && flowTrace.break_point && (
-                        <span className="text-red-600 font-medium">
-                          Failed at: {flowTrace.break_point.replace(/^trace_/, '').replace(/_/g, ' ')}
+                        <span className="text-red-600 font-medium truncate">
+                          {flowTrace.break_point.replace(/^trace_/, '').replace(/_/g, ' ')}
                         </span>
                       )}
                     </div>
