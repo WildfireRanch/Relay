@@ -32,8 +32,38 @@ async def maybe_await(func: Callable, *args, timeout_s: float = 45, **kwargs) ->
 
     Raises:
         asyncio.TimeoutError: If execution exceeds timeout_s
+        TypeError: If positional args are passed to keyword-only function
         Any exception raised by the function itself
     """
+    # Check for keyword-only parameter violations
+    if args:
+        try:
+            sig = inspect.signature(func)
+            # Check if function has keyword-only parameters and we're passing positional args
+            has_keyword_only = any(
+                param.kind == param.KEYWORD_ONLY
+                for param in sig.parameters.values()
+            )
+
+            if has_keyword_only:
+                # Count non-keyword-only parameters that can accept positional args
+                positional_params = [
+                    param for param in sig.parameters.values()
+                    if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD)
+                ]
+
+                # If we have more positional args than can be accepted, raise error
+                if len(args) > len(positional_params):
+                    raise TypeError(
+                        f"Function {func.__name__} has keyword-only parameters but "
+                        f"received {len(args)} positional arguments. "
+                        f"Only {len(positional_params)} positional arguments are allowed."
+                    )
+        except (ValueError, TypeError):
+            # If we can't inspect the signature, proceed with the call
+            # The function itself will raise appropriate errors
+            pass
+
     if iscoroutinefunction(func):
         # Async function - await with timeout
         return await asyncio.wait_for(func(*args, **kwargs), timeout=timeout_s)

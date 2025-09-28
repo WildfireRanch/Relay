@@ -330,6 +330,10 @@ async def run_mcp(
 ) -> Dict[str, Any]:
     """
     Orchestrates: plan → context → dispatch. Returns a stable dict; never raises.
+
+    IMPORTANT: All parameters are keyword-only. Must be called with named arguments:
+        run_mcp(query="...", role="...", ...)
+    NOT: run_mcp("...", "...", ...)
     """
     cid = corr_id or str(uuid4())
     extra_kwargs = dict(kwargs)

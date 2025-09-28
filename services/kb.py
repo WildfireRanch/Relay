@@ -404,6 +404,10 @@ def api_reindex(
     """
     API-friendly wrapper around embed_all() with a stable response shape.
     Never raises.
+
+    IMPORTANT: All parameters are keyword-only. Must be called with named arguments:
+        api_reindex(tiers=[...], verbose=True)
+    NOT: api_reindex([...], True)
     Returns:
       {
         "ok": true|false,
@@ -652,6 +656,10 @@ def search(
     """
     Primary entrypoint compatible with services.semantic_retriever.search(...).
     Accepts both `k` and `top_k`. Returns normalized rows.
+
+    IMPORTANT: All parameters are keyword-only. Must be called with named arguments:
+        search(query="...", k=5)
+    NOT: search("...", 5)
     """
     use_k = int((k if k not in (None, "") else (top_k if top_k not in (None, "") else 5)))
     return simple_search(query, top_k=use_k, score_threshold=score_threshold)

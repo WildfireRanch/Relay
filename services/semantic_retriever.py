@@ -114,6 +114,11 @@ def search(
 ) -> List[Dict[str, Any]]:
     """Run semantic search via KB adapter with robust fallbacks.
 
+    IMPORTANT: Uses keyword-only parameters (note the *). All parameters except `q`
+    must be passed as keyword arguments:
+        search("query", k=5, score_threshold=0.7)
+    NOT: search("query", 5, 0.7)
+
     - Accepts either `top_k` or `k`; coerces to an integer with defaults.
     - Tolerates backend signature drift by trying multiple param forms.
     - Normalizes results into rows with `score` ∈ [0,1].

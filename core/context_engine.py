@@ -208,6 +208,13 @@ class ContextEngine:
     )
 
     def __init__(self, *, config: EngineConfig) -> None:
+        """
+        Initialize the ContextEngine.
+
+        IMPORTANT: Uses keyword-only parameters. Must be called with named arguments:
+            ContextEngine(config=my_config)
+        NOT: ContextEngine(my_config)
+        """
         self._config = config
         self._token_counter = config.token_counter
 

@@ -100,6 +100,11 @@ async def _try_call(fn: Any, *args, **kwargs) -> Optional[Any]:
 async def safe_semantic_search(retriever: Any, *, query: str, k: int = 6, **kwargs) -> List[Dict[str, Any]]:
     """
     Safely call a variety of retriever styles, returning a normalized list.
+
+    IMPORTANT: Uses keyword-only parameters. Must be called with named arguments:
+        safe_semantic_search(retriever, query="...", k=6)
+    NOT: safe_semantic_search(retriever, "...", 6)
+
     Tries in this order:
       1) obj.search(query=..., k=..., **kwargs)
       2) obj.search(query, k, **kwargs)

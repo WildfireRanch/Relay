@@ -186,7 +186,7 @@ async def debug_semantic_direct(
             "score_threshold": score_thresh
         })
 
-        search_result = await maybe_await(retriever.search, query, k=k)
+        search_result = await maybe_await(retriever.search, query=query, k=k)
 
         elapsed = time.perf_counter() - start_time
 
