@@ -77,10 +77,10 @@ def update_action_history(action, status, user, comment=""):
 
 # === Agent Dispatch Map ===
 AGENT_DISPATCH = {
-    "codex": codex_agent.handle,
-    "control": control_agent.run,
+    "codex": codex_agent.run,
+    "control": control_agent,
     "docs": docs_agent.analyze,
-    "echo": echo_agent.run,
+    "echo": echo_agent.invoke,
 }
 
 # === /queue_action ===
