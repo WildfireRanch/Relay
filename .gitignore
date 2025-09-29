@@ -96,9 +96,6 @@ build/
 # =========================
 # === Data, Index, Embeddings ===
 # =========================
-
-# === Data, Index, Embeddings ===
-# Track imported Markdown as the seed corpus
 !docs/imported/
 # But keep heavy/noisy stuff out of git
 docs/imported/**/*.pdf
@@ -108,11 +105,6 @@ docs/imported/**/.DS_Store
 docs/generated/
 vectorstore/
 index_backup_*.zip
-
-# =========================
-# === /data/index ===
-# =========================
-
 /data/index/*
 !/data/index/.gitkeep
 
