@@ -108,7 +108,11 @@ docs/imported/**/.DS_Store
 docs/generated/
 vectorstore/
 index_backup_*.zip
-# Ignore all files under /data/index
+
+# =========================
+# === /data/index ===
+# =========================
+
 /data/index/*
 !/data/index/.gitkeep
 
@@ -117,7 +121,6 @@ index_backup_*.zip
 # =========================
 requirements*.lock
 poetry.lock
-package-lock.json
 yarn.lock
 .container/*
 
