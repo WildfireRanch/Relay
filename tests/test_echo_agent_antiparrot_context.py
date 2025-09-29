@@ -3,7 +3,7 @@ import re
 import pytest
 
 # Import echo_agent from your real module path
-from agents.echo_agent import run as echo_run
+from agents.echo_agent import answer as echo_run
 
 
 @pytest.mark.asyncio

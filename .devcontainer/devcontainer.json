@@ -1,29 +1,43 @@
 {
   // ──────────────────────────────────────────────────────────────────────────
-  // Dev Container for Relay
-  // - Installs Git (inside the container)
-  // - Pins must-have extensions for the REMOTE workspace
-  // - Optionally seeds global Git identity (safe defaults)
+  // Dev Container for Relay Full-Stack Development
+  // - Python 3.12 backend environment
+  // - Node.js 18+ for Next.js frontend
+  // - Essential development tools and extensions
   // ──────────────────────────────────────────────────────────────────────────
-  "name": "Relay Codespace",
+  "name": "Relay Full-Stack Dev",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
   "features": {
     // Official Dev Containers features:
     // https://github.com/devcontainers/features/tree/main/src
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": false
     },
-    "ghcr.io/devcontainers/features/git:1": {}
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "18"
+    }
   },
+
+  "forwardPorts": [3000, 8000],
 
   "customizations": {
     "vscode": {
       "extensions": [
+        // Git and GitHub
         "github.vscode-pull-request-github",
         "ms-azuretools.vscode-docker",
-        "openai.chatgpt"
+        "openai.chatgpt",
+        // Python development
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        // Frontend development
+        "ms-vscode.vscode-typescript-next",
+        "bradlc.vscode-tailwindcss",
+        "esbenp.prettier-vscode"
       ],
       "settings": {
-        // These are VS Code settings (scoped to the REMOTE workspace)
+        // Git settings
         "git.enabled": true,
         "git.autofetch": true,
         "git.confirmSync": false,
@@ -38,6 +52,10 @@
     }
   },
 
-  // Optional: set your Git identity inside the container
-  "postCreateCommand": "git config --global user.name 'Bret' && git config --global user.email 'you@example.com'"
+  "remoteEnv": {
+    "PYTHONUNBUFFERED": "1"
+  },
+
+  // Setup both Python and Node.js dependencies
+  "postCreateCommand": "git config --global user.name 'Bret' && git config --global user.email 'you@example.com' && pip install -r requirements.txt && cd frontend && npm install"
 }
