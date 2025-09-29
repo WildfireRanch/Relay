@@ -67,7 +67,7 @@ conversation_history: Dict[str, List[Dict[str, Any]]] = {}
 
 # === Tool dispatchers ===
 async def search_docs(query: str, user_id: str) -> Dict[str, Any]:
-    hits = kb.search(query, user_id=user_id, k=5) if 'user_id' in kb.search.__code__.co_varnames else kb.search(query, k=5)
+    hits = kb.search(query=query, user_id=user_id, k=5) if 'user_id' in kb.search.__code__.co_varnames else kb.search(query=query, k=5)
     return {"matches": hits}
 
 async def run_code_review(path: str) -> Dict[str, Any]:
