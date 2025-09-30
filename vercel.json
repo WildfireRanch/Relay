@@ -12,22 +12,40 @@
     "ADMIN_UI_TOKEN": "@admin_ui_token",
     "ADMIN_IPS": "@admin_ips"
   },
-  "routes": [
+  "headers": [
     {
-      "src": "/favicon.ico",
-      "headers": {
-        "cache-control": "public, max-age=86400, immutable"
-      }
+      "source": "/favicon.ico",
+      "headers": [
+        {
+          "key": "cache-control",
+          "value": "public, max-age=86400, immutable"
+        }
+      ]
     },
     {
-      "src": "/(.*)",
-      "headers": {
-        "strict-transport-security": "max-age=63072000; includeSubDomains; preload",
-        "x-frame-options": "DENY",
-        "x-content-type-options": "nosniff",
-        "referrer-policy": "strict-origin-when-cross-origin",
-        "permissions-policy": "geolocation=(), microphone=(), camera=()"
-      }
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "strict-transport-security",
+          "value": "max-age=63072000; includeSubDomains; preload"
+        },
+        {
+          "key": "x-frame-options",
+          "value": "DENY"
+        },
+        {
+          "key": "x-content-type-options",
+          "value": "nosniff"
+        },
+        {
+          "key": "referrer-policy",
+          "value": "strict-origin-when-cross-origin"
+        },
+        {
+          "key": "permissions-policy",
+          "value": "geolocation=(), microphone=(), camera=()"
+        }
+      ]
     }
   ],
   "functions": {
