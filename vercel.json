@@ -4,14 +4,6 @@
   "buildCommand": "cd frontend && npm run build",
   "outputDirectory": "frontend/.next",
   "installCommand": "cd frontend && npm install",
-  "env": {
-    "NEXT_PUBLIC_API_URL": "@next_public_api_url",
-    "ADMIN_API_KEY": "@admin_api_key",
-    "RELAY_API_KEY": "@relay_api_key",
-    "API_KEY": "@api_key",
-    "ADMIN_UI_TOKEN": "@admin_ui_token",
-    "ADMIN_IPS": "@admin_ips"
-  },
   "headers": [
     {
       "source": "/favicon.ico",
