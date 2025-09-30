@@ -1,0 +1,26 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+⚠ No build cache found. Please configure build caching for faster rebuilds. Read more: https://nextjs.org/docs/messages/no-cache
+   ▲ Next.js 15.3.3
+
+   Creating an optimized production build ...
+ ✓ Compiled successfully in 33.0s
+   Skipping validation of types
+   Skipping linting
+   Collecting page data ...
+   Generating static pages (0/12) ...
+[Error: Minified React error #31; visit https://reactjs.org/docs/error-decoder.html?invariant=31&args[]=object%20with%20keys%20%7B%24%24typeof%2C%20type%2C%20key%2C%20ref%2C%20props%7D for the full message or use the non-minified dev environment for full errors and additional helpful warnings.]
+Error occurred prerendering page "/404". Read more: https://nextjs.org/docs/messages/prerender-error
+Error: Minified React error #31; visit https://reactjs.org/docs/error-decoder.html?invariant=31&args[]=object%20with%20keys%20%7B%24%24typeof%2C%20type%2C%20key%2C%20ref%2C%20props%7D for the full message or use the non-minified dev environment for full errors and additional helpful warnings.
+    at Z (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:76:490)
+    at Xc (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:68:409)
+    at Zc (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:70:210)
+    at Z (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:76:89)
+    at Zc (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:70:481)
+    at Z (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:76:89)
+    at $c (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:78:98)
+    at bd (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:77:404)
+    at Z (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:76:217)
+    at Zc (/workspace/Relay/node_modules/react-dom/cjs/react-dom-server.browser.production.min.js:71:479)
+Export encountered an error on /_error: /404, exiting the build.
+ ⨯ Next.js build worker exited with code: 1 and signal: null
+exit code: 1
