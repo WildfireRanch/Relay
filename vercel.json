@@ -1,10 +1,7 @@
 {
   "version": 2,
-  "framework": "nextjs",
-  "buildCommand": "npm run build --workspace=frontend",
+  "buildCommand": "npm install && npm run build --workspace=frontend",
   "outputDirectory": "frontend/.next",
-  "installCommand": "npm install",
-  "rootDirectory": "frontend",
   "headers": [
     {
       "source": "/favicon.ico",
