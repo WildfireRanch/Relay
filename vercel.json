@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "buildCommand": "npm install && cd frontend && SKIP_ENV_VALIDATION=1 npm run build",
+  "buildCommand": "npm install && npm run build --workspace=frontend",
   "outputDirectory": "frontend/.next",
   "headers": [
     {
