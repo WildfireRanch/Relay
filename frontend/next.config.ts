@@ -21,6 +21,8 @@ const nextConfig: NextConfig = {
   },
   // Skip generating 404 during build to avoid SSR issues with client components
   skipTrailingSlashRedirect: true,
+  // Use standalone mode for Vercel deployment
+  output: 'standalone',
   /* Add other options here as needed */
 };
 

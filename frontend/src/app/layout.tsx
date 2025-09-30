@@ -1,9 +1,6 @@
 import './globals.css';
-import { ReactNode } from 'react';
-import Sidebar from '@/components/Sidebar/Sidebar';
-
-// Force dynamic rendering to avoid SSR issues with client components
-export const dynamic = 'force-dynamic';
+import type { ReactNode } from 'react';
+import { Sidebar } from '@/components';
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

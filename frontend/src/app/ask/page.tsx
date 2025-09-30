@@ -9,7 +9,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import SafeMarkdown from "@/components/SafeMarkdown";
+import { SafeMarkdown } from "@/components";
 import { API_ROOT } from "@/lib/api";
 
 // ─────────────────────────────────────────────────────────────────────────────

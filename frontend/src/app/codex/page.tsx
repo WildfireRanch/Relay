@@ -7,7 +7,7 @@ import React, { useState } from "react";
 import { CodexEditor, CodexPromptBar, CodexPatchView } from "@/components/Codex";
 import { Button } from "@/components/ui/button";
 import { API_ROOT } from "@/lib/api";
-import SafeMarkdown from "@/components/SafeMarkdown";
+import { SafeMarkdown } from "@/components";
 import { toMDString } from "@/lib/toMDString";
 
 // Helper replaced by shared utility
