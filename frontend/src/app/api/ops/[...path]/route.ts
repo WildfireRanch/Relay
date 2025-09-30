@@ -21,7 +21,7 @@ function adminKey(): string {
 // Main handler for all HTTP methods
 async function handleRequest(
   req: Request,
-  { params }: { params: { path: string[] } }
+  context: { params: Promise<{ path: string[] }> }
 ): Promise<Response> {
   const base = apiBase()
   const key = adminKey()
@@ -32,6 +32,9 @@ async function handleRequest(
       { status: 500, headers: { "Content-Type": "application/json" } }
     )
   }
+
+  // Await params in Next.js 15+
+  const params = await context.params
 
   // Reconstruct the path and query string
   const path = params.path.join('/')

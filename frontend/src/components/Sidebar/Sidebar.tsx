@@ -40,8 +40,8 @@ export default function Sidebar() {
               pathname === href ? "bg-blue-100 font-semibold" : ""
             }`}
           >
-            <Image src={icon} alt={label} width={24} height={24} />
-            <span>{label}</span>
+            <Image src={icon} alt={label} width={24} height={24} priority={false} />
+            {label}
           </Link>
         ))}
       </nav>
