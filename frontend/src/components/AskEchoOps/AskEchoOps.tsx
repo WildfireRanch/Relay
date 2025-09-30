@@ -186,7 +186,7 @@ export default function AskEchoOpsConsole() {
                   <Workflow className="h-4 w-4" />
                   <CardTitle className="text-lg">Pipeline Status</CardTitle>
                   <Badge variant="outline" className="text-xs">
-                    <a href="/email" className="hover:underline">View Full Monitor →</a>
+                    <a href="/flow-monitor" className="hover:underline">View Full Monitor →</a>
                   </Badge>
                 </div>
               </CardHeader>
@@ -196,7 +196,7 @@ export default function AskEchoOpsConsole() {
                   <Workflow className="h-12 w-12 mx-auto mb-4 text-gray-400" />
                   <p className="text-gray-600 mb-4">Flow monitoring moved to dedicated page</p>
                   <Button asChild variant="outline">
-                    <a href="/email">Open Flow Monitor</a>
+                    <a href="/flow-monitor">Open Flow Monitor</a>
                   </Button>
                 </div>
               </CardContent>

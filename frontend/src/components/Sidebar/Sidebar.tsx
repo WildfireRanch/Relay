@@ -11,7 +11,7 @@ const links = [
   { href: "/ask", label: "Ask Echo", icon: "/Hoody.png" },
   { href: "/codex", label: "Codex", icon: "/PlannerCop.png" },
   { href: "/docs", label: "Docs", icon: "/PigTails.png" },
-  { href: "/logs", label: "Logs", icon: "/echo.png" }, // Pick a fun icon!
+  { href: "/logs", label: "Logs", icon: "/Echo.png" }, // Pick a fun icon!
   { href: "/control", label: "Control", icon: "/Echo.png" },
   { href: "/planner", label: "Planner", icon: "/ballcap beard.png" },
   { href: "/flow-monitor", label: "Flow Monitor", icon: "/blackbeard earing.png" },
