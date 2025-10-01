@@ -30,6 +30,8 @@
       "@/*": ["./src/*"],
       "@/components": ["./src/components/index.ts"],
       "@/components/*": ["./src/components/*"],
+      "@/components/Codex": ["./src/components/Codex/index.ts"],
+      "@/components/ui/*": ["./src/components/ui/*"],
       "@/lib/*": ["./src/lib/*"]
     },
 
