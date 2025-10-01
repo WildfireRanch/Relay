@@ -1,4 +1,6 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 /* Google Fonts and animation imports temporarily removed for testing */
 
 /* --- Custom Theme Vars --- */
