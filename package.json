@@ -40,7 +40,11 @@
   "author": "Wildfire Ranch",
   "license": "UNLICENSED",
   "dependencies": {
-    "autoprefixer": "^10.4.21",
     "postcss": "^8.5.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/typography": "^0.5.16",
+    "autoprefixer": "^10.4.21",
+    "tailwindcss": "^3.4.17"
   }
 }
