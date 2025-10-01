@@ -1,0 +1,945 @@
+{
+  "app_root": "/workspace/Relay/frontend",
+  "alias": {
+    "tsconfig": {
+      "baseUrl": ".",
+      "paths": {
+        "@/*": [
+          "src/*"
+        ],
+        "@components/*": [
+          "src/components/*"
+        ]
+      },
+      "file": "tsconfig.json"
+    },
+    "nextWebpack": null,
+    "verdict": "ok"
+  },
+  "imports": [
+    {
+      "file": "src/lib/askClient.ts",
+      "line": 4,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsSyncPanel.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsSyncPanel.tsx",
+      "line": 9,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsSyncPanel.tsx",
+      "line": 10,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsSyncPanel.tsx",
+      "line": 11,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/SearchPanel.tsx",
+      "line": 17,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/MemoryPanel.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/MemoryPanel.tsx",
+      "line": 9,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/MemoryPanel.tsx",
+      "line": 10,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/MemoryPanel.tsx",
+      "line": 11,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/MemoryPanel.tsx",
+      "line": 12,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/StatusPanel.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/StatusPanel.tsx",
+      "line": 9,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/StatusPanel.tsx",
+      "line": 10,
+      "specifier": "@/components/DocsSyncPanel",
+      "status": "ok",
+      "resolved": "src/components/DocsSyncPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/StatusPanel.tsx",
+      "line": 11,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 15,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 16,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 17,
+      "specifier": "@/components/ui/tabs",
+      "status": "ok",
+      "resolved": "src/components/ui/tabs.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 18,
+      "specifier": "@/components/ui/scroll-area",
+      "status": "ok",
+      "resolved": "src/components/ui/scroll-area.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 19,
+      "specifier": "@/components/ui/separator",
+      "status": "ok",
+      "resolved": "src/components/ui/separator.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 20,
+      "specifier": "@/components/ui/badge",
+      "status": "ok",
+      "resolved": "src/components/ui/badge.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 21,
+      "specifier": "@/components/ui/tooltip",
+      "status": "ok",
+      "resolved": "src/components/ui/tooltip.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AgenticFlowMonitor/AgenticFlowMonitor.tsx",
+      "line": 22,
+      "specifier": "@/components/ui/input",
+      "status": "ok",
+      "resolved": "src/components/ui/input.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 12,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 13,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 14,
+      "specifier": "@/components/ui/input",
+      "status": "ok",
+      "resolved": "src/components/ui/input.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 15,
+      "specifier": "@/components/ui/tabs",
+      "status": "ok",
+      "resolved": "src/components/ui/tabs.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 16,
+      "specifier": "@/components/ui/scroll-area",
+      "status": "ok",
+      "resolved": "src/components/ui/scroll-area.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 17,
+      "specifier": "@/components/ui/separator",
+      "status": "ok",
+      "resolved": "src/components/ui/separator.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 18,
+      "specifier": "@/components/ui/badge",
+      "status": "ok",
+      "resolved": "src/components/ui/badge.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 19,
+      "specifier": "@/components/ui/tooltip",
+      "status": "ok",
+      "resolved": "src/components/ui/tooltip.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "line": 22,
+      "specifier": "@/lib/askClient",
+      "status": "ok",
+      "resolved": "src/lib/askClient.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/GmailOps/GmailOpsPanel.tsx",
+      "line": 6,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/GmailOps/GmailOpsPanel.tsx",
+      "line": 7,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/GmailOps/GmailOpsPanel.tsx",
+      "line": 8,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/GmailOps/GmailOpsPanel.tsx",
+      "line": 9,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AuditPanel/AuditPanel.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AuditPanel/AuditPanel.tsx",
+      "line": 9,
+      "specifier": "@/components/ui/badge",
+      "status": "ok",
+      "resolved": "src/components/ui/badge.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AuditPanel/AuditPanel.tsx",
+      "line": 10,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AuditPanel/AuditPanel.tsx",
+      "line": 11,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/separator.tsx",
+      "line": 4,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/tooltip.tsx",
+      "line": 4,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/button.tsx",
+      "line": 13,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/progress.tsx",
+      "line": 6,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/tabs.tsx",
+      "line": 5,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/textarea.tsx",
+      "line": 6,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/input.tsx",
+      "line": 7,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/card.tsx",
+      "line": 3,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/scroll-area.tsx",
+      "line": 4,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/label.tsx",
+      "line": 6,
+      "specifier": "@/lib/utils",
+      "status": "ok",
+      "resolved": "src/lib/utils.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/AskAgent/AskAgent.tsx",
+      "line": 6,
+      "specifier": "@/components/ui/textarea",
+      "status": "ok",
+      "resolved": "src/components/ui/textarea.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/AskAgent/AskAgent.tsx",
+      "line": 7,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ui/AskAgent/AskAgent.tsx",
+      "line": 8,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/dashboard/Dashboard.tsx",
+      "line": 10,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/dashboard/Dashboard.tsx",
+      "line": 11,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/dashboard/Dashboard.tsx",
+      "line": 12,
+      "specifier": "@/components/ui/input",
+      "status": "ok",
+      "resolved": "src/components/ui/input.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/dashboard/Dashboard.tsx",
+      "line": 13,
+      "specifier": "@/components/ui/progress",
+      "status": "ok",
+      "resolved": "src/components/ui/progress.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/ChatMessage.tsx",
+      "line": 10,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/ChatMessage.tsx",
+      "line": 11,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/ChatMessage.tsx",
+      "line": 12,
+      "specifier": "@/components/common/MetaBadges",
+      "status": "ok",
+      "resolved": "src/components/common/MetaBadges.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/hooks.ts",
+      "line": 10,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/hooks.ts",
+      "line": 11,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/useAskEcho.ts",
+      "line": 19,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/useAskEcho.ts",
+      "line": 20,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/ChatWindow.tsx",
+      "line": 15,
+      "specifier": "@/components/AskAgent/ChatMessage",
+      "status": "ok",
+      "resolved": "src/components/AskAgent/ChatMessage.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/AskAgent/ChatWindow.tsx",
+      "line": 17,
+      "specifier": "@/components/AskAgent/useAskEcho",
+      "status": "ok",
+      "resolved": "src/components/AskAgent/useAskEcho.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/AgentDebugTab.tsx",
+      "line": 9,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/AgentDebugTab.tsx",
+      "line": 10,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/AgentDebugTab.tsx",
+      "line": 11,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/AgentDebugTab.tsx",
+      "line": 12,
+      "specifier": "@/components/common/MetaBadges",
+      "status": "ok",
+      "resolved": "src/components/common/MetaBadges.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/DocsViewer.tsx",
+      "line": 9,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/DocsViewer.tsx",
+      "line": 11,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/DocsViewer.tsx",
+      "line": 12,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/DocsViewer.tsx",
+      "line": 13,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/DocsViewer/DocsViewer.tsx",
+      "line": 14,
+      "specifier": "@/components/common/MetaBadges",
+      "status": "ok",
+      "resolved": "src/components/common/MetaBadges.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/LogsPanel/LogsPanel.tsx",
+      "line": 7,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/LogsPanel/LogsPanel.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/LogsPanel/LogsPanel.tsx",
+      "line": 9,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/LogsPanel/LogsPanel.tsx",
+      "line": 10,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/Codex/page.tsx",
+      "line": 7,
+      "specifier": "@/components/Codex",
+      "status": "ok",
+      "resolved": "src/components/Codex/index.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/Codex/page.tsx",
+      "line": 9,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/Codex/CodexPatchView.tsx",
+      "line": 8,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/Codex/CodexPromptBar.tsx",
+      "line": 7,
+      "specifier": "@/components/ui/input",
+      "status": "ok",
+      "resolved": "src/components/ui/input.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/Codex/CodexPromptBar.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 9,
+      "specifier": "@/components/ui/card",
+      "status": "ok",
+      "resolved": "src/components/ui/card.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 10,
+      "specifier": "@/components/ui/badge",
+      "status": "ok",
+      "resolved": "src/components/ui/badge.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 11,
+      "specifier": "@/components/ui/textarea",
+      "status": "ok",
+      "resolved": "src/components/ui/textarea.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 12,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 13,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "line": 14,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/layout.tsx",
+      "line": 3,
+      "specifier": "@/components/Sidebar/Sidebar",
+      "status": "ok",
+      "resolved": "src/components/Sidebar/Sidebar.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/flow-monitor/page.tsx",
+      "line": 1,
+      "specifier": "@/components/AgenticFlowMonitor",
+      "status": "ok",
+      "resolved": "src/components/AgenticFlowMonitor/index.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/logs/page.tsx",
+      "line": 2,
+      "specifier": "@/components/LogsPanel/LogsPanel",
+      "status": "ok",
+      "resolved": "src/components/LogsPanel/LogsPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/gmail-ops/page.tsx",
+      "line": 1,
+      "specifier": "@/components/GmailOps/GmailOpsPanel",
+      "status": "ok",
+      "resolved": "src/components/GmailOps/GmailOpsPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/action-queue/page.tsx",
+      "line": 2,
+      "specifier": "@/components/ActionQueue/ActionQueuePanel",
+      "status": "ok",
+      "resolved": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/control/page.tsx",
+      "line": 4,
+      "specifier": "@/components/ActionQueue/ActionQueuePanel",
+      "status": "ok",
+      "resolved": "src/components/ActionQueue/ActionQueuePanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/control/page.tsx",
+      "line": 5,
+      "specifier": "@/components/LogsPanel/LogsPanel",
+      "status": "ok",
+      "resolved": "src/components/LogsPanel/LogsPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/control/page.tsx",
+      "line": 6,
+      "specifier": "@/components/MemoryPanel",
+      "status": "ok",
+      "resolved": "src/components/MemoryPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/control/page.tsx",
+      "line": 7,
+      "specifier": "@/components/GmailOps/GmailOpsPanel",
+      "status": "ok",
+      "resolved": "src/components/GmailOps/GmailOpsPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/codex/page.tsx",
+      "line": 7,
+      "specifier": "@/components/Codex",
+      "status": "ok",
+      "resolved": "src/components/Codex/index.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/codex/page.tsx",
+      "line": 8,
+      "specifier": "@/components/ui/button",
+      "status": "ok",
+      "resolved": "src/components/ui/button.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/codex/page.tsx",
+      "line": 9,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/codex/page.tsx",
+      "line": 10,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/codex/page.tsx",
+      "line": 11,
+      "specifier": "@/lib/toMDString",
+      "status": "ok",
+      "resolved": "src/lib/toMDString.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/search/page.tsx",
+      "line": 2,
+      "specifier": "@/components/SearchPanel",
+      "status": "ok",
+      "resolved": "src/components/SearchPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/dashboard/page.tsx",
+      "line": 3,
+      "specifier": "@/components/dashboard/Dashboard",
+      "status": "ok",
+      "resolved": "src/components/dashboard/Dashboard.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/MermaidGraph/page.tsx",
+      "line": 2,
+      "specifier": "@/components/MermaidGraph",
+      "status": "ok",
+      "resolved": "src/components/MermaidGraph.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/ask/page.tsx",
+      "line": 12,
+      "specifier": "@/components/SafeMarkdown",
+      "status": "ok",
+      "resolved": "src/components/SafeMarkdown.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/ask/page.tsx",
+      "line": 13,
+      "specifier": "@/lib/api",
+      "status": "ok",
+      "resolved": "src/lib/api.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/email/page.tsx",
+      "line": 1,
+      "specifier": "@/components/AgenticFlowMonitor",
+      "status": "ok",
+      "resolved": "src/components/AgenticFlowMonitor/index.ts",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/ask-ops/page.tsx",
+      "line": 1,
+      "specifier": "@/components/AskEchoOps/AskEchoOps",
+      "status": "ok",
+      "resolved": "src/components/AskEchoOps/AskEchoOps.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/status/page.tsx",
+      "line": 3,
+      "specifier": "@/components/StatusPanel",
+      "status": "ok",
+      "resolved": "src/components/StatusPanel.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/docs/page.tsx",
+      "line": 4,
+      "specifier": "@/components/DocsViewer/DocsViewer",
+      "status": "ok",
+      "resolved": "src/components/DocsViewer/DocsViewer.tsx",
+      "suggestion": null
+    },
+    {
+      "file": "src/app/audit/page.tsx",
+      "line": 2,
+      "specifier": "@/components/AuditPanel/AuditPanel",
+      "status": "ok",
+      "resolved": "src/components/AuditPanel/AuditPanel.tsx",
+      "suggestion": null
+    }
+  ],
+  "shadcn": {
+    "button": "ok"
+  },
+  "fix_plan": []
+}
