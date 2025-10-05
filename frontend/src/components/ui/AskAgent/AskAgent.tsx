@@ -17,19 +17,28 @@ export default function AskAgent() {
     setLoading(true)
     setResponse(null)
 
-    const res = await fetch("https://relay.wildfireranch.us/ask?q=" + encodeURIComponent(query), {
-      headers: {
-        "X-API-Key": process.env.NEXT_PUBLIC_API_KEY || ""
-      }
-    })
+    try {
+      const res = await fetch("/api/ask/run", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ prompt: query })
+      })
 
-    const data = await res.json()
-    setResponse(
-      data.answer ||
-      data.function_call?.arguments ||
-      "No answer."
-    )
-    setLoading(false)
+      const data = await res.json()
+      setResponse(
+        data.final_text ||
+        data.answer ||
+        data.routed_result?.response ||
+        data.function_call?.arguments ||
+        "No answer."
+      )
+    } catch (error) {
+      setResponse("Error: " + (error instanceof Error ? error.message : "Failed to get response"))
+    } finally {
+      setLoading(false)
+    }
   }
 
   if (response && typeof response !== "string") {
