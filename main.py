@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-# ── Stdlib --------------------------------------------------------------------
+# ── Stdlib ---------------------------------------------------------------------
 import importlib
 import logging
 import os
