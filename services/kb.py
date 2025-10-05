@@ -389,6 +389,7 @@ def embed_all(verbose: bool = False, tiers: Optional[List[TierSpec]] = None) -> 
 
         logger.info("✅ Index persisted → %s (%.2fs)", INDEX_DIR, dt)
         log_event("kb_index_built", {"model": MODEL_NAME, "docs": len(docs), "seconds": round(dt, 2)})
+        clear_index_cache()  # Clear cache so next get_index() loads the new index
         return {"ok": True, "error": None, "model": MODEL_NAME, "indexed": len(docs)}
     except Exception as e:
         logger.exception("[KB] Ingest/index build failed")
@@ -503,11 +504,29 @@ def index_is_valid() -> bool:
         return False
     return _index_dim_matches_expected()
 
+# Module-level cache for the loaded index
+_CACHED_INDEX = None
+_CACHE_LOADED_AT = None
+
+def clear_index_cache():
+    """Clear the cached index. Call this after rebuilding the index."""
+    global _CACHED_INDEX, _CACHE_LOADED_AT
+    _CACHED_INDEX = None
+    _CACHE_LOADED_AT = None
+    logger.info("[KB] Index cache cleared")
+
 def get_index():
     """
     Load (or rebuild once) and return a VectorStoreIndex.
     Never leaves the index unusable; performs one rebuild attempt on errors.
+    Uses module-level cache to avoid reloading on every request.
     """
+    global _CACHED_INDEX, _CACHE_LOADED_AT
+
+    # Return cached index if available
+    if _CACHED_INDEX is not None:
+        return _CACHED_INDEX
+
     from llama_index.core import StorageContext, load_index_from_storage  # lazy
     EMBED_MODEL = _resolve_embed_model()
 
@@ -518,7 +537,11 @@ def get_index():
                 logger.error("[KB] embed_all() returned error: %s", status.get("error"))
                 log_event("kb_load_invalid_after_embed", {"error": status.get("error")})
         ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
-        return load_index_from_storage(ctx, embed_model=EMBED_MODEL)
+        index = load_index_from_storage(ctx, embed_model=EMBED_MODEL)
+        _CACHED_INDEX = index
+        _CACHE_LOADED_AT = time.time()
+        logger.info("[KB] Index loaded and cached")
+        return index
     except Exception:
         logger.exception("[KB] load_index_from_storage failed — wiping and rebuilding once")
         shutil.rmtree(INDEX_DIR, ignore_errors=True)
@@ -529,7 +552,11 @@ def get_index():
             log_event("kb_load_rebuild_fail", {"error": status.get("error")})
             return None
         ctx = StorageContext.from_defaults(persist_dir=str(INDEX_DIR))
-        return load_index_from_storage(ctx, embed_model=_resolve_embed_model())
+        index = load_index_from_storage(ctx, embed_model=_resolve_embed_model())
+        _CACHED_INDEX = index
+        _CACHE_LOADED_AT = time.time()
+        logger.info("[KB] Index rebuilt and cached")
+        return index
 
 def warmup() -> Dict[str, Any]:
     """
