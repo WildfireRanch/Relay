@@ -1,0 +1,98 @@
+==========================================
+RELAY ASK PIPELINE DIAGNOSTIC BUNDLE
+==========================================
+
+1. ENVIRONMENT VARIABLES
+------------------------
+ENV: not set
+NEXT_PUBLIC_API_URL: not set
+API_KEY: ... (truncated)
+OPENAI_API_KEY: ... (truncated)
+FRONTEND_ORIGINS: not set
+
+2. BACKEND HEALTH
+-----------------
+Testing http://localhost:8000/livez:
+❌ Backend not responding
+
+
+Testing http://localhost:8000/readyz:
+
+3. ASK ENDPOINT DIRECT TEST (Backend)
+--------------------------------------
+POST http://localhost:8000/ask with test query:
+
+4. FRONTEND API PROXY TEST
+--------------------------
+Testing http://localhost:3000/api/ask/run:
+
+5. FRONTEND LOGS
+----------------
+Recent Next.js logs (if available):
+
+6. BACKEND LOGS (Last 30 lines)
+--------------------------------
+2025-10-05 15:30:04 INFO    services.kb  🔎 KB module loaded | INDEX_DIR=/workspaces/Relay/index/dev/text-embedding-3-large INDEX_ROOT=/workspaces/Relay/index/dev
+2025-10-05 15:30:04 INFO    services.kb  [KB] Embedding model=text-embedding-3-large dim=3072
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.docs)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.kb)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.webhooks_github)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.debug_diagnostics)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.integrations_github)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.x_mirror)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.github_proxy)
+2025-10-05 15:30:06 INFO    relay.main  🔌 Router enabled: routing (from routes.control)
+2025-10-05 15:30:06 INFO    relay.main  ✅ Critical routers present: ['ask','mcp']
+INFO:     Started server process [4977]
+INFO:     Waiting for application startup.
+2025-10-05 15:30:06 INFO    relay.main  paths_ready imported=/workspaces/docs/imported generated=/workspaces/docs/generated index_root=/workspaces/Relay/data/index writable=True
+2025-10-05 15:30:06 INFO    relay.main  🚦 main.py LOADED file=/app/main.py commit=unknown env=dev
+2025-10-05 15:30:06 WARNING relay.main  🟣 OpenTelemetry disabled (endpoint not configured)
+2025-10-05 15:30:06 INFO    services.kb  [KB] index_is_valid → missing storage
+2025-10-05 15:30:06 INFO    relay.main  ✅ KB index validated (index_is_valid=False)
+2025-10-05 15:30:06 INFO    relay.main  🗂️  routes/ listing: ['admin', 'admin_routes', 'ask', 'codex', 'context', 'control', 'debug', 'debug_diagnostics', 'debug_flow_trace', 'docs', 'embeddings', 'github_proxy', 'health', 'index', 'integrations_github', 'kb', 'logs', 'logs_sessions', 'mcp', 'oauth', 'search', 'status', 'status_code', 'webhooks_github', 'x_mirror']
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [4977]
+
+7. NETWORK CONNECTIVITY
+-----------------------
+Backend listening on:
+❌ Backend not listening on :8000
+
+Frontend listening on:
+❌ Frontend not listening on :3000
+
+8. KNOWLEDGE BASE STATUS
+------------------------
+✅ Index directory exists: data/index
+   Files in index: 11
+
+9. BROWSER DEBUGGING STEPS
+--------------------------
+1. Open http://localhost:3000/ask in your browser
+2. Open DevTools (F12)
+3. Go to Console tab
+4. Try submitting a query
+5. Copy any errors shown in red
+6. Go to Network tab
+7. Submit query again
+8. Find the /api/ask/run request
+9. Click it and copy:
+   - Status code
+   - Response tab content
+   - Headers tab (Request Headers)
+
+==========================================
+END OF DIAGNOSTIC BUNDLE
+==========================================
+
+📋 WHAT TO SHARE WITH CLAUDE:
+1. Copy this entire output
+2. Also share:
+   - Browser console errors (red text)
+   - Network tab details for /api/ask/run
+   - Any error messages you see in the UI

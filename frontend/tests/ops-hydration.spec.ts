@@ -1,12 +1,12 @@
 // ─── Ops Hydration Canary (Playwright) ───────────────────────────────────────
 // Verifies /ops loads without hydration errors in the console.
 
-import { test, expect } from "@playwright/test"
+import { test, expect, type Page } from "@playwright/test"
 
-test("ops page has no hydration errors", async ({ page }) => {
+test("ops page has no hydration errors", async ({ page }: { page: Page }) => {
   const errors: string[] = []
-  page.on("pageerror", (e) => errors.push(e.message))
-  page.on("console", (m) => {
+  page.on("pageerror", (e: Error) => errors.push(e.message))
+  page.on("console", (m: any) => {
     if (m.type() === "error") errors.push(m.text())
   })
 

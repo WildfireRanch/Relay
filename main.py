@@ -27,6 +27,12 @@ import uuid
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+# ── Load environment variables from .env file ---------------------------------
+from dotenv import load_dotenv
+# Load .env from project root (handles relative imports correctly)
+_env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=_env_path, override=False)
+
 # ── Third-party ---------------------------------------------------------------
 import anyio
 from fastapi import APIRouter, FastAPI, Request, Response
