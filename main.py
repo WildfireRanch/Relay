@@ -353,6 +353,7 @@ OPTIONAL_ROUTERS = {
     "routes.control",
     "routes.x_mirror",
     "routes.debug_diagnostics",
+    "routes.debug_flow_trace",  # Flow monitoring for AgenticFlowMonitor
     # GitHub integrations (API + proxy + webhooks)
     "routes.integrations_github",
     "routes.github_proxy",

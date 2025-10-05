@@ -95,6 +95,7 @@ export default function AgenticFlowMonitor() {
   const [autoTrace, setAutoTrace] = useState(false);
   const [testQuery, setTestQuery] = useState("test pipeline flow");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [recentEvents, setRecentEvents] = useState<any[]>([]);
 
   /* ---------------------------------------
    * Flow Trace API Functions
@@ -160,10 +161,49 @@ export default function AgenticFlowMonitor() {
     }
   };
 
+  const fetchRecentEvents = async () => {
+    try {
+      const response = await fetch("/api/ops/debug/flow-events/recent?limit=10", {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setRecentEvents(data.events || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch recent events:", error);
+    }
+  };
+
   // Auto-run initial trace on component mount
   useEffect(() => {
     runFlowTrace();
     runEnvironmentCheck();
+  }, []);
+
+  // Auto-trace polling effect
+  useEffect(() => {
+    if (!autoTrace) return;
+
+    const interval = setInterval(() => {
+      runFlowTrace();
+      fetchRecentEvents();
+    }, 5000); // Poll every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [autoTrace, testQuery]);
+
+  // Poll for recent events periodically
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchRecentEvents();
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearInterval(interval);
   }, []);
 
   /* ---------------------------------------
@@ -414,6 +454,7 @@ export default function AgenticFlowMonitor() {
                   <TabsList className="mx-3 mb-2">
                     <TabsTrigger value="steps">Steps</TabsTrigger>
                     <TabsTrigger value="recommendations">Tips</TabsTrigger>
+                    <TabsTrigger value="events">Events</TabsTrigger>
                     <TabsTrigger value="data">Data</TabsTrigger>
                   </TabsList>
 
@@ -477,6 +518,38 @@ export default function AgenticFlowMonitor() {
                       ) : (
                         <div className="text-center text-gray-500 py-8">
                           No recommendations available.
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </TabsContent>
+
+                  <TabsContent value="events" className="h-[440px] p-4">
+                    <ScrollArea className="h-full">
+                      {recentEvents.length ? (
+                        <div className="space-y-2">
+                          {recentEvents.map((event, index) => (
+                            <div key={index} className="text-xs p-2 bg-gray-50 rounded border">
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="font-semibold text-blue-600">{event.type}</span>
+                                <span className="text-gray-500">
+                                  {new Date(event.timestamp * 1000).toLocaleTimeString()}
+                                </span>
+                              </div>
+                              {event.data && (
+                                <div className="text-gray-700 mt-1">
+                                  {event.data.step_name && <div>Step: {event.data.step_name}</div>}
+                                  {event.data.status && <div>Status: {event.data.status}</div>}
+                                  {event.data.duration_ms !== undefined && <div>Duration: {Math.round(event.data.duration_ms)}ms</div>}
+                                  {event.data.error && <div className="text-red-600">Error: {event.data.error}</div>}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="text-center text-gray-500 py-8">
+                          No recent events.<br />
+                          Events will appear here when traces run.
                         </div>
                       )}
                     </ScrollArea>

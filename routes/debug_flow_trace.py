@@ -15,12 +15,13 @@ import inspect
 import os
 import time
 import traceback
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 # Safe logging import
@@ -555,16 +556,32 @@ async def run_flow_trace(
         trace_kb_service_interactions,
         trace_full_pipeline_integration
     ]
-    
+
+    # Emit start event
+    emit_flow_event("trace_started", {
+        "corr_id": corr_id,
+        "query": request.query,
+        "deep_trace": request.enable_deep_trace
+    })
+
     for trace_func in trace_functions:
         try:
             step = await trace_func(request.query, corr_id)
             steps.append(step)
-            
+
+            # Emit step completion event
+            emit_flow_event("step_completed", {
+                "corr_id": corr_id,
+                "step_name": step.step_name,
+                "status": step.status,
+                "duration_ms": step.duration_ms,
+                "error": step.error
+            })
+
             # Stop on first error unless deep trace is enabled
             if step.status == "error" and not request.enable_deep_trace:
                 break
-                
+
         except Exception as e:
             # Create error step for any tracing function that fails
             error_step = FlowStep(
@@ -574,7 +591,14 @@ async def run_flow_trace(
                 error=f"Trace function failed: {str(e)}"
             )
             steps.append(error_step)
-            
+
+            # Emit error event
+            emit_flow_event("step_error", {
+                "corr_id": corr_id,
+                "step_name": trace_func.__name__,
+                "error": str(e)
+            })
+
             if not request.enable_deep_trace:
                 break
     
@@ -592,7 +616,16 @@ async def run_flow_trace(
         "total_steps": len(steps),
         "total_duration_ms": total_duration
     })
-    
+
+    # Emit completion event
+    emit_flow_event("trace_completed", {
+        "corr_id": corr_id,
+        "success": success,
+        "break_point": break_point,
+        "total_steps": len(steps),
+        "total_duration_ms": total_duration
+    })
+
     return FlowTraceResponse(
         success=success,
         corr_id=corr_id,
@@ -611,9 +644,9 @@ async def check_environment_config(
     x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id")
 ) -> Dict[str, Any]:
     """Check critical environment variables and configuration"""
-    
+
     corr_id = x_corr_id or str(uuid4())
-    
+
     env_checks = {
         # Context Engine Config
         "RERANK_MIN_SCORE_GLOBAL": os.getenv("RERANK_MIN_SCORE_GLOBAL"),
@@ -621,20 +654,20 @@ async def check_environment_config(
         "TOPK_GLOBAL": os.getenv("TOPK_GLOBAL"),
         "TOPK_PROJECT_DOCS": os.getenv("TOPK_PROJECT_DOCS"),
         "MAX_CONTEXT_TOKENS": os.getenv("MAX_CONTEXT_TOKENS"),
-        
+
         # Knowledge Base Config
         "KB_EMBED_MODEL": os.getenv("KB_EMBED_MODEL"),
         "INDEX_ROOT": os.getenv("INDEX_ROOT"),
-        
+
         # API Keys
         "OPENAI_API_KEY": "SET" if os.getenv("OPENAI_API_KEY") else "MISSING",
-        
+
         # System Config
         "ENV": os.getenv("ENV"),
         "MCP_SAFE_MODE": os.getenv("MCP_SAFE_MODE"),
         "ALLOW_KB_FALLBACK": os.getenv("ALLOW_KB_FALLBACK"),
     }
-    
+
     # Check file system paths
     fs_checks = {}
     for path_name, path_env in [
@@ -645,7 +678,7 @@ async def check_environment_config(
             path_value = os.getenv(path_env)
         else:
             path_value = str(Path.cwd())
-            
+
         if path_value:
             path_obj = Path(path_value)
             fs_checks[path_name] = {
@@ -654,16 +687,86 @@ async def check_environment_config(
                 "is_dir": path_obj.is_dir() if path_obj.exists() else False,
                 "readable": os.access(path_obj, os.R_OK) if path_obj.exists() else False
             }
-    
+
     return {
         "corr_id": corr_id,
         "env_vars": env_checks,
         "filesystem": fs_checks,
         "python_path": os.getcwd(),
         "missing_critical_vars": [
-            var for var, val in env_checks.items() 
+            var for var, val in env_checks.items()
             if val in [None, "MISSING"] and var in [
                 "OPENAI_API_KEY", "KB_EMBED_MODEL", "INDEX_ROOT"
             ]
         ]
+    }
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Real-time Flow Event Stream (SSE)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Global event store for real-time flow monitoring
+_flow_events: List[Dict[str, Any]] = []
+_max_events = 100  # Keep last 100 events
+
+def emit_flow_event(event_type: str, data: Dict[str, Any]) -> None:
+    """Emit a flow event to all listening clients"""
+    global _flow_events
+    event = {
+        "type": event_type,
+        "timestamp": time.time(),
+        "data": data
+    }
+    _flow_events.append(event)
+    # Keep only recent events
+    if len(_flow_events) > _max_events:
+        _flow_events = _flow_events[-_max_events:]
+
+@router.get("/flow-events")
+async def stream_flow_events(
+    x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id")
+):
+    """
+    Server-Sent Events (SSE) endpoint for real-time flow monitoring.
+    Streams live events from the agent pipeline as they occur.
+    """
+    async def event_generator():
+        """Generate SSE events"""
+        sent_count = 0
+
+        # Send connection established event
+        yield f"data: {json.dumps({'type': 'connected', 'timestamp': time.time()})}\n\n"
+
+        # Stream events
+        while True:
+            # Send new events
+            if len(_flow_events) > sent_count:
+                for event in _flow_events[sent_count:]:
+                    yield f"data: {json.dumps(event)}\n\n"
+                sent_count = len(_flow_events)
+
+            # Keep connection alive
+            await asyncio.sleep(1)
+            yield f": keepalive\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@router.get("/flow-events/recent")
+async def get_recent_flow_events(
+    limit: int = 50,
+    x_corr_id: Optional[str] = Header(default=None, alias="X-Corr-Id")
+) -> Dict[str, Any]:
+    """Get recent flow events (for polling instead of SSE)"""
+    return {
+        "events": _flow_events[-limit:] if _flow_events else [],
+        "total": len(_flow_events),
+        "timestamp": time.time()
     }
