@@ -1,8 +1,4 @@
 {
-  "version": 2,
-  "buildCommand": "cd frontend && npm install && npm run build",
-  "outputDirectory": "frontend/.next",
-  "installCommand": "npm install --prefix frontend",
   "headers": [
     {
       "source": "/favicon.ico",
@@ -40,7 +36,7 @@
     }
   ],
   "functions": {
-    "frontend/src/app/api/**": {
+    "src/app/api/**": {
       "maxDuration": 30
     }
   },
